@@ -1,3 +1,9 @@
 [workspace]
 members = ["yacas/yacas-rs", "processing", "app/src-tauri"]
 resolver = "2"
+
+# dev/test 下单独优化引擎:解释器 + 模式匹配是纯 CPU 热点,
+# 不优化时脚本求值慢 1-2 个数量级(步骤层测试不可用);
+# 其余 crate 保持无优化,增量编译不受影响。
+[profile.dev.package.yacas-rs]
+opt-level = 2

@@ -1,0 +1,209 @@
+### D 5 @ x
+const-rule	0	0	常数法则: c' = 0
+### D x @ x
+identity-rule	1	1	自变量法则: x' = 1
+### D 3*x^2 @ x
+constant-multiple-rule	(3 * DPrime((x ^ 2)))	3 \left(x ^{2}\right)'	常数倍法则: (c*u)' = c*u'
+power-rule	(3 * (2 * (x * DPrime(x))))	6 x \left(x\right)'	幂法则: (u^n)' = n*u^(n-1)*u'
+identity-rule	(6 * (x * 1))	6 x	自变量法则: x' = 1
+simplify	(6 * x)	6 x	化简
+### D -Sin(x) @ x
+constant-multiple-rule	(- DPrime(Sin(x)))	 - \left(\sin x\right)'	常数倍法则: (c*u)' = c*u'
+sin-rule	(- (Cos(x) * DPrime(x)))	 - \cos x \left(x\right)'	正弦法则: (Sin(u))' = Cos(u)*u'
+identity-rule	(- (Cos(x) * 1))	 - \cos x	自变量法则: x' = 1
+simplify	(- Cos(x))	 - \cos x	化简
+### D x^2 + Sin(x) @ x
+sum-rule	(DPrime((x ^ 2)) + DPrime(Sin(x)))	\left(x ^{2}\right)' + \left(\sin x\right)'	和法则: (f + g)' = f' + g'
+power-rule	((2 * (x * DPrime(x))) + DPrime(Sin(x)))	2 x \left(x\right)' + \left(\sin x\right)'	幂法则: (u^n)' = n*u^(n-1)*u'
+identity-rule	((2 * (x * 1)) + DPrime(Sin(x)))	2 x + \left(\sin x\right)'	自变量法则: x' = 1
+sin-rule	((2 * x) + (Cos(x) * DPrime(x)))	2 x + \cos x \left(x\right)'	正弦法则: (Sin(u))' = Cos(u)*u'
+identity-rule	((2 * x) + (Cos(x) * 1))	2 x + \cos x	自变量法则: x' = 1
+simplify	((2 * x) + Cos(x))	2 x + \cos x	化简
+### D x*Cos(x) @ x
+product-rule	((DPrime(x) * Cos(x)) + (x * DPrime(Cos(x))))	\left(x\right)' \cos x + x \left(\cos x\right)'	积法则: (f*g)' = f'*g + f*g'
+identity-rule	((1 * Cos(x)) + (x * DPrime(Cos(x))))	\cos x + x \left(\cos x\right)'	自变量法则: x' = 1
+cos-rule	(Cos(x) + (x * (- (Sin(x) * DPrime(x)))))	\cos x - x \sin x \left(x\right)'	余弦法则: (Cos(u))' = -Sin(u)*u'
+identity-rule	(Cos(x) - (x * (Sin(x) * 1)))	\cos x - x \sin x	自变量法则: x' = 1
+simplify	(Cos(x) - (x * Sin(x)))	\cos x - x \sin x	化简
+### D Sin(x)/x @ x
+quotient-rule	(((DPrime(Sin(x)) * x) - (Sin(x) * DPrime(x))) / (x ^ 2))	\frac{\left(\sin x\right)' x - \sin x \left(x\right)'}{x ^{2}} 	商法则: (f/g)' = (f'*g - f*g')/g^2
+sin-rule	((((Cos(x) * DPrime(x)) * x) - (Sin(x) * DPrime(x))) / (x ^ 2))	\frac{\cos x \left(x\right)' x - \sin x \left(x\right)'}{x ^{2}} 	正弦法则: (Sin(u))' = Cos(u)*u'
+identity-rule	((((Cos(x) * 1) * x) - (Sin(x) * 1)) / (x ^ 2))	\frac{\cos x x - \sin x}{x ^{2}} 	自变量法则: x' = 1
+identity-rule	(((Cos(x) * x) - Sin(x)) / (x ^ 2))	\frac{\cos x x - \sin x}{x ^{2}} 	自变量法则: x' = 1
+### D Sin(x)^2 @ x
+power-chain-rule	(2 * (Sin(x) * DPrime(Sin(x))))	2 \sin x \left(\sin x\right)'	链式法则: (u^n)' = n*u^(n-1)*u'
+sin-rule	(2 * (Sin(x) * (Cos(x) * DPrime(x))))	2 \sin x \cos x \left(x\right)'	正弦法则: (Sin(u))' = Cos(u)*u'
+identity-rule	(2 * (Sin(x) * (Cos(x) * 1)))	2 \sin x \cos x	自变量法则: x' = 1
+simplify	(2 * (Sin(x) * Cos(x)))	2 \sin x \cos x	化简
+### D Exp(x) @ x
+exp-rule	(Exp(x) * DPrime(x))	\exp \left( x\right)  \left(x\right)'	自然指数法则: (Exp(u))' = Exp(u)*u'
+identity-rule	(Exp(x) * 1)	\exp \left( x\right) 	自变量法则: x' = 1
+simplify	Exp(x)	\exp \left( x\right) 	化简
+### D 2^x @ x
+exponential-rule	(((2 ^ x) * Ln(2)) * DPrime(x))	2 ^{x} \ln 2 \left(x\right)'	指数法则: (a^u)' = a^u*Ln(a)*u'
+identity-rule	(((2 ^ x) * Ln(2)) * 1)	2 ^{x} \ln 2	自变量法则: x' = 1
+simplify	((2 ^ x) * Ln(2))	2 ^{x} \ln 2	化简
+### D Ln(x) @ x
+ln-rule	(DPrime(x) / x)	\frac{\left(x\right)'}{x} 	对数法则: (Ln(u))' = u'/u
+identity-rule	(1 / x)	\frac{1}{x} 	自变量法则: x' = 1
+### D Sqrt(x) @ x
+sqrt-rule	(DPrime(x) / (2 * Sqrt(x)))	\frac{\left(x\right)'}{2 \sqrt{x}} 	平方根法则: (Sqrt(u))' = u'/(2*Sqrt(u))
+identity-rule	(1 / (2 * Sqrt(x)))	\frac{1}{2 \sqrt{x}} 	自变量法则: x' = 1
+### D x^x @ x
+direct	((x ^ x) * (Ln(x) + 1))	x ^{x} \left( \ln x + 1\right) 	直接求导
+### D Tan(x) @ x
+tan-rule	(DPrime(x) / (Cos(x) ^ 2))	\frac{\left(x\right)'}{\left( \cos x\right)  ^{2}} 	正切法则: (Tan(u))' = u'/Cos(u)^2
+identity-rule	(1 / (Cos(x) ^ 2))	\frac{1}{\left( \cos x\right)  ^{2}} 	自变量法则: x' = 1
+### D Cot(x) @ x
+quotient-rule	(((DPrime(1) * Tan(x)) - DPrime(Tan(x))) / (Tan(x) ^ 2))	\frac{\left(1\right)' \tan x - \left(\tan x\right)'}{\left( \tan x\right)  ^{2}} 	商法则: (f/g)' = (f'*g - f*g')/g^2
+const-rule	(((0 * Tan(x)) - DPrime(Tan(x))) / (Tan(x) ^ 2))	\frac{ - \left(\tan x\right)'}{\left( \tan x\right)  ^{2}} 	常数法则: c' = 0
+tan-rule	((- (DPrime(x) / (Cos(x) ^ 2))) / (Tan(x) ^ 2))	\frac{ - \frac{\left(x\right)'}{\left( \cos x\right)  ^{2}} }{\left( \tan x\right)  ^{2}} 	正切法则: (Tan(u))' = u'/Cos(u)^2
+identity-rule	((- (1 / (Cos(x) ^ 2))) / (Tan(x) ^ 2))	\frac{-1}{\left( \cos x\right)  ^{2} \left( \tan x\right)  ^{2}} 	自变量法则: x' = 1
+simplify	(-1 / ((Cos(x) ^ 2) * (Tan(x) ^ 2)))	\frac{-1}{\left( \cos x\right)  ^{2} \left( \tan x\right)  ^{2}} 	化简
+### D Sec(x) @ x
+quotient-rule	(((DPrime(1) * Cos(x)) - DPrime(Cos(x))) / (Cos(x) ^ 2))	\frac{\left(1\right)' \cos x - \left(\cos x\right)'}{\left( \cos x\right)  ^{2}} 	商法则: (f/g)' = (f'*g - f*g')/g^2
+const-rule	(((0 * Cos(x)) - DPrime(Cos(x))) / (Cos(x) ^ 2))	\frac{ - \left(\cos x\right)'}{\left( \cos x\right)  ^{2}} 	常数法则: c' = 0
+cos-rule	((- (- (Sin(x) * DPrime(x)))) / (Cos(x) ^ 2))	\frac{\sin x \left(x\right)'}{\left( \cos x\right)  ^{2}} 	余弦法则: (Cos(u))' = -Sin(u)*u'
+identity-rule	((Sin(x) * 1) / (Cos(x) ^ 2))	\frac{\sin x}{\left( \cos x\right)  ^{2}} 	自变量法则: x' = 1
+simplify	(Sin(x) / (Cos(x) ^ 2))	\frac{\sin x}{\left( \cos x\right)  ^{2}} 	化简
+### D Csc(x) @ x
+quotient-rule	(((DPrime(1) * Sin(x)) - DPrime(Sin(x))) / (Sin(x) ^ 2))	\frac{\left(1\right)' \sin x - \left(\sin x\right)'}{\left( \sin x\right)  ^{2}} 	商法则: (f/g)' = (f'*g - f*g')/g^2
+const-rule	(((0 * Sin(x)) - DPrime(Sin(x))) / (Sin(x) ^ 2))	\frac{ - \left(\sin x\right)'}{\left( \sin x\right)  ^{2}} 	常数法则: c' = 0
+sin-rule	((- (Cos(x) * DPrime(x))) / (Sin(x) ^ 2))	\frac{ - \cos x \left(x\right)'}{\left( \sin x\right)  ^{2}} 	正弦法则: (Sin(u))' = Cos(u)*u'
+identity-rule	((- (Cos(x) * 1)) / (Sin(x) ^ 2))	\frac{ - \cos x}{\left( \sin x\right)  ^{2}} 	自变量法则: x' = 1
+simplify	((- Cos(x)) / (Sin(x) ^ 2))	\frac{ - \cos x}{\left( \sin x\right)  ^{2}} 	化简
+### D ArcSin(x) @ x
+arcsin-rule	(DPrime(x) / Sqrt((1 - (x ^ 2))))	\frac{\left(x\right)'}{\sqrt{1 - x ^{2}}} 	反正弦法则: (ArcSin(u))' = u'/Sqrt(1 - u^2)
+identity-rule	(1 / Sqrt((1 - (x ^ 2))))	\frac{1}{\sqrt{1 - x ^{2}}} 	自变量法则: x' = 1
+### D ArcCos(x) @ x
+arccos-rule	((- DPrime(x)) / Sqrt((1 - (x ^ 2))))	\frac{ - \left(x\right)'}{\sqrt{1 - x ^{2}}} 	反余弦法则: (ArcCos(u))' = -u'/Sqrt(1 - u^2)
+identity-rule	((- 1) / Sqrt((1 - (x ^ 2))))	\frac{-1}{\sqrt{1 - x ^{2}}} 	自变量法则: x' = 1
+simplify	(-1 / Sqrt((1 - (x ^ 2))))	\frac{-1}{\sqrt{1 - x ^{2}}} 	化简
+### D ArcTan(x) @ x
+arctan-rule	(DPrime(x) / ((x ^ 2) + 1))	\frac{\left(x\right)'}{x ^{2} + 1} 	反正切法则: (ArcTan(u))' = u'/(1 + u^2)
+identity-rule	(1 / ((x ^ 2) + 1))	\frac{1}{x ^{2} + 1} 	自变量法则: x' = 1
+### D Sinh(x) @ x
+sinh-rule	(Cosh(x) * DPrime(x))	\cosh x \left(x\right)'	双曲正弦法则: (Sinh(u))' = Cosh(u)*u'
+identity-rule	(Cosh(x) * 1)	\cosh x	自变量法则: x' = 1
+simplify	Cosh(x)	\cosh x	化简
+### D Cosh(x) @ x
+cosh-rule	(Sinh(x) * DPrime(x))	\sinh x \left(x\right)'	双曲余弦法则: (Cosh(u))' = Sinh(u)*u'
+identity-rule	(Sinh(x) * 1)	\sinh x	自变量法则: x' = 1
+simplify	Sinh(x)	\sinh x	化简
+### D Tanh(x) @ x
+tanh-rule	(((1 / Cosh(x)) ^ 2) * DPrime(x))	\left( \frac{1}{\cosh x} \right)  ^{2} \left(x\right)'	双曲正切法则: (Tanh(u))' = 1/Cosh(u)^2
+identity-rule	(((1 / Cosh(x)) ^ 2) * 1)	\left( \frac{1}{\cosh x} \right)  ^{2}	自变量法则: x' = 1
+simplify	(1 / (Cosh(x) ^ 2))	\frac{1}{\left( \cosh x\right)  ^{2}} 	化简
+### D Tan(x^2) @ x
+tan-chain-rule	(DPrime((x ^ 2)) / (Cos((x ^ 2)) ^ 2))	\frac{\left(x ^{2}\right)'}{\left( \cos x ^{2}\right)  ^{2}} 	链式法则: (Tan(u))' = u'/Cos(u)^2
+power-rule	((2 * (x * DPrime(x))) / (Cos((x ^ 2)) ^ 2))	\frac{2 x \left(x\right)'}{\left( \cos x ^{2}\right)  ^{2}} 	幂法则: (u^n)' = n*u^(n-1)*u'
+identity-rule	((2 * (x * 1)) / (Cos((x ^ 2)) ^ 2))	\frac{2 x}{\left( \cos x ^{2}\right)  ^{2}} 	自变量法则: x' = 1
+simplify	((2 * x) / (Cos((x ^ 2)) ^ 2))	\frac{2 x}{\left( \cos x ^{2}\right)  ^{2}} 	化简
+### D ArcTan(x^2) @ x
+arctan-chain-rule	(DPrime((x ^ 2)) / ((x ^ 4) + 1))	\frac{\left(x ^{2}\right)'}{x ^{4} + 1} 	链式法则: (ArcTan(u))' = u'/(1 + u^2)
+power-rule	((2 * (x * DPrime(x))) / ((x ^ 4) + 1))	\frac{2 x \left(x\right)'}{x ^{4} + 1} 	幂法则: (u^n)' = n*u^(n-1)*u'
+identity-rule	((2 * (x * 1)) / ((x ^ 4) + 1))	\frac{2 x}{x ^{4} + 1} 	自变量法则: x' = 1
+simplify	((2 * x) / ((x ^ 4) + 1))	\frac{2 x}{x ^{4} + 1} 	化简
+### D Sinh(x^2) @ x
+sinh-chain-rule	(Cosh((x ^ 2)) * DPrime((x ^ 2)))	\cosh x ^{2} \left(x ^{2}\right)'	链式法则: (Sinh(u))' = Cosh(u)*u'
+power-rule	(Cosh((x ^ 2)) * (2 * (x * DPrime(x))))	\cosh x ^{2} 2 x \left(x\right)'	幂法则: (u^n)' = n*u^(n-1)*u'
+identity-rule	(Cosh((x ^ 2)) * (2 * (x * 1)))	\cosh x ^{2} 2 x	自变量法则: x' = 1
+simplify	(2 * (Cosh((x ^ 2)) * x))	2 \cosh x ^{2} x	化简
+### D Ln(Sin(x)) @ x
+ln-chain-rule	(DPrime(Sin(x)) / Sin(x))	\frac{\left(\sin x\right)'}{\sin x} 	链式法则: (Ln(u))' = u'/u
+sin-rule	((Cos(x) * DPrime(x)) / Sin(x))	\frac{\cos x \left(x\right)'}{\sin x} 	正弦法则: (Sin(u))' = Cos(u)*u'
+identity-rule	((Cos(x) * 1) / Sin(x))	\frac{1}{\tan x} 	自变量法则: x' = 1
+simplify	(1 / Tan(x))	\frac{1}{\tan x} 	化简
+### D Exp(Cos(x)) @ x
+exp-chain-rule	(Exp(Cos(x)) * DPrime(Cos(x)))	\exp \left( \cos x\right)  \left(\cos x\right)'	链式法则: (Exp(u))' = Exp(u)*u'
+cos-rule	(Exp(Cos(x)) * (- (Sin(x) * DPrime(x))))	 - \exp \left( \cos x\right)  \sin x \left(x\right)'	余弦法则: (Cos(u))' = -Sin(u)*u'
+identity-rule	(- (Exp(Cos(x)) * (Sin(x) * 1)))	 - \exp \left( \cos x\right)  \sin x	自变量法则: x' = 1
+simplify	(- (Exp(Cos(x)) * Sin(x)))	 - \exp \left( \cos x\right)  \sin x	化简
+### D 2^(x^2) @ x
+exponential-chain-rule	(((2 ^ (x ^ 2)) * Ln(2)) * DPrime((x ^ 2)))	2 ^{x ^{2}} \ln 2 \left(x ^{2}\right)'	链式法则: (a^u)' = a^u*Ln(a)*u'
+power-rule	(((2 ^ (x ^ 2)) * Ln(2)) * (2 * (x * DPrime(x))))	2 ^{x ^{2}} \ln 2 2 x \left(x\right)'	幂法则: (u^n)' = n*u^(n-1)*u'
+identity-rule	(((2 ^ (x ^ 2)) * Ln(2)) * (2 * (x * 1)))	2 ^{x ^{2}} \ln 2 2 x	自变量法则: x' = 1
+simplify	(((2 ^ (x ^ 2)) * x) * (2 * Ln(2)))	2 ^{x ^{2}} x 2 \ln 2	化简
+### D2 Sin(x) @ x
+sin-rule	(Cos(x) * DPrime(x))	\cos x \left(x\right)'	正弦法则: (Sin(u))' = Cos(u)*u'
+identity-rule	(Cos(x) * 1)	\cos x	自变量法则: x' = 1
+simplify	Cos(x)	\cos x	化简
+cos-rule	(- (Sin(x) * DPrime(x)))	 - \sin x \left(x\right)'	余弦法则: (Cos(u))' = -Sin(u)*u'
+identity-rule	(- (Sin(x) * 1))	 - \sin x	自变量法则: x' = 1
+simplify	(- Sin(x))	 - \sin x	化简
+### D2 x^4 @ x
+power-rule	(4 * ((x ^ 3) * DPrime(x)))	4 x ^{3} \left(x\right)'	幂法则: (u^n)' = n*u^(n-1)*u'
+identity-rule	(4 * ((x ^ 3) * 1))	4 x ^{3}	自变量法则: x' = 1
+simplify	(4 * (x ^ 3))	4 x ^{3}	化简
+constant-multiple-rule	(4 * DPrime((x ^ 3)))	4 \left(x ^{3}\right)'	常数倍法则: (c*u)' = c*u'
+power-rule	(4 * (3 * ((x ^ 2) * DPrime(x))))	12 x ^{2} \left(x\right)'	幂法则: (u^n)' = n*u^(n-1)*u'
+identity-rule	(12 * ((x ^ 2) * 1))	12 x ^{2}	自变量法则: x' = 1
+simplify	(12 * (x ^ 2))	12 x ^{2}	化简
+### I 7 @ x
+const-integral-rule	(7 * x)	7 x	常数积分: ∫c dx = c*x
+### I x @ x
+power-rule	((x ^ 2) / 2)	\frac{x ^{2}}{2} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+### I Sqrt(x) @ x
+direct	((2 * (Sqrt(x) ^ 3)) / 3)	\frac{2 \sqrt{x} ^{3}}{3} 	直接积分
+### I x^2 + Cos(x) @ x
+sum-rule	(Int((x ^ 2)) + Int(Cos(x)))	\mathrm{ Int }\left( x ^{2}\right)  + \mathrm{ Int }\left( \cos x\right) 	和法则: ∫(f + g) dx = ∫f dx + ∫g dx
+power-rule	(((x ^ 3) / 3) + Int(Cos(x)))	\frac{x ^{3}}{3}  + \mathrm{ Int }\left( \cos x\right) 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+cos-rule	(((x ^ 3) / 3) + Sin(x))	\frac{x ^{3}}{3}  + \sin x	余弦积分: ∫Cos(x) dx = Sin(x)
+### I 3*Sin(x) @ x
+constant-multiple-rule	(3 * Int(Sin(x)))	3 \mathrm{ Int }\left( \sin x\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+sin-rule	(3 * (- Cos(x)))	-3 \cos x	正弦积分: ∫Sin(x) dx = -Cos(x)
+simplify	(-3 * Cos(x))	 - 3 \cos x	化简
+### I -Exp(x) @ x
+constant-multiple-rule	(- Int(Exp(x)))	 - \mathrm{ Int }\left( \exp \left( x\right) \right) 	常数倍法则: ∫c*f dx = c*∫f dx
+exp-rule	(- Exp(x))	 - \exp \left( x\right) 	自然指数积分: ∫Exp(x) dx = Exp(x)
+### I 2/x @ x
+ln-rule	(2 * Ln(x))	2 \ln x	对数积分: ∫c/x dx = c*Ln(x)
+### I 1/(1 + x^2) @ x
+arctan-rule	ArcTan(x)	\arctan x	反正切积分: ∫1/(1 + x^2) dx = ArcTan(x)
+### I Sin(x) @ x
+sin-rule	(- Cos(x))	 - \cos x	正弦积分: ∫Sin(x) dx = -Cos(x)
+### I Cos(x) @ x
+cos-rule	Sin(x)	\sin x	余弦积分: ∫Cos(x) dx = Sin(x)
+### I Exp(x) @ x
+exp-rule	Exp(x)	\exp \left( x\right) 	自然指数积分: ∫Exp(x) dx = Exp(x)
+### I Tan(x) @ x
+tan-rule	(- Ln(Cos(x)))	 - \ln \cos x	正切积分: ∫Tan(x) dx = -Ln(Cos(x))
+### I x*Sin(x) @ x
+parts-rule	(- ((x * Cos(x)) + Int((- Cos(x)))))	 - \left( x \cos x + \mathrm{ Int }\left(  - \cos x\right) \right) 	分部积分: ∫u dv = u*v - ∫v du
+constant-multiple-rule	(- ((x * Cos(x)) + (- Int(Cos(x)))))	\mathrm{ Int }\left( \cos x\right)  - x \cos x	常数倍法则: ∫c*f dx = c*∫f dx
+cos-rule	(Sin(x) - (x * Cos(x)))	\sin x - x \cos x	余弦积分: ∫Cos(x) dx = Sin(x)
+### I x^2*Sin(x) @ x
+parts-rule	(- (((x ^ 2) * Cos(x)) + Int((- (Cos(x) * (2 * x))))))	 - \left( x ^{2} \cos x + \mathrm{ Int }\left(  - \cos x 2 x\right) \right) 	分部积分: ∫u dv = u*v - ∫v du
+constant-multiple-rule	(- (((x ^ 2) * Cos(x)) + (- Int((Cos(x) * (2 * x))))))	\mathrm{ Int }\left( \cos x 2 x\right)  - x ^{2} \cos x	常数倍法则: ∫c*f dx = c*∫f dx
+direct	((2 * ((x * Sin(x)) + Cos(x))) - ((x ^ 2) * Cos(x)))	2 \left( x \sin x + \cos x\right)  - x ^{2} \cos x	直接积分
+### I Ln(x) @ x
+parts-rule	((Ln(x) * x) - Int(1))	\ln x x - \mathrm{ Int }\left( 1\right) 	分部积分: ∫u dv = u*v - ∫v du
+const-integral-rule	((Ln(x) * x) - x)	\ln x x - x	常数积分: ∫c dx = c*x
+### I x*Ln(x) @ x
+parts-rule	(((Ln(x) * (x ^ 2)) / 2) - Int(((x ^ 2) / (2 * x))))	\frac{\ln x x ^{2}}{2}  - \mathrm{ Int }\left( \frac{x ^{2}}{2 x} \right) 	分部积分: ∫u dv = u*v - ∫v du
+direct	(((Ln(x) * (x ^ 2)) / 2) - ((x ^ 2) / 4))	\frac{\ln x x ^{2}}{2}  - \frac{x ^{2}}{4} 	直接积分
+### I Sin(x^2)*2*x @ x
+constant-multiple-rule	(2 * Int((Sin((x ^ 2)) * x)))	2 \mathrm{ Int }\left( \sin x ^{2} x\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+u-sub-rule	(2 * Int((Sin(u) / 2)))	2 \mathrm{ Int }\left( \frac{\sin u}{2} \right) 	换元: u = g(x), du = g'(x) dx
+direct	(2 * ((- Cos(u)) / 2))	 - \cos u	直接积分
+back-sub-rule	(- Cos((x ^ 2)))	 - \cos x ^{2}	回代: u → g(x)
+### I x*Exp(x^2) @ x
+u-sub-rule	Int((Exp(u) / 2))	\mathrm{ Int }\left( \frac{\exp \left( u\right) }{2} \right) 	换元: u = g(x), du = g'(x) dx
+direct	(Exp(u) / 2)	\frac{\exp \left( u\right) }{2} 	直接积分
+back-sub-rule	(Exp((x ^ 2)) / 2)	\frac{\exp \left( x ^{2}\right) }{2} 	回代: u → g(x)
+### I x/(x^2 + 1) @ x
+u-sub-rule	Int((1 / (2 * u)))	\mathrm{ Int }\left( \frac{1}{2 u} \right) 	换元: u = g(x), du = g'(x) dx
+direct	(Ln((2 * u)) / 2)	\frac{\ln 2 u}{2} 	直接积分
+back-sub-rule	(Ln((2 * ((x ^ 2) + 1))) / 2)	\frac{\ln 2 \left( x ^{2} + 1\right) }{2} 	回代: u → g(x)
+### I Tan(x) @ x
+tan-rule	(- Ln(Cos(x)))	 - \ln \cos x	正切积分: ∫Tan(x) dx = -Ln(Cos(x))
+### I Cot(x) @ x
+direct	Ln(Sin(x))	\ln \sin x	直接积分
+### I Sinh(x) @ x
+sinh-rule	Cosh(x)	\cosh x	双曲正弦积分: ∫Sinh(x) dx = Cosh(x)
+### I Cosh(x) @ x
+cosh-rule	Sinh(x)	\sinh x	双曲余弦积分: ∫Cosh(x) dx = Sinh(x)
+### I Tanh(x) @ x
+tanh-rule	Ln(Cosh(x))	\ln \cosh x	双曲正切积分: ∫Tanh(x) dx = Ln(Cosh(x))
+### I 2/Sqrt(1 - x^2) @ x
+arcsin-rule	(2 * ArcSin(x))	2 \arcsin x	反正弦积分: ∫1/Sqrt(1 - x^2) dx = ArcSin(x)

@@ -102,6 +102,20 @@ pub fn derive_steps(
     steps_from_command(engine, &format!("StepsD'Full({expr}, {var})"))
 }
 
+/// 对 `expr` 关于 `var` 生成 `order` 阶分步求导过程(步骤按求导轮次拼接)
+pub fn derive_steps_order(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    order: u32,
+) -> Result<Vec<Step>, EngineError> {
+    validate_expr(expr)?;
+    if order == 0 {
+        return Err(EngineError::Eval("求导阶数必须 >= 1".into()));
+    }
+    steps_from_command(engine, &format!("StepsD'Full({expr}, {var}, {order})"))
+}
+
 /// 对 `expr` 关于 `var` 生成分步积分过程
 pub fn derive_integrals(
     engine: &mut dyn Engine,
@@ -125,7 +139,7 @@ fn strip_dollars(tex: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::ReplEngine;
+    use crate::engine::{ReplEngine, RustEngine};
 
     #[test]
     fn derive_steps_returns_rules_and_tex() {
@@ -137,7 +151,8 @@ mod tests {
         let steps = derive_steps(&mut engine, "Sin(x)^2", "x").expect("StepsD 失败");
 
         assert!(steps.len() >= 3, "步骤过少: {}", steps.len());
-        assert_eq!(steps[0].rule, "power-rule");
+        // Sin(x)^2:外层幂的底是复合式 → 链式键
+        assert_eq!(steps[0].rule, "power-chain-rule");
         assert!(steps.iter().any(|s| s.rule == "sin-rule"));
         assert_eq!(steps.last().unwrap().rule, "simplify");
         // 每步都有可渲染的 LaTeX 与声明式文案
@@ -146,7 +161,7 @@ mod tests {
             assert!(!s.why.is_empty(), "步骤缺少文案: {s:?}");
         }
         // 文案内容抽查(声明式,非教学腔)
-        assert_eq!(steps[0].why, "幂法则: n*u^(n-1)*u'");
+        assert_eq!(steps[0].why, "链式法则: (u^n)' = n*u^(n-1)*u'");
         // 最后一步与引擎 D 代数等价
         let diff = engine
             .eval("Simplify(StepsD(Sin(x)^2, x)[Length(StepsD(Sin(x)^2, x))][2] - D(x)Sin(x)^2)")
@@ -186,7 +201,7 @@ mod tests {
         assert!(steps.iter().any(|s| s.rule == "u-sub-rule"));
         // u-sub 步骤带换元文案
         let usub = steps.iter().find(|s| s.rule == "u-sub-rule").unwrap();
-        assert_eq!(usub.why, "换元 u = g(x), du = g'(x) dx");
+        assert_eq!(usub.why, "换元: u = g(x), du = g'(x) dx");
         let diff = engine
             .eval("Simplify(StepsI(Sin(x^2)*2*x, x)[Length(StepsI(Sin(x^2)*2*x, x))][2] - (-Cos(x^2)))")
             .expect("验证求值失败");
@@ -219,5 +234,22 @@ mod tests {
         }
         // 合法输入不受影响
         assert!(derive_steps(&mut engine, "Sin(x)^2", "x").is_ok());
+    }
+
+    /// 高阶导数:derive_steps_order 逐轮拼接(RustEngine 路径,默认可运行)
+    #[test]
+    fn derive_steps_order_works() {
+        let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
+        let steps =
+            derive_steps_order(&mut engine, "x^4", "x", 2).expect("StepsD'Full(order) 失败");
+        assert!(steps.len() >= 4, "步骤过少: {}", steps.len());
+        // 末轮最终形态与引擎二阶导一致(4*x^3 -> 12*x^2)
+        let last = steps.last().unwrap();
+        assert!(last.expr.contains("12"), "二阶导数异常: {}", last.expr);
+        for s in &steps {
+            assert!(!s.why.is_empty(), "步骤缺少文案: {s:?}");
+        }
+        // order=0 拒绝
+        assert!(derive_steps_order(&mut engine, "x^4", "x", 0).is_err());
     }
 }

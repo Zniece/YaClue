@@ -52,6 +52,32 @@ TestYacas(LastStepExpr(StepsD(2 ^ x, x)), D(x) 2 ^ x);
 /* Composite */
 TestYacas(LastStepExpr(StepsD((x ^ 2 + 1) * Exp(x), x)), D(x)((x ^ 2 + 1) * Exp(x)));
 
+/* M1: 三角/反三角/双曲(与引擎 D 对照)。注意 Cot/Sec/Csc 在求值时已被
+   引擎规范化为 1/Tan、1/Cos、1/Sin —— 这三条断言钉住的是规范化行为:
+   步骤经商法则展开,最终形态与引擎直接求值一致(代数恒等于 -Csc^2 等)。 */
+TestYacas(LastStepExpr(StepsD(Tan(x), x)), D(x) Tan(x));
+TestYacas(LastStepExpr(StepsD(Cot(x), x)), D(x) Cot(x));
+TestYacas(LastStepExpr(StepsD(Sec(x), x)), D(x) Sec(x));
+TestYacas(LastStepExpr(StepsD(Csc(x), x)), D(x) Csc(x));
+TestYacas(LastStepExpr(StepsD(ArcSin(x), x)), D(x) ArcSin(x));
+TestYacas(LastStepExpr(StepsD(ArcCos(x), x)), D(x) ArcCos(x));
+TestYacas(LastStepExpr(StepsD(ArcTan(x), x)), D(x) ArcTan(x));
+TestYacas(LastStepExpr(StepsD(Sinh(x), x)), D(x) Sinh(x));
+TestYacas(LastStepExpr(StepsD(Cosh(x), x)), D(x) Cosh(x));
+TestYacas(LastStepExpr(StepsD(Tanh(x), x)), D(x) Tanh(x));
+
+/* M1: 链式法则显式入册(复合参数登记 "<name>-chain-rule" 键) */
+Verify(FirstRule(StepsD(Tan(x ^ 2), x)), "tan-chain-rule");
+Verify(FirstRule(StepsD(ArcTan(x ^ 2), x)), "arctan-chain-rule");
+Verify(FirstRule(StepsD(Sinh(x ^ 2), x)), "sinh-chain-rule");
+Verify(FirstRule(StepsD(2 ^ (x ^ 2), x)), "exponential-chain-rule");
+Verify(FirstRule(StepsD(Ln(Sin(x)), x)), "ln-chain-rule");
+Verify(FirstRule(StepsD(Sin(x), x)), "sin-rule");  /* 参数恰为自变量,普通键 */
+
+/* M1: 高阶导数(逐轮拼接,与引擎 D(x,2) 对照) */
+TestYacas(LastStepExpr(StepsD'Full(x ^ 4, x, 2)), D(x,2) x ^ 4);
+TestYacas(LastStepExpr(StepsD'Full(Sin(x), x, 2)), D(x,2) Sin(x));
+
 /* Structural properties: at least 2 steps; no DPrime in the final step */
 Verify(Length(StepsD(x * Sin(x), x)) >= 2, True);
 Verify(IsFreeOf(DPrime, LastStepExpr(StepsD(x * Sin(x), x))), True);
@@ -90,6 +116,14 @@ TestYacas(LastStepExpr(StepsI(3/(1+x^2), x)), 3*ArcTan(x));
 TestYacas(LastStepExpr(StepsI(Cos(x)/(1+Sin(x)^2), x)), ArcTan(Sin(x)));
 Verify(FirstRule(StepsI(1/(1+x^2), x)), "arctan-rule");
 
+/* M1: 三角/双曲基本表(与引擎 Integrate 对照)+ 反正弦形(硬编码预期) */
+TestYacas(LastStepExpr(StepsI(Tan(x), x)), Integrate(x) Tan(x));
+TestYacas(LastStepExpr(StepsI(Cot(x), x)), Integrate(x) Cot(x));
+TestYacas(LastStepExpr(StepsI(Sinh(x), x)), Integrate(x) Sinh(x));
+TestYacas(LastStepExpr(StepsI(Cosh(x), x)), Integrate(x) Cosh(x));
+TestYacas(LastStepExpr(StepsI(Tanh(x), x)), Integrate(x) Tanh(x));
+TestYacas(LastStepExpr(StepsI(2/Sqrt(1 - x^2), x)), 2*ArcSin(x));
+
 /* 分部积分(LIATE) */
 TestYacas(LastStepExpr(StepsI(x*Sin(x), x)), Integrate(x) x*Sin(x));
 TestYacas(LastStepExpr(StepsI(x*Cos(x), x)), Integrate(x) x*Cos(x));
@@ -108,17 +142,26 @@ TestYacas(LastStepExpr(StepsI(2*x*Exp(x^2), x)), Exp(x^2));
 TestYacas(Integrate(x) x^2*Sin(x), 2*(x*Sin(x)+Cos(x))-x^2*Cos(x));
 TestYacas(Integrate(x) 2*x*Cos(x), 2*(x*Sin(x)+Cos(x)));
 
-/* 解释文案(声明式):查询命中/兜底/Full 三元组 */
+/* 解释文案(声明式):查询命中/侧感知/兜底/Full 三元组 */
 FirstWhy(s) :=
 [
   Local(first);
   first := s[1];
   first[3];
 ];
-TestYacas(Steps'Explain("power-rule"), "幂法则: n*u^(n-1)*u'");
-TestYacas(Steps'Explain("sum-rule"), "和法则: 逐项求导");
-TestYacas(Steps'Explain("arctan-rule"), "∫ 1/(1+x^2) dx = ArcTan(x)");
+TestYacas(Steps'Explain("power-rule"), "幂法则: (u^n)' = n*u^(n-1)*u'");
+TestYacas(Steps'Explain("sum-rule"), "和法则: (f + g)' = f' + g'");
+TestYacas(Steps'Explain("arctan-rule"), "反正切法则: (ArcTan(u))' = u'/(1 + u^2)");
+TestYacas(Steps'ExplainFor("arctan-rule", "i"), "反正切积分: ∫1/(1 + x^2) dx = ArcTan(x)");
+TestYacas(Steps'ExplainFor("tan-rule", "i"), "正切积分: ∫Tan(x) dx = -Ln(Cos(x))");
+TestYacas(FirstWhy(StepsD'Full(Tan(x ^ 2), x)), "链式法则: (Tan(u))' = u'/Cos(u)^2");
+/* 侧感知:积分侧覆盖,求导侧回退通用键 */
+TestYacas(Steps'ExplainFor("power-rule", "d"), Steps'Explain("power-rule"));
+TestYacas(Steps'ExplainFor("power-rule", "i"), "幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)");
+TestYacas(Steps'ExplainFor("direct", "d"), "直接求导");
+TestYacas(Steps'ExplainFor("direct", "i"), "直接积分");
 TestYacas(Steps'Explain("no-such-rule"), "");
+TestYacas(Steps'ExplainFor("no-such-rule", "i"), "");
 TestYacas(Length(StepsD'Full(x^2, x)), Length(StepsD(x^2, x)));
 TestYacas(FirstWhy(StepsD'Full(x, x)), Steps'Explain("identity-rule"));
 TestYacas(FirstWhy(StepsI'Full(x*Sin(x), x)), Steps'Explain("parts-rule"));

@@ -160,7 +160,7 @@ StepsD(expr, var) :=
   Local(steps, cur, p, sa, sb);
   If (IsFreeOf(v, b),
     [ /* 幂法则(含链式):b*a^(b-1) * a' */
-      steps := {{"power-rule", "p", a ^ b, b * a ^ (b - 1) * DPrime(a)}};
+      steps := {{If (a = v, "power-rule", "power-chain-rule"), "p", a ^ b, b * a ^ (b - 1) * DPrime(a)}};
       cur := b * a ^ (b - 1) * DPrime(a);
       sa := SD'Diff(a, v);
       cur := SD'Merge(cur, sa, "DPrime")[2];
@@ -168,7 +168,7 @@ StepsD(expr, var) :=
     ],
     If (IsFreeOf(v, a),
       [ /* 指数法则:a^b * Ln(a) * b' */
-        steps := {{"exponential-rule", "p", a ^ b, a ^ b * Ln(a) * DPrime(b)}};
+        steps := {{If (b = v, "exponential-rule", "exponential-chain-rule"), "p", a ^ b, a ^ b * Ln(a) * DPrime(b)}};
         cur := a ^ b * Ln(a) * DPrime(b);
         sb := SD'Diff(b, v);
         cur := SD'Merge(cur, sb, "DPrime")[2];
@@ -182,63 +182,44 @@ StepsD(expr, var) :=
 ];
 
 /* 基本函数(链式) */
-10 # SD'Diff(Sin(_u), _v) <--
+/* 函数规则通用驱动:对 f(u) 施加外层导数公式 after(含 DPrime(u) 待定内层导数),
+   然后递归展开内层 u。u = v(参数恰为自变量)登记 "<name>-rule" 键,
+   复合时登记 "<name>-chain-rule" 键 —— 链式法则显式入册。
+   各外层导数公式与 deriv.rep 的规范形一致,Tidy/Simplify 可直接衔接。 */
+SD'FuncDiff(name, f, after, u, v) :=
 [
-  Local(steps, cur, p, su);
-  steps := {{"sin-rule", "p", Sin(u), Cos(u) * DPrime(u)}};
-  cur := Cos(u) * DPrime(u);
+  Local(steps, cur, su);
+  steps := {{If (u = v, ConcatStrings(name, "-rule"), ConcatStrings(name, "-chain-rule")), "p", f, after}};
+  cur := after;
   su := SD'Diff(u, v);
   cur := SD'Merge(cur, su, "DPrime")[2];
   steps := Concat(steps, su[1]);
   {steps, cur};
 ];
 
-10 # SD'Diff(Cos(_u), _v) <--
-[
-  Local(steps, cur, p, su);
-  steps := {{"cos-rule", "p", Cos(u), (-Sin(u)) * DPrime(u)}};
-  cur := (-Sin(u)) * DPrime(u);
-  su := SD'Diff(u, v);
-  cur := SD'Merge(cur, su, "DPrime")[2];
-  steps := Concat(steps, su[1]);
-  {steps, cur};
-];
+10 # SD'Diff(Sin(_u), _v) <-- SD'FuncDiff("sin", Sin(u), Cos(u) * DPrime(u), u, v);
+10 # SD'Diff(Cos(_u), _v) <-- SD'FuncDiff("cos", Cos(u), (-Sin(u)) * DPrime(u), u, v);
+10 # SD'Diff(Exp(_u), _v) <-- SD'FuncDiff("exp", Exp(u), Exp(u) * DPrime(u), u, v);
+10 # SD'Diff(Ln(_u), _v) <-- SD'FuncDiff("ln", Ln(u), DPrime(u) / u, u, v);
+10 # SD'Diff(Sqrt(_u), _v) <-- SD'FuncDiff("sqrt", Sqrt(u), DPrime(u) / (2 * Sqrt(u)), u, v);
 
-10 # SD'Diff(Exp(_u), _v) <--
-[
-  Local(steps, cur, p, su);
-  steps := {{"exp-rule", "p", Exp(u), Exp(u) * DPrime(u)}};
-  cur := Exp(u) * DPrime(u);
-  su := SD'Diff(u, v);
-  cur := SD'Merge(cur, su, "DPrime")[2];
-  steps := Concat(steps, su[1]);
-  {steps, cur};
-];
+/* 三角(导数规范形:Tan 为 1/Cos^2)。注意 Cot/Sec/Csc 在引擎求值时
+   即被规范化(1/Tan、1/Cos、1/Sin),不会作为函数实体进入本层,
+   故不设规则 —— 商法则/幂规则会接管其组合形式。 */
+10 # SD'Diff(Tan(_u), _v) <-- SD'FuncDiff("tan", Tan(u), DPrime(u) / Cos(u) ^ 2, u, v);
 
-10 # SD'Diff(Ln(_u), _v) <--
-[
-  Local(steps, cur, p, su);
-  steps := {{"ln-rule", "p", Ln(u), DPrime(u) / u}};
-  cur := DPrime(u) / u;
-  su := SD'Diff(u, v);
-  cur := SD'Merge(cur, su, "DPrime")[2];
-  steps := Concat(steps, su[1]);
-  {steps, cur};
-];
+/* 反三角(ArcSin 为 1/Sqrt(1-u^2),ArcCos 带负号,ArcTan 为 1/(1+u^2)) */
+10 # SD'Diff(ArcSin(_u), _v) <-- SD'FuncDiff("arcsin", ArcSin(u), DPrime(u) / Sqrt(1 - u ^ 2), u, v);
+10 # SD'Diff(ArcCos(_u), _v) <-- SD'FuncDiff("arccos", ArcCos(u), (- DPrime(u)) / Sqrt(1 - u ^ 2), u, v);
+10 # SD'Diff(ArcTan(_u), _v) <-- SD'FuncDiff("arctan", ArcTan(u), DPrime(u) / (1 + u ^ 2), u, v);
 
-10 # SD'Diff(Sqrt(_u), _v) <--
-[
-  Local(steps, cur, p, su);
-  steps := {{"sqrt-rule", "p", Sqrt(u), DPrime(u) / (2 * Sqrt(u))}};
-  cur := DPrime(u) / (2 * Sqrt(u));
-  su := SD'Diff(u, v);
-  cur := SD'Merge(cur, su, "DPrime")[2];
-  steps := Concat(steps, su[1]);
-  {steps, cur};
-];
+/* 双曲(Sinh 为 Cosh,Cosh 为 Sinh,Tanh 为 Sech^2) */
+10 # SD'Diff(Sinh(_u), _v) <-- SD'FuncDiff("sinh", Sinh(u), Cosh(u) * DPrime(u), u, v);
+10 # SD'Diff(Cosh(_u), _v) <-- SD'FuncDiff("cosh", Cosh(u), Sinh(u) * DPrime(u), u, v);
+10 # SD'Diff(Tanh(_u), _v) <-- SD'FuncDiff("tanh", Tanh(u), Sech(u) ^ 2 * DPrime(u), u, v);
 
 /* ============================================================
-   积分步骤 StepsI(v1:线性/幂/基本函数/u-substitution/兜底)
+   积分步骤 StepsI(线性/幂/基本函数表/parts/u-substitution/兜底)
    ============================================================ */
 
 StepsI(expr, var) :=
@@ -263,15 +244,22 @@ SI'USub(integrand, g, fam, rest, v) :=
   /* 精确结构替换:先 g^2 → u^2(覆盖 1/(g^2+1) 这类),再 g → u */
   fu := ApplyPure("Subst", {g ^ 2, u ^ 2, c * fam});
   fu := ApplyPure("Subst", {g, u, fu});
-  steps := {{"u-sub-rule", "p", integrand, Int(fu)}};
-  cur := Int(fu);
-  /* 原始步骤原样拼接;merge 只用于推进 cur(取其最终值) */
-  sub := SI'Diff(fu, u);
-  cur := SD'Merge(cur, sub, "Int")[2];
-  steps := Concat(steps, sub[1]);
-  /* 回代 u → g */
-  steps := Append(steps, {"back-sub-rule", "s", u, g});
-  {steps, ApplyPure("Subst", {u, g, cur})};
+  If (fu = c * fam,
+    /* 替换无进展:常数被规范型吸收后 g 已找不到(如 1/(2*u) 的 c*fam
+       规范成 1/(4*u),2*u 不再是子项)。此时再对 fu 换元只会对自身
+       输出无限递归(1/(2u)→1/(4u)→1/(16u)→...),改交引擎直积。 */
+    {{{"direct", "p", integrand, Integrate(v) integrand}}, Integrate(v) integrand},
+    [
+      steps := {{"u-sub-rule", "p", integrand, Int(fu)}};
+      cur := Int(fu);
+      /* 原始步骤原样拼接;merge 只用于推进 cur(取其最终值) */
+      sub := SI'Diff(fu, u);
+      cur := SD'Merge(cur, sub, "Int")[2];
+      steps := Concat(steps, sub[1]);
+      /* 回代 u → g */
+      steps := Append(steps, {"back-sub-rule", "s", u, g});
+      {steps, ApplyPure("Subst", {u, g, cur})};
+    ]);
 ];
 
 /* 兜底(最先定义):常数 / 自变量 / 未知结构(引擎直接积分) */
@@ -345,6 +333,21 @@ SI'USub(integrand, g, fam, rest, v) :=
   {{{"cos-rule", "p", Cos(u), Sin(u)}}, Sin(u)};
 10 # SI'Diff(Exp(_u), _v)_(u = v) <--
   {{{"exp-rule", "p", Exp(u), Exp(u)}}, Exp(u)};
+
+/* 三角/双曲基本表(规范形与 integrate.rep 一致) */
+10 # SI'Diff(Tan(_u), _v)_(u = v) <--
+  {{{"tan-rule", "p", Tan(u), -Ln(Cos(u))}}, -Ln(Cos(u))};
+10 # SI'Diff(Sinh(_u), _v)_(u = v) <--
+  {{{"sinh-rule", "p", Sinh(u), Cosh(u)}}, Cosh(u)};
+10 # SI'Diff(Cosh(_u), _v)_(u = v) <--
+  {{{"cosh-rule", "p", Cosh(u), Sinh(u)}}, Sinh(u)};
+10 # SI'Diff(Tanh(_u), _v)_(u = v) <--
+  {{{"tanh-rule", "p", Tanh(u), Ln(Cosh(u))}}, Ln(Cosh(u))};
+
+/* 反正弦形:∫c/Sqrt(1 - u^2) du = c*ArcSin(u),与 arctan-rule 同族;
+   常数 1 硬编码,避开减法规范型的顺序问题(与 arctan 处的踩坑同源) */
+10 # SI'Diff(_c / Sqrt(1 - _a ^ 2), _v)_(IsFreeOf(v, c) And a = v) <--
+  {{{"arcsin-rule", "p", c / Sqrt(1 - a ^ 2), c * ArcSin(a)}}, c * ArcSin(a)};
 
 /* ---------- 分部积分:∫u*dv = u*v - ∫v*du(u 按 LIATE 选取,dv = 其余因子) ---------- */
 
@@ -434,6 +437,10 @@ SI'Parts(integrand, u, dvf, vval, var) :=
    解释文案(声明式):数据表 + 查询。
    风格约定:陈述规则本身(公式/操作),不做教学解说
    ("为什么"留白给使用者)—— 与 PLAN §6 的"数据驱动"一致。
+   记法:撇号 = 对积分/求导变量求导;积分公式中 x 泛指积分变量。
+   侧感知:同一规则键在求导/积分两侧语义不同(power-rule 在两侧
+   是两条公式),积分侧用 "i:" 前缀键覆盖,由 Steps'ExplainFor
+   先查侧键、未登记再回退通用键;仅单侧使用的规则直接登记通用键。
    ============================================================ */
 
 /* 数据即规则:每条文案 = 一条 10 # 规则(声明式数据表),
@@ -445,43 +452,122 @@ RuleBase("Steps'Text", {key});
 /* 兜底必须定义在最前(同优先级后定义胜出,§7.2.2) */
 10 # Steps'Text(_key) <-- "";
 
-10 # Steps'Text("const-rule") <-- "常数求导为 0";
-10 # Steps'Text("identity-rule") <-- "自变量对自身求导为 1";
+/* ---------- 求导侧(通用键默认即求导语义) ---------- */
+10 # Steps'Text("const-rule") <-- "常数法则: c' = 0";
+10 # Steps'Text("identity-rule") <-- "自变量法则: x' = 1";
+10 # Steps'Text("d:direct") <-- "直接求导";
+10 # Steps'Text("constant-multiple-rule") <-- "常数倍法则: (c*u)' = c*u'";
+10 # Steps'Text("sum-rule") <-- "和法则: (f + g)' = f' + g'";
+10 # Steps'Text("product-rule") <-- "积法则: (f*g)' = f'*g + f*g'";
+10 # Steps'Text("quotient-rule") <-- "商法则: (f/g)' = (f'*g - f*g')/g^2";
+10 # Steps'Text("power-rule") <-- "幂法则: (u^n)' = n*u^(n-1)*u'";
+10 # Steps'Text("exponential-rule") <-- "指数法则: (a^u)' = a^u*Ln(a)*u'";
+10 # Steps'Text("sin-rule") <-- "正弦法则: (Sin(u))' = Cos(u)*u'";
+10 # Steps'Text("cos-rule") <-- "余弦法则: (Cos(u))' = -Sin(u)*u'";
+10 # Steps'Text("exp-rule") <-- "自然指数法则: (Exp(u))' = Exp(u)*u'";
+10 # Steps'Text("ln-rule") <-- "对数法则: (Ln(u))' = u'/u";
+10 # Steps'Text("sqrt-rule") <-- "平方根法则: (Sqrt(u))' = u'/(2*Sqrt(u))";
+
+/* 三角/反三角/双曲(M1 新增;规范形与 deriv.rep 一致,Tanh 以引擎规范型 1/Cosh^2 表述) */
+10 # Steps'Text("tan-rule") <-- "正切法则: (Tan(u))' = u'/Cos(u)^2";
+10 # Steps'Text("arcsin-rule") <-- "反正弦法则: (ArcSin(u))' = u'/Sqrt(1 - u^2)";
+10 # Steps'Text("arccos-rule") <-- "反余弦法则: (ArcCos(u))' = -u'/Sqrt(1 - u^2)";
+10 # Steps'Text("arctan-rule") <-- "反正切法则: (ArcTan(u))' = u'/(1 + u^2)";
+10 # Steps'Text("sinh-rule") <-- "双曲正弦法则: (Sinh(u))' = Cosh(u)*u'";
+10 # Steps'Text("cosh-rule") <-- "双曲余弦法则: (Cosh(u))' = Sinh(u)*u'";
+10 # Steps'Text("tanh-rule") <-- "双曲正切法则: (Tanh(u))' = 1/Cosh(u)^2";
+
+/* 链式法则键:复合参数由 SD'FuncDiff 登记 "<name>-chain-rule",
+   文案 = 链式法则标记 + 同一外层公式(u' 为待定内层导数) */
+10 # Steps'Text("sin-chain-rule") <-- "链式法则: (Sin(u))' = Cos(u)*u'";
+10 # Steps'Text("cos-chain-rule") <-- "链式法则: (Cos(u))' = -Sin(u)*u'";
+10 # Steps'Text("exp-chain-rule") <-- "链式法则: (Exp(u))' = Exp(u)*u'";
+10 # Steps'Text("ln-chain-rule") <-- "链式法则: (Ln(u))' = u'/u";
+10 # Steps'Text("sqrt-chain-rule") <-- "链式法则: (Sqrt(u))' = u'/(2*Sqrt(u))";
+10 # Steps'Text("power-chain-rule") <-- "链式法则: (u^n)' = n*u^(n-1)*u'";
+10 # Steps'Text("exponential-chain-rule") <-- "链式法则: (a^u)' = a^u*Ln(a)*u'";
+10 # Steps'Text("tan-chain-rule") <-- "链式法则: (Tan(u))' = u'/Cos(u)^2";
+10 # Steps'Text("arcsin-chain-rule") <-- "链式法则: (ArcSin(u))' = u'/Sqrt(1 - u^2)";
+10 # Steps'Text("arccos-chain-rule") <-- "链式法则: (ArcCos(u))' = -u'/Sqrt(1 - u^2)";
+10 # Steps'Text("arctan-chain-rule") <-- "链式法则: (ArcTan(u))' = u'/(1 + u^2)";
+10 # Steps'Text("sinh-chain-rule") <-- "链式法则: (Sinh(u))' = Cosh(u)*u'";
+10 # Steps'Text("cosh-chain-rule") <-- "链式法则: (Cosh(u))' = Sinh(u)*u'";
+10 # Steps'Text("tanh-chain-rule") <-- "链式法则: (Tanh(u))' = 1/Cosh(u)^2";
+
+/* ---------- 积分侧覆盖("i:" 前缀) ---------- */
 10 # Steps'Text("direct") <-- "直接求导";
-10 # Steps'Text("constant-multiple-rule") <-- "常数倍提出导号";
-10 # Steps'Text("sum-rule") <-- "和法则: 逐项求导";
-10 # Steps'Text("product-rule") <-- "积法则: f'*g + f*g'";
-10 # Steps'Text("quotient-rule") <-- "商法则: (f'*g - f*g')/g^2";
-10 # Steps'Text("power-rule") <-- "幂法则: n*u^(n-1)*u'";
-10 # Steps'Text("exponential-rule") <-- "指数法则: a^u*Ln(a)*u'";
-10 # Steps'Text("sin-rule") <-- "d/dx Sin(u) = Cos(u)*u'";
-10 # Steps'Text("cos-rule") <-- "d/dx Cos(u) = -Sin(u)*u'";
-10 # Steps'Text("exp-rule") <-- "d/dx Exp(u) = Exp(u)*u'";
-10 # Steps'Text("ln-rule") <-- "d/dx Ln(u) = u'/u";
-10 # Steps'Text("sqrt-rule") <-- "d/dx Sqrt(u) = u'/(2*Sqrt(u))";
+10 # Steps'Text("i:direct") <-- "直接积分";
+10 # Steps'Text("i:constant-multiple-rule") <-- "常数倍法则: ∫c*f dx = c*∫f dx";
+10 # Steps'Text("i:sum-rule") <-- "和法则: ∫(f + g) dx = ∫f dx + ∫g dx";
+10 # Steps'Text("i:power-rule") <-- "幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)";
+10 # Steps'Text("i:ln-rule") <-- "对数积分: ∫c/x dx = c*Ln(x)";
+10 # Steps'Text("i:sin-rule") <-- "正弦积分: ∫Sin(x) dx = -Cos(x)";
+10 # Steps'Text("i:cos-rule") <-- "余弦积分: ∫Cos(x) dx = Sin(x)";
+10 # Steps'Text("i:exp-rule") <-- "自然指数积分: ∫Exp(x) dx = Exp(x)";
+
+/* ---------- 仅积分侧使用的规则(通用键) ---------- */
+10 # Steps'Text("const-integral-rule") <-- "常数积分: ∫c dx = c*x";
+10 # Steps'Text("i:tan-rule") <-- "正切积分: ∫Tan(x) dx = -Ln(Cos(x))";
+10 # Steps'Text("i:sinh-rule") <-- "双曲正弦积分: ∫Sinh(x) dx = Cosh(x)";
+10 # Steps'Text("i:cosh-rule") <-- "双曲余弦积分: ∫Cosh(x) dx = Sinh(x)";
+10 # Steps'Text("i:tanh-rule") <-- "双曲正切积分: ∫Tanh(x) dx = Ln(Cosh(x))";
+10 # Steps'Text("i:arctan-rule") <-- "反正切积分: ∫1/(1 + x^2) dx = ArcTan(x)";
+10 # Steps'Text("i:arcsin-rule") <-- "反正弦积分: ∫1/Sqrt(1 - x^2) dx = ArcSin(x)";
+10 # Steps'Text("u-sub-rule") <-- "换元: u = g(x), du = g'(x) dx";
+10 # Steps'Text("back-sub-rule") <-- "回代: u → g(x)";
+10 # Steps'Text("parts-rule") <-- "分部积分: ∫u dv = u*v - ∫v du";
+
+/* ---------- 两侧通用 ---------- */
 10 # Steps'Text("simplify") <-- "化简";
-10 # Steps'Text("const-integral-rule") <-- "常数积分: c*x";
-10 # Steps'Text("u-sub-rule") <-- "换元 u = g(x), du = g'(x) dx";
-10 # Steps'Text("back-sub-rule") <-- "回代 u → g(x)";
-10 # Steps'Text("parts-rule") <-- "分部积分: u*v - ∫v du";
-10 # Steps'Text("arctan-rule") <-- "∫ 1/(1+x^2) dx = ArcTan(x)";
 
 /* 查询入口:未登记键由兜底规则返回 ""(前端回退到规则键本身) */
 Steps'Explain(key) := Steps'Text(key);
 
+/* 侧感知查询:先查 "side:key"(side = "d"/"i"),未登记回退通用键 */
+Steps'ExplainFor(key, side) :=
+[
+  Local(t);
+  t := Steps'Text(ConcatStrings(side, ":", key));
+  If (t = "", Steps'Text(key), t);
+];
+
 /* Full 变体:步骤三元组 {规则, 表达式, 文案},一次调用取齐渲染素材。
    原 StepsD/StepsI 的二元组契约不变(steps.yts 兼容)。 */
-Steps'Annotate(steps) :=
+Steps'Annotate(steps, side) :=
 [
   Local(i, s, out);
   out := {};
   For (i := 1, i <= Length(steps), i++)
   [
     s := steps[i];
-    out := Append(out, {s[1], s[2], Steps'Explain(s[1])});
+    out := Append(out, {s[1], s[2], Steps'ExplainFor(s[1], side)});
   ];
   out;
 ];
 
-StepsD'Full(expr, var) := Steps'Annotate(StepsD(expr, var));
-StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var));
+StepsD'Full(expr, var) := Steps'Annotate(StepsD(expr, var), "d");
+
+/* 高阶导数:对每一阶把上一轮化简后的最终表达式再走一遍完整步骤生成,
+   步骤序列按轮拼接(第 k 轮的步骤即"对 k-1 阶导数再求导"的过程)。 */
+StepsD'Full(expr, var, order) :=
+[
+  Local(cur, out, i, steps);
+  cur := expr;
+  out := {};
+  For (i := 1, i <= order, i++)
+  [
+    steps := Steps'Annotate(StepsD(cur, var), "d");
+    out := Concat(out, steps);
+    cur := steps[Length(steps)][2];
+  ];
+  out;
+];
+StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var), "i");
+
+/* ---------- DPrime 占位符的 TeX 形态 ----------
+   DPrime(t) 是 SD'Merge 的"待定内层导数"占位符;渲染为撇号记法 (t)',
+   避免 GUI 显示 \mathrm{DPrime}。优先级 100 先于 texform.rep 的未知函数
+   兜底(220)。texform.rep 经 packages.ys 懒加载,这里先 Use 显式装载
+   (已装载则跳过),再登记规则。 */
+Use("texform.rep/code.ys");
+100 # TeXForm(DPrime(_x), _p) <-- ConcatStrings("\\left(", TeXForm(x, TeXFormMaxPrec()), "\\right)'");
