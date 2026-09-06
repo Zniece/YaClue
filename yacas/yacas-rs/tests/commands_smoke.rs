@@ -166,3 +166,51 @@ fn macro_hold_arg_math_command_reeval() {
     assert_eq!(run(&mut env, "10 # G(_x,_y) <-- x+y;"), "True");
     assert_eq!(run(&mut env, "G(f(aa),bb)"), "2*aa+bb");
 }
+
+#[test]
+fn math_div_arbitrary_precision() {
+    // 向零截断(契约:MathDiv(-7,3) = -2,Rem 依赖 n - m*Div(n,m) 的符号约定)。
+    // 需装载脚本:裸环境下 `-` 不折算,负字面量到不了命令层。
+    let mut env = Environment::new();
+    boot(&mut env);
+    assert_eq!(run(&mut env, "MathDiv(7, 3)"), "2");
+    assert_eq!(run(&mut env, "MathDiv(-7, 3)"), "-2");
+    assert_eq!(run(&mut env, "MathDiv(7, -3)"), "-2");
+    assert_eq!(run(&mut env, "MathDiv(-7, -3)"), "2");
+    // 超出 i64:曾因 i64 解析失败抛 InvalidArg(2^64 = 18446744073709551616)
+    // i64::MIN / -1 溢出:不得回绕成 i64::MIN,应为 2^63
+    assert_eq!(run(&mut env, "MathDiv(-9223372036854775808, -1)"), "9223372036854775808");
+    assert_eq!(run(&mut env, "MathDiv(18446744073709551616, 2)"), "9223372036854775808");
+    assert_eq!(run(&mut env, "MathDiv(-18446744073709551616, 3)"), "-6148914691236517205");
+    assert_eq!(
+        run(&mut env, "MathDiv(340282366920938463463374607431768211456, 4294967296)"),
+        "79228162514264337593543950336"
+    );
+    // 商为 0 时不得输出 "-0"
+    assert_eq!(run(&mut env, "MathDiv(18446744073709551615, 18446744073709551617)"), "0");
+    assert_eq!(run(&mut env, "MathDiv(-18446744073709551615, 18446744073709551617)"), "0");
+    // 零除数 / 非整数操作数:报错不崩溃
+    let tree = parse_expression(&mut env, "MathDiv(1, 0);").unwrap().unwrap();
+    assert!(eval(&mut env, &tree).is_err());
+    let tree = parse_expression(&mut env, "MathDiv(2.5, 2);").unwrap().unwrap();
+    assert!(eval(&mut env, &tree).is_err());
+}
+
+#[test]
+fn equal_precedence_later_rule_wins() {
+    // 契约(同优先级):后定义者先试。回归锚点:insert_rule 曾在同优先级块内
+    // 按 mid 落点插入,规则顺序随块大小漂移 —— 三条 10# 规则的定义顺序
+    // 与命中顺序在大表场景下会翻转(steps.rep 的规则表正是这种形态)。
+    let mut env = Environment::new();
+    boot(&mut env);
+    assert_eq!(run(&mut env, "10 # h1(_x) <-- 1;"), "True");
+    assert_eq!(run(&mut env, "10 # h1(_x) <-- 2;"), "True");
+    assert_eq!(run(&mut env, "10 # h1(_x) <-- 3;"), "True");
+    assert_eq!(run(&mut env, "h1(0)"), "3");
+    // 与块大小无关:先堆 30 条同优先级规则,再定义的决定性规则仍应胜出
+    for i in 0..30 {
+        assert_eq!(run(&mut env, format!("10 # h2(_x) <-- {i};").as_str()), "True");
+    }
+    assert_eq!(run(&mut env, "10 # h2(_x) <-- 999;"), "True");
+    assert_eq!(run(&mut env, "h2(0)"), "999");
+}

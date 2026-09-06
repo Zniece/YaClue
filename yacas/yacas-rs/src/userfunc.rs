@@ -382,13 +382,17 @@ fn insert_rule(rules: &mut Vec<Rule>, new_rule: Rule) {
             return;
         }
         let mid = (low + high) >> 1;
-        if rules[mid].precedence > precedence {
+        if rules[mid].precedence >= precedence {
+            // Equal precedence must keep searching LEFT so the new rule
+            // lands at the START of its precedence block (later-defined
+            // rules are tried first). Inserting at the first probed hit
+            // would place it at an arbitrary position inside the block,
+            // making rule-selection order depend on block size — scripts
+            // that stack same-precedence rules (steps.rep's rule table)
+            // would flip behavior as the table grows.
             high = mid;
-        } else if rules[mid].precedence < precedence {
-            low = mid + 1;
         } else {
-            rules.insert(mid, new_rule);
-            return;
+            low = mid + 1;
         }
     }
 }

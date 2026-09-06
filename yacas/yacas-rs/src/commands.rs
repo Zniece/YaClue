@@ -3300,16 +3300,52 @@ pub fn cmd_math_ceil(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
 
 /// MathDiv (like upstream LispDiv -> BigNumber::Divide -> ZZ::operator/=):
 /// integer quotient truncated **toward zero** (MathDiv(-7,3) = -2, not -3;
-/// Rem relies on n - m*Div(n,m) giving -1).
+/// Rem relies on n - m*Div(n,m) giving -1). Operands are arbitrary-precision
+/// integers (FactorizeInt/ContFrac/simplify paths divide numbers beyond the
+/// i64 range); a fast i64 path covers the common small-operand case.
 pub fn cmd_math_div(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let (a, b) = two_ints(env, inner)?;
-    if b == 0 {
+    let a = eval(env, arg(inner, 0)?)?;
+    let b = eval(env, arg(inner, 1)?)?;
+    let at = a
+        .number_string()
+        .or_else(|| a.atom_string().map(|s| s.to_string()))
+        .ok_or(YacasError::InvalidArg)?
+        .trim()
+        .to_string();
+    let bt = b
+        .number_string()
+        .or_else(|| b.atom_string().map(|s| s.to_string()))
+        .ok_or(YacasError::InvalidArg)?
+        .trim()
+        .to_string();
+    if let (Ok(x), Ok(y)) = (at.parse::<i64>(), bt.parse::<i64>()) {
+        if y == 0 {
+            return Err(YacasError::InvalidArg);
+        }
+        if !(x == i64::MIN && y == -1) {
+            // i64::MIN / -1 溢出(wrapping_div 会静默回绕成 i64::MIN),回落大数路径
+            return Ok(int_number(x.wrapping_div(y)));
+        }
+    }
+    let neg = at.starts_with('-') ^ bt.starts_with('-');
+    let x = crate::number::nat::Nat::from_decimal(at.trim_start_matches('-'))
+        .ok_or(YacasError::InvalidArg)?;
+    let y = crate::number::nat::Nat::from_decimal(bt.trim_start_matches('-'))
+        .ok_or(YacasError::InvalidArg)?;
+    if y.is_zero() {
         return Err(YacasError::InvalidArg);
     }
-    Ok(int_number(a.wrapping_div(b)))
+    let (q, _) = x.divrem(&y).ok_or(YacasError::InvalidArg)?;
+    let text = q.to_decimal();
+    let text = if neg && !q.is_zero() {
+        format!("-{text}")
+    } else {
+        text
+    };
+    Ok(num_text(text))
 }
 
 /// MathGcd (like upstream LispGcd): Euclidean algorithm on the absolute values
