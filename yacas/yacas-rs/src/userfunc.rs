@@ -23,6 +23,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// 规则尝试统计(YACAS_RULE_STATS=1 时启用):诊断每节点全量扫描开销(D6)。
+/// TRIES/MATCHES 全量计数;MATCH_TIME 按 1/256 采样外推(时钟读取降本)。
+pub static RULE_TRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static RULE_MATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static RULE_MATCH_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 use crate::env::Environment;
 use crate::errors::YacasError;
 use crate::value::{copy_node, ObjectKind, LispObject};
@@ -253,7 +259,20 @@ impl BranchingUserFunction {
                     ),
                 }
             }
+            let sampled = if std::env::var_os("YACAS_RULE_STATS").is_some() {
+                RULE_TRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0xFF == 0
+            } else {
+                false
+            };
+            let t_start = if sampled { Some(std::time::Instant::now()) } else { None };
             let matched = rule_matches(&kind, env, arguments)?;
+            if let Some(t0) = t_start {
+                // 1/256 采样,外推全量谓词耗时
+                RULE_MATCH_TIME.fetch_add(t0.elapsed().as_nanos() as u64 * 256, std::sync::atomic::Ordering::Relaxed);
+            }
+            if matched && std::env::var_os("YACAS_RULE_STATS").is_some() {
+                RULE_MATCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             if matched {
                 let body = rule_body(&kind).expect("a rule always has a body");
                 if is_macro {
