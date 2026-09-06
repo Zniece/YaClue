@@ -529,10 +529,17 @@ fn eval_cmd(
     yacas_rs::evaluator::eval(env, &tree)
 }
 
+/// Rust 引擎单次求值超时(病态输入的兜底;正常用例远低于此值,θ 链最重 ~3s)
+const RUST_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl Engine for RustEngine {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
+        // 每次求值挂截止时间:引擎在 eval 循环内按 1024 操作采样检查,
+        // 超时返回 UserInterrupt(病态输入不再挂死前端)
+        self.env.set_eval_timeout(Some(RUST_EVAL_TIMEOUT));
         // 求值一次,同一结果对象打两种形式(比 ReplEngine 三次求值更忠实)
         let result = eval_cmd(&mut self.env, command).map_err(|e| EngineError::Eval(format!("{e:?}")))?;
+        self.env.set_eval_timeout(None);
         let fullform = yacas_rs::printer::full_form(&result);
         let expr = Expr::parse_fullform(&fullform).map_err(EngineError::Parse)?;
         // TeXForm 需再求值一次(它是脚本层命令,作用于表达式本身)

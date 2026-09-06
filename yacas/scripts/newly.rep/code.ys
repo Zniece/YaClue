@@ -33,8 +33,9 @@ UniqueConstant() <--
 /* Accept any variable. */
 10 # IsFreeOf(_expr,_expr) <-- False;
 
-/* Otherwise check all leafs of a function. */
-11 # IsFreeOf(_var,expr_IsFunction) <-- IsFreeOf(var,Tail(Listify(expr)));
+/* Otherwise check all leafs of a function (head included:
+   IsFreeOf(Integrate, Integrate(x)(x)) must be False) */
+11 # IsFreeOf(_var,expr_IsFunction) <-- Not(var = Listify(expr)[1]) And IsFreeOf(var, Tail(Listify(expr)));
 
 /* Else it doesn't depend on any variable. */
 12 # IsFreeOf(_var,_expr) <-- True;
