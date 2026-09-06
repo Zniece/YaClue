@@ -99,6 +99,7 @@ const CASES: &[(&str, &str, &str)] = &[
     ("I", "Sqrt(4 - x^2)", "x"),  // θ 机器(三角换元完整故事)
     ("I", "x^2/Sqrt(4 - x^2)", "x"), // θ 机器(R = x^2)
     ("I", "x*Sqrt(4 - x^2)", "x"), // θ 机器(内嵌 u-sub)
+    ("I", "x^2*Sqrt(4 - x^2)", "x"), // θ 机器(混合积,Sin^2*Cos^2 → 恒等展开)
 ];
 
 /// code.ys 登记的全部规则键(普通键,含顶层追加的 simplify)。
@@ -127,6 +128,7 @@ const EXPECTED_RULES: &[&str] = &[
     "method-u-sub",
     "partial-fraction-rule",
     "parts-rule",
+    "power-reduction-rule",
     "power-rule",
     "product-rule",
     "quotient-rule",

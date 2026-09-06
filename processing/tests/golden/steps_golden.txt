@@ -270,20 +270,20 @@ sqrt-diff-rule	(3 * Ln((x + Sqrt(((x ^ 2) - 4)))))	3 \ln \left( x + \sqrt{x ^{2}
 method-trig-sub	Int(Sqrt((4 - (x ^ 2))))	\mathrm{ Int }\left( \sqrt{4 - x ^{2}}\right) 	方法: 三角换元
 trig-sub-rule	Int((4 * (Cos(theta) ^ 2)))	\mathrm{ Int }\left( 4 \left( \cos \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
 constant-multiple-rule	(4 * Int((Cos(theta) ^ 2)))	4 \mathrm{ Int }\left( \left( \cos \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
-direct	(4 * ((theta - (Sin((-2 * theta)) / 2)) / 2))	2 \left( \theta  - \frac{ - \sin 2 \theta }{2} \right) 	直接积分
-trig-identity-rule	(2 * (theta - ((- (2 * (Sin(theta) * Cos(theta)))) / 2)))	2 \left( \theta  - \frac{ - 2 \sin \theta  \cos \theta }{2} \right) 	三角恒等展开
-trig-sub-back	(2 * (theta - ((- (2 * ((x / 2) * Cos(theta)))) / 2)))	2 \left( \theta  - \frac{ - \cos \theta  x}{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
-trig-sub-back	(2 * (theta - ((- ((Sqrt((4 - (x ^ 2))) / 2) * x)) / 2)))	2 \left( \theta  - \frac{ - \frac{x \sqrt{4 - x ^{2}}}{2} }{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
-back-sub-rule	(2 * (ArcSin((x / 2)) - ((- ((x * Sqrt((4 - (x ^ 2)))) / 2)) / 2)))	2 \left( \arcsin \frac{x}{2}  - \frac{ - \frac{x \sqrt{4 - x ^{2}}}{2} }{2} \right) 	回代: u → g(x)
+power-reduction-rule	(4 * (((Cos(theta) * Sin(theta)) + Int(1)) / 2))	2 \left( \cos \theta  \sin \theta  + \mathrm{ Int }\left( 1\right) \right) 	幂约简递推: ∫Sin^n(u) du = -(Sin^(n-1)(u)*Cos(u))/n + ((n-1)/n)*∫Sin^(n-2)(u) du (Cos^n 对称)
+const-integral-rule	(2 * ((Cos(theta) * Sin(theta)) + theta))	2 \left( \cos \theta  \sin \theta  + \theta \right) 	常数积分: ∫c dx = c*x
+trig-sub-back	(2 * ((Cos(theta) * (x / 2)) + theta))	2 \left( \frac{\cos \theta  x}{2}  + \theta \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+trig-sub-back	(2 * ((((Sqrt((4 - (x ^ 2))) / 2) * x) / 2) + theta))	2 \left( \frac{x \sqrt{4 - x ^{2}}}{4}  + \theta \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+back-sub-rule	(2 * (((x * Sqrt((4 - (x ^ 2)))) / 4) + ArcSin((x / 2))))	2 \left( \frac{x \sqrt{4 - x ^{2}}}{4}  + \arcsin \frac{x}{2} \right) 	回代: u → g(x)
 ### I x^2/Sqrt(4 - x^2) @ x
 method-trig-sub	Int(((x ^ 2) / Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( \frac{x ^{2}}{\sqrt{4 - x ^{2}}} \right) 	方法: 三角换元
 trig-sub-rule	Int((4 * (Sin(theta) ^ 2)))	\mathrm{ Int }\left( 4 \left( \sin \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
 constant-multiple-rule	(4 * Int((Sin(theta) ^ 2)))	4 \mathrm{ Int }\left( \left( \sin \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
-direct	(4 * ((theta + (Sin((-2 * theta)) / 2)) / 2))	2 \left( \theta  - \frac{\sin 2 \theta }{2} \right) 	直接积分
-trig-identity-rule	(2 * (theta + ((- (2 * (Sin(theta) * Cos(theta)))) / 2)))	2 \left( \theta  - \sin \theta  \cos \theta \right) 	三角恒等展开
-trig-sub-back	(2 * (theta - ((x / 2) * Cos(theta))))	2 \left( \theta  - \frac{\cos \theta  x}{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
-trig-sub-back	(2 * (theta - (((Sqrt((4 - (x ^ 2))) / 2) * x) / 2)))	2 \left( \theta  - \frac{x \sqrt{4 - x ^{2}}}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
-back-sub-rule	(2 * (ArcSin((x / 2)) - ((x * Sqrt((4 - (x ^ 2)))) / 4)))	2 \left( \arcsin \frac{x}{2}  - \frac{x \sqrt{4 - x ^{2}}}{4} \right) 	回代: u → g(x)
+power-reduction-rule	(4 * ((Int(1) / 2) - ((Sin(theta) * Cos(theta)) / 2)))	4 \left( \frac{\mathrm{ Int }\left( 1\right) }{2}  - \frac{\sin \theta  \cos \theta }{2} \right) 	幂约简递推: ∫Sin^n(u) du = -(Sin^(n-1)(u)*Cos(u))/n + ((n-1)/n)*∫Sin^(n-2)(u) du (Cos^n 对称)
+const-integral-rule	(4 * ((theta / 2) - ((Sin(theta) * Cos(theta)) / 2)))	4 \left( \frac{\theta }{2}  - \frac{\sin \theta  \cos \theta }{2} \right) 	常数积分: ∫c dx = c*x
+trig-sub-back	(4 * ((theta / 2) - (((x / 2) * Cos(theta)) / 2)))	4 \left( \frac{\theta }{2}  - \frac{\cos \theta  x}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+trig-sub-back	(4 * ((theta / 2) - (((Sqrt((4 - (x ^ 2))) / 2) * x) / 4)))	4 \left( \frac{\theta }{2}  - \frac{x \sqrt{4 - x ^{2}}}{8} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+back-sub-rule	(4 * ((ArcSin((x / 2)) / 2) - ((x * Sqrt((4 - (x ^ 2)))) / 8)))	4 \left( \frac{\arcsin \frac{x}{2} }{2}  - \frac{x \sqrt{4 - x ^{2}}}{8} \right) 	回代: u → g(x)
 ### I x*Sqrt(4 - x^2) @ x
 method-trig-sub	Int((x * Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( x \sqrt{4 - x ^{2}}\right) 	方法: 三角换元
 trig-sub-rule	Int((8 * (Sin(theta) * (Cos(theta) ^ 2))))	\mathrm{ Int }\left( 8 \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
@@ -296,3 +296,12 @@ back-sub-rule	((-8 * (Cos(theta) ^ 3)) / 3)	\frac{ - 8 \left( \cos \theta \right
 trig-sub-back	((-8 * (Cos(theta) ^ 3)) / 3)	\frac{ - 8 \left( \cos \theta \right)  ^{3}}{3} 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 trig-sub-back	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 back-sub-rule	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	回代: u → g(x)
+### I x^2*Sqrt(4 - x^2) @ x
+method-trig-sub	Int(((x ^ 2) * Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( x ^{2} \sqrt{4 - x ^{2}}\right) 	方法: 三角换元
+trig-sub-rule	Int((16 * ((Sin(theta) ^ 2) * (Cos(theta) ^ 2))))	\mathrm{ Int }\left( 16 \left( \sin \theta \right)  ^{2} \left( \cos \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
+constant-multiple-rule	(16 * Int(((Sin(theta) ^ 2) * (Cos(theta) ^ 2))))	16 \mathrm{ Int }\left( \left( \sin \theta \right)  ^{2} \left( \cos \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+direct	(16 * ((theta + (Sin((-4 * theta)) / 4)) / 8))	2 \left( \theta  - \frac{\sin 4 \theta }{4} \right) 	直接积分
+trig-identity-rule	(2 * (theta + ((- (4 * ((Sin(theta) * Cos(theta)) * ((2 * (Cos(theta) ^ 2)) - 1)))) / 4)))	2 \left( \theta  - \sin \theta  \cos \theta  \left( 2 \left( \cos \theta \right)  ^{2} - 1\right) \right) 	三角恒等展开
+trig-sub-back	(2 * (theta - (((x / 2) * Cos(theta)) * ((2 * (Cos(theta) ^ 2)) - 1))))	2 \left( \theta  - \frac{\left( 2 \left( \cos \theta \right)  ^{2} - 1\right)  \cos \theta  x}{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+trig-sub-back	(2 * (theta - ((((2 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 2)) - 1) * ((Sqrt((4 - (x ^ 2))) / 2) * x)) / 2)))	2 \left( \theta  - \frac{\left( 2 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{2} - 1\right)  x \sqrt{4 - x ^{2}}}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+back-sub-rule	(2 * (ArcSin((x / 2)) - ((((2 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 2)) - 1) * (x * Sqrt((4 - (x ^ 2))))) / 4)))	2 \left( \arcsin \frac{x}{2}  - \frac{\left( 2 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{2} - 1\right)  x \sqrt{4 - x ^{2}}}{4} \right) 	回代: u → g(x)

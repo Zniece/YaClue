@@ -406,6 +406,40 @@ SI'PartFrac(integrand, p, q, v) :=
 10 # SI'Diff(Tanh(_u), _v)_(u = v) <--
   {{{"tanh-rule", "p", Tanh(u), Ln(Cosh(u))}}, Ln(Cosh(u))};
 
+/* ---------- 幂约简递推:Sin^n / Cos^n(u = v,n 整数 >= 2) ----------
+   ∫Sin^n u du = -(Sin^(n-1)u*Cosu)/n + ((n-1)/n)*∫Sin^(n-2)u du,
+   ∫Cos^n u du 对称。每步显式展示,替代引擎 Integrate 的黑盒 direct;
+   递推落到 n=1(具名函数规则)或 n=0(常数规则)。 */
+
+SI'SinPow(n, u) :=
+[
+  Local(steps, cur, sf);
+  steps := {{"power-reduction-rule", "p", Sin(u) ^ n,
+             -(Sin(u) ^ (n - 1) * Cos(u)) / n + ((n - 1) / n) * Int(Sin(u) ^ (n - 2))}};
+  cur := -(Sin(u) ^ (n - 1) * Cos(u)) / n + ((n - 1) / n) * Int(Sin(u) ^ (n - 2));
+  sf := SI'Diff(Sin(u) ^ (n - 2), u);
+  cur := SD'Merge(cur, sf, "Int")[2];
+  steps := Concat(steps, sf[1]);
+  {steps, cur};
+];
+
+SI'CosPow(n, u) :=
+[
+  Local(steps, cur, sf);
+  steps := {{"power-reduction-rule", "p", Cos(u) ^ n,
+             (Cos(u) ^ (n - 1) * Sin(u)) / n + ((n - 1) / n) * Int(Cos(u) ^ (n - 2))}};
+  cur := (Cos(u) ^ (n - 1) * Sin(u)) / n + ((n - 1) / n) * Int(Cos(u) ^ (n - 2));
+  sf := SI'Diff(Cos(u) ^ (n - 2), u);
+  cur := SD'Merge(cur, sf, "Int")[2];
+  steps := Concat(steps, sf[1]);
+  {steps, cur};
+];
+
+10 # SI'Diff(Sin(_u) ^ _n, _v)_(u = v And IsInteger(n) And n >= 2) <--
+  SI'SinPow(n, u);
+10 # SI'Diff(Cos(_u) ^ _n, _v)_(u = v And IsInteger(n) And n >= 2) <--
+  SI'CosPow(n, u);
+
 /* 反正弦形:∫c/Sqrt(d - v^2) dv = c*ArcSin(v/Sqrt(d))(d 为正数常数;
    一般化自 d=1 特例)。 */
 10 # SI'Diff(_c / Sqrt(_d - _a ^ 2), _v)_(d > 0 And IsFreeOf(v, c) And a = v) <--
@@ -749,6 +783,7 @@ RuleBase("Steps'Text", {key});
 10 # Steps'Text("method-trig-sub") <-- "方法: 三角换元";
 10 # Steps'Text("trig-sub-rule") <-- "三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)";
 10 # Steps'Text("trig-identity-rule") <-- "三角恒等展开";
+10 # Steps'Text("power-reduction-rule") <-- "幂约简递推: ∫Sin^n(u) du = -(Sin^(n-1)(u)*Cos(u))/n + ((n-1)/n)*∫Sin^(n-2)(u) du (Cos^n 对称)";
 10 # Steps'Text("trig-sub-back") <-- "三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)";
 
 /* ---------- 两侧通用 ---------- */
