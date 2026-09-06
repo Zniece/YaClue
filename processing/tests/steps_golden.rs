@@ -87,6 +87,18 @@ const CASES: &[(&str, &str, &str)] = &[
     ("I", "2/Sqrt(1 - x^2)", "x"), // arcsin-rule(反正弦形)
     ("I", "1/(x^2 - 1)", "x"),    // partial-fraction-rule + sum + ln ×2
     ("I", "x/(x^2 + 3*x + 2)", "x"), // partial-fraction-rule(分子含变量)
+    ("I", "Tan(x^2)*2*x", "x"),   // u-sub(Tan,带因子)+ tan-rule
+    ("I", "Sinh(2*x)", "x"),      // u-sub(Sinh,无因子,g' 常数)
+    ("I", "2*x*Cosh(x^2)", "x"),  // u-sub(Cosh,反向序)
+    ("I", "Tanh(x^3)*3*x^2", "x"), // u-sub(Tanh,带因子)
+    ("I", "1/(x^2 + 4)", "x"),    // arctan-rule(一般 a,M2c)
+    ("I", "1/Sqrt(4 - x^2)", "x"), // arcsin-rule(一般 a)
+    ("I", "x/Sqrt(x^2 + 4)", "x"), // power-rule(rest/Sqrt(g) 复合一步式)
+    ("I", "1/Sqrt(x^2 + 4)", "x"), // sqrt-sum-rule(引擎无此路径)
+    ("I", "3/Sqrt(x^2 - 4)", "x"), // sqrt-diff-rule(引擎无此路径)
+    ("I", "Sqrt(4 - x^2)", "x"),  // θ 机器(三角换元完整故事)
+    ("I", "x^2/Sqrt(4 - x^2)", "x"), // θ 机器(R = x^2)
+    ("I", "x*Sqrt(4 - x^2)", "x"), // θ 机器(内嵌 u-sub)
 ];
 
 /// code.ys 登记的全部规则键(普通键,含顶层追加的 simplify)。
@@ -109,6 +121,10 @@ const EXPECTED_RULES: &[&str] = &[
     "exponential-rule",
     "identity-rule",
     "ln-rule",
+    "method-partial-fraction",
+    "method-parts",
+    "method-trig-sub",
+    "method-u-sub",
     "partial-fraction-rule",
     "parts-rule",
     "power-rule",
@@ -117,9 +133,14 @@ const EXPECTED_RULES: &[&str] = &[
     "sin-rule",
     "simplify",
     "sinh-rule",
+    "sqrt-diff-rule",
     "sqrt-rule",
+    "sqrt-sum-rule",
     "sum-rule",
     "tan-rule",
+    "trig-identity-rule",
+    "trig-sub-back",
+    "trig-sub-rule",
     "tanh-rule",
     "u-sub-rule",
 ];

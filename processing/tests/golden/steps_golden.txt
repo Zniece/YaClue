@@ -159,7 +159,7 @@ exp-rule	(- Exp(x))	 - \exp \left( x\right) 	自然指数积分: ∫Exp(x) dx = 
 ### I 2/x @ x
 ln-rule	(2 * Ln(x))	2 \ln x	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
 ### I 1/(1 + x^2) @ x
-arctan-rule	ArcTan(x)	\arctan x	反正切积分: ∫1/(1 + x^2) dx = ArcTan(x)
+arctan-rule	ArcTan(x)	\arctan x	反正切积分: ∫c/(x^2 + a^2) dx = (c/a)*ArcTan(x/a)
 ### I Sin(x) @ x
 sin-rule	(- Cos(x))	 - \cos x	正弦积分: ∫Sin(x) dx = -Cos(x)
 ### I Cos(x) @ x
@@ -169,29 +169,38 @@ exp-rule	Exp(x)	\exp \left( x\right) 	自然指数积分: ∫Exp(x) dx = Exp(x)
 ### I Tan(x) @ x
 tan-rule	(- Ln(Cos(x)))	 - \ln \cos x	正切积分: ∫Tan(x) dx = -Ln(Cos(x))
 ### I x*Sin(x) @ x
+method-parts	Int((x * Sin(x)))	\mathrm{ Int }\left( x \sin x\right) 	方法: 分部积分法
 parts-rule	(- ((x * Cos(x)) + Int((- Cos(x)))))	 - \left( x \cos x + \mathrm{ Int }\left(  - \cos x\right) \right) 	分部积分: ∫u dv = u*v - ∫v du
 constant-multiple-rule	(- ((x * Cos(x)) + (- Int(Cos(x)))))	\mathrm{ Int }\left( \cos x\right)  - x \cos x	常数倍法则: ∫c*f dx = c*∫f dx
 cos-rule	(Sin(x) - (x * Cos(x)))	\sin x - x \cos x	余弦积分: ∫Cos(x) dx = Sin(x)
 ### I x^2*Sin(x) @ x
+method-parts	Int(((x ^ 2) * Sin(x)))	\mathrm{ Int }\left( x ^{2} \sin x\right) 	方法: 分部积分法
 parts-rule	(- (((x ^ 2) * Cos(x)) + Int((- (Cos(x) * (2 * x))))))	 - \left( x ^{2} \cos x + \mathrm{ Int }\left(  - \cos x 2 x\right) \right) 	分部积分: ∫u dv = u*v - ∫v du
 constant-multiple-rule	(- (((x ^ 2) * Cos(x)) + (- Int((Cos(x) * (2 * x))))))	\mathrm{ Int }\left( \cos x 2 x\right)  - x ^{2} \cos x	常数倍法则: ∫c*f dx = c*∫f dx
 direct	((2 * ((x * Sin(x)) + Cos(x))) - ((x ^ 2) * Cos(x)))	2 \left( x \sin x + \cos x\right)  - x ^{2} \cos x	直接积分
 ### I Ln(x) @ x
+method-parts	Int(Ln(x))	\mathrm{ Int }\left( \ln x\right) 	方法: 分部积分法
 parts-rule	((Ln(x) * x) - Int(1))	\ln x x - \mathrm{ Int }\left( 1\right) 	分部积分: ∫u dv = u*v - ∫v du
 const-integral-rule	((Ln(x) * x) - x)	\ln x x - x	常数积分: ∫c dx = c*x
 ### I x*Ln(x) @ x
+method-parts	Int((x * Ln(x)))	\mathrm{ Int }\left( x \ln x\right) 	方法: 分部积分法
 parts-rule	(((Ln(x) * (x ^ 2)) / 2) - Int(((x ^ 2) / (2 * x))))	\frac{\ln x x ^{2}}{2}  - \mathrm{ Int }\left( \frac{x ^{2}}{2 x} \right) 	分部积分: ∫u dv = u*v - ∫v du
 direct	(((Ln(x) * (x ^ 2)) / 2) - ((x ^ 2) / 4))	\frac{\ln x x ^{2}}{2}  - \frac{x ^{2}}{4} 	直接积分
 ### I Sin(x^2)*2*x @ x
 constant-multiple-rule	(2 * Int((Sin((x ^ 2)) * x)))	2 \mathrm{ Int }\left( \sin x ^{2} x\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+method-u-sub	(2 * Int((Sin((x ^ 2)) * x)))	2 \mathrm{ Int }\left( \sin x ^{2} x\right) 	方法: 换元积分法
 u-sub-rule	(2 * Int((Sin(u) / 2)))	2 \mathrm{ Int }\left( \frac{\sin u}{2} \right) 	换元: u = g(x), du = g'(x) dx
-direct	(2 * ((- Cos(u)) / 2))	 - \cos u	直接积分
+constant-multiple-rule	(2 * (Int(Sin(u)) / 2))	\mathrm{ Int }\left( \sin u\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+sin-rule	(- Cos(u))	 - \cos u	正弦积分: ∫Sin(x) dx = -Cos(x)
 back-sub-rule	(- Cos((x ^ 2)))	 - \cos x ^{2}	回代: u → g(x)
 ### I x*Exp(x^2) @ x
+method-u-sub	Int((x * Exp((x ^ 2))))	\mathrm{ Int }\left( x \exp \left( x ^{2}\right) \right) 	方法: 换元积分法
 u-sub-rule	Int((Exp(u) / 2))	\mathrm{ Int }\left( \frac{\exp \left( u\right) }{2} \right) 	换元: u = g(x), du = g'(x) dx
-direct	(Exp(u) / 2)	\frac{\exp \left( u\right) }{2} 	直接积分
+constant-multiple-rule	(Int(Exp(u)) / 2)	\frac{\mathrm{ Int }\left( \exp \left( u\right) \right) }{2} 	常数倍法则: ∫c*f dx = c*∫f dx
+exp-rule	(Exp(u) / 2)	\frac{\exp \left( u\right) }{2} 	自然指数积分: ∫Exp(x) dx = Exp(x)
 back-sub-rule	(Exp((x ^ 2)) / 2)	\frac{\exp \left( x ^{2}\right) }{2} 	回代: u → g(x)
 ### I x/(x^2 + 1) @ x
+method-u-sub	Int((x / ((x ^ 2) + 1)))	\mathrm{ Int }\left( \frac{x}{x ^{2} + 1} \right) 	方法: 换元积分法
 u-sub-rule	Int((1 / (2 * u)))	\mathrm{ Int }\left( \frac{1}{2 u} \right) 	换元: u = g(x), du = g'(x) dx
 ln-rule	(Ln((2 * u)) / 2)	\frac{\ln 2 u}{2} 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
 back-sub-rule	(Ln((2 * ((x ^ 2) + 1))) / 2)	\frac{\ln 2 \left( x ^{2} + 1\right) }{2} 	回代: u → g(x)
@@ -206,15 +215,84 @@ cosh-rule	Sinh(x)	\sinh x	双曲余弦积分: ∫Cosh(x) dx = Sinh(x)
 ### I Tanh(x) @ x
 tanh-rule	Ln(Cosh(x))	\ln \cosh x	双曲正切积分: ∫Tanh(x) dx = Ln(Cosh(x))
 ### I 2/Sqrt(1 - x^2) @ x
-arcsin-rule	(2 * ArcSin(x))	2 \arcsin x	反正弦积分: ∫1/Sqrt(1 - x^2) dx = ArcSin(x)
+arcsin-rule	(2 * ArcSin(x))	2 \arcsin x	反正弦积分: ∫c/Sqrt(a^2 - x^2) dx = c*ArcSin(x/a)
 ### I 1/(x^2 - 1) @ x
+method-partial-fraction	Int((1 / ((x ^ 2) - 1)))	\mathrm{ Int }\left( \frac{1}{x ^{2} - 1} \right) 	方法: 部分分式积分法
 partial-fraction-rule	Int(((1 / (2 * (x - 1))) - (1 / (2 * (x + 1)))))	\mathrm{ Int }\left( \frac{1}{2 \left( x - 1\right) }  - \frac{1}{2 \left( x + 1\right) } \right) 	部分分式: P/Q 分解为最简分式之和,逐项积分
 sum-rule	(Int((-1 / (2 * (x + 1)))) + Int((1 / (2 * (x - 1)))))	\mathrm{ Int }\left( \frac{-1}{2 \left( x + 1\right) } \right)  + \mathrm{ Int }\left( \frac{1}{2 \left( x - 1\right) } \right) 	和法则: ∫(f + g) dx = ∫f dx + ∫g dx
 ln-rule	(((- Ln((2 * (x + 1)))) / 2) + Int((1 / (2 * (x - 1)))))	\mathrm{ Int }\left( \frac{1}{2 \left( x - 1\right) } \right)  - \frac{\ln 2 \left( x + 1\right) }{2} 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
 ln-rule	((Ln((2 * (x - 1))) / 2) - (Ln((2 * (x + 1))) / 2))	\frac{\ln 2 \left( x - 1\right) }{2}  - \frac{\ln 2 \left( x + 1\right) }{2} 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
 ### I x/(x^2 + 3*x + 2) @ x
+method-partial-fraction	Int((x / (((x ^ 2) + (3 * x)) + 2)))	\mathrm{ Int }\left( \frac{x}{x ^{2} + 3 x + 2} \right) 	方法: 部分分式积分法
 partial-fraction-rule	Int(((2 / (x + 2)) - (1 / (x + 1))))	\mathrm{ Int }\left( \frac{2}{x + 2}  - \frac{1}{x + 1} \right) 	部分分式: P/Q 分解为最简分式之和,逐项积分
 sum-rule	(Int((2 / (x + 2))) + Int((-1 / (x + 1))))	\mathrm{ Int }\left( \frac{2}{x + 2} \right)  + \mathrm{ Int }\left( \frac{-1}{x + 1} \right) 	和法则: ∫(f + g) dx = ∫f dx + ∫g dx
 ln-rule	((2 * Ln((x + 2))) + Int((-1 / (x + 1))))	2 \ln \left( x + 2\right)  + \mathrm{ Int }\left( \frac{-1}{x + 1} \right) 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
 ln-rule	((2 * Ln((x + 2))) + (- Ln((x + 1))))	2 \ln \left( x + 2\right)  - \ln \left( x + 1\right) 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
 simplify	((2 * Ln((x + 2))) - Ln((x + 1)))	2 \ln \left( x + 2\right)  - \ln \left( x + 1\right) 	化简
+### I Tan(x^2)*2*x @ x
+constant-multiple-rule	(2 * Int((Tan((x ^ 2)) * x)))	2 \mathrm{ Int }\left( \tan x ^{2} x\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+method-u-sub	(2 * Int((Tan((x ^ 2)) * x)))	2 \mathrm{ Int }\left( \tan x ^{2} x\right) 	方法: 换元积分法
+u-sub-rule	(2 * Int((Tan(u) / 2)))	2 \mathrm{ Int }\left( \frac{\tan u}{2} \right) 	换元: u = g(x), du = g'(x) dx
+constant-multiple-rule	(2 * (Int(Tan(u)) / 2))	\mathrm{ Int }\left( \tan u\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+tan-rule	(- Ln(Cos(u)))	 - \ln \cos u	正切积分: ∫Tan(x) dx = -Ln(Cos(x))
+back-sub-rule	(- Ln(Cos((x ^ 2))))	 - \ln \cos x ^{2}	回代: u → g(x)
+### I Sinh(2*x) @ x
+method-u-sub	Int(Sinh((2 * x)))	\mathrm{ Int }\left( \sinh 2 x\right) 	方法: 换元积分法
+u-sub-rule	Int((Sinh(u) / 2))	\mathrm{ Int }\left( \frac{\sinh u}{2} \right) 	换元: u = g(x), du = g'(x) dx
+constant-multiple-rule	(Int(Sinh(u)) / 2)	\frac{\mathrm{ Int }\left( \sinh u\right) }{2} 	常数倍法则: ∫c*f dx = c*∫f dx
+sinh-rule	(Cosh(u) / 2)	\frac{\cosh u}{2} 	双曲正弦积分: ∫Sinh(x) dx = Cosh(x)
+back-sub-rule	(Cosh((2 * x)) / 2)	\frac{\cosh 2 x}{2} 	回代: u → g(x)
+### I 2*x*Cosh(x^2) @ x
+constant-multiple-rule	(2 * Int((x * Cosh((x ^ 2)))))	2 \mathrm{ Int }\left( x \cosh x ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+method-u-sub	(2 * Int((x * Cosh((x ^ 2)))))	2 \mathrm{ Int }\left( x \cosh x ^{2}\right) 	方法: 换元积分法
+u-sub-rule	(2 * Int((Cosh(u) / 2)))	2 \mathrm{ Int }\left( \frac{\cosh u}{2} \right) 	换元: u = g(x), du = g'(x) dx
+constant-multiple-rule	(2 * (Int(Cosh(u)) / 2))	\mathrm{ Int }\left( \cosh u\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+cosh-rule	Sinh(u)	\sinh u	双曲余弦积分: ∫Cosh(x) dx = Sinh(x)
+back-sub-rule	Sinh((x ^ 2))	\sinh x ^{2}	回代: u → g(x)
+### I Tanh(x^3)*3*x^2 @ x
+constant-multiple-rule	(3 * Int((Tanh((x ^ 3)) * (x ^ 2))))	3 \mathrm{ Int }\left( \tanh x ^{3} x ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+method-u-sub	(3 * Int((Tanh((x ^ 3)) * (x ^ 2))))	3 \mathrm{ Int }\left( \tanh x ^{3} x ^{2}\right) 	方法: 换元积分法
+u-sub-rule	(3 * Int((Tanh(u) / 3)))	3 \mathrm{ Int }\left( \frac{\tanh u}{3} \right) 	换元: u = g(x), du = g'(x) dx
+constant-multiple-rule	(3 * (Int(Tanh(u)) / 3))	\mathrm{ Int }\left( \tanh u\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+tanh-rule	Ln(Cosh(u))	\ln \cosh u	双曲正切积分: ∫Tanh(x) dx = Ln(Cosh(x))
+back-sub-rule	Ln(Cosh((x ^ 3)))	\ln \cosh x ^{3}	回代: u → g(x)
+### I 1/(x^2 + 4) @ x
+arctan-rule	(ArcTan((x / 2)) / 2)	\frac{\arctan \frac{x}{2} }{2} 	反正切积分: ∫c/(x^2 + a^2) dx = (c/a)*ArcTan(x/a)
+### I 1/Sqrt(4 - x^2) @ x
+arcsin-rule	ArcSin((x / 2))	\arcsin \frac{x}{2} 	反正弦积分: ∫c/Sqrt(a^2 - x^2) dx = c*ArcSin(x/a)
+### I x/Sqrt(x^2 + 4) @ x
+power-rule	Sqrt(((x ^ 2) + 4))	\sqrt{x ^{2} + 4}	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+### I 1/Sqrt(x^2 + 4) @ x
+sqrt-sum-rule	Ln((x + Sqrt(((x ^ 2) + 4))))	\ln \left( x + \sqrt{x ^{2} + 4}\right) 	平方和开方: ∫c/Sqrt(x^2 + a^2) dx = c*Ln(x + Sqrt(x^2 + a^2))
+### I 3/Sqrt(x^2 - 4) @ x
+sqrt-diff-rule	(3 * Ln((x + Sqrt(((x ^ 2) - 4)))))	3 \ln \left( x + \sqrt{x ^{2} - 4}\right) 	平方差开方: ∫c/Sqrt(x^2 - a^2) dx = c*Ln(x + Sqrt(x^2 - a^2))
+### I Sqrt(4 - x^2) @ x
+method-trig-sub	Int(Sqrt((4 - (x ^ 2))))	\mathrm{ Int }\left( \sqrt{4 - x ^{2}}\right) 	方法: 三角换元
+trig-sub-rule	Int((4 * (Cos(theta) ^ 2)))	\mathrm{ Int }\left( 4 \left( \cos \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
+constant-multiple-rule	(4 * Int((Cos(theta) ^ 2)))	4 \mathrm{ Int }\left( \left( \cos \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+direct	(4 * ((theta - (Sin((-2 * theta)) / 2)) / 2))	2 \left( \theta  - \frac{ - \sin 2 \theta }{2} \right) 	直接积分
+trig-identity-rule	(2 * (theta - ((- (2 * (Sin(theta) * Cos(theta)))) / 2)))	2 \left( \theta  - \frac{ - 2 \sin \theta  \cos \theta }{2} \right) 	三角恒等展开
+trig-sub-back	(2 * (theta - ((- (2 * ((x / 2) * Cos(theta)))) / 2)))	2 \left( \theta  - \frac{ - \cos \theta  x}{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+trig-sub-back	(2 * (theta - ((- ((Sqrt((4 - (x ^ 2))) / 2) * x)) / 2)))	2 \left( \theta  - \frac{ - \frac{x \sqrt{4 - x ^{2}}}{2} }{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+back-sub-rule	(2 * (ArcSin((x / 2)) - ((- ((x * Sqrt((4 - (x ^ 2)))) / 2)) / 2)))	2 \left( \arcsin \frac{x}{2}  - \frac{ - \frac{x \sqrt{4 - x ^{2}}}{2} }{2} \right) 	回代: u → g(x)
+### I x^2/Sqrt(4 - x^2) @ x
+method-trig-sub	Int(((x ^ 2) / Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( \frac{x ^{2}}{\sqrt{4 - x ^{2}}} \right) 	方法: 三角换元
+trig-sub-rule	Int((4 * (Sin(theta) ^ 2)))	\mathrm{ Int }\left( 4 \left( \sin \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
+constant-multiple-rule	(4 * Int((Sin(theta) ^ 2)))	4 \mathrm{ Int }\left( \left( \sin \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+direct	(4 * ((theta + (Sin((-2 * theta)) / 2)) / 2))	2 \left( \theta  - \frac{\sin 2 \theta }{2} \right) 	直接积分
+trig-identity-rule	(2 * (theta + ((- (2 * (Sin(theta) * Cos(theta)))) / 2)))	2 \left( \theta  - \sin \theta  \cos \theta \right) 	三角恒等展开
+trig-sub-back	(2 * (theta - ((x / 2) * Cos(theta))))	2 \left( \theta  - \frac{\cos \theta  x}{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+trig-sub-back	(2 * (theta - (((Sqrt((4 - (x ^ 2))) / 2) * x) / 2)))	2 \left( \theta  - \frac{x \sqrt{4 - x ^{2}}}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+back-sub-rule	(2 * (ArcSin((x / 2)) - ((x * Sqrt((4 - (x ^ 2)))) / 4)))	2 \left( \arcsin \frac{x}{2}  - \frac{x \sqrt{4 - x ^{2}}}{4} \right) 	回代: u → g(x)
+### I x*Sqrt(4 - x^2) @ x
+method-trig-sub	Int((x * Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( x \sqrt{4 - x ^{2}}\right) 	方法: 三角换元
+trig-sub-rule	Int((8 * (Sin(theta) * (Cos(theta) ^ 2))))	\mathrm{ Int }\left( 8 \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
+constant-multiple-rule	(8 * Int((Sin(theta) * (Cos(theta) ^ 2))))	8 \mathrm{ Int }\left( \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+method-u-sub	(8 * Int((Sin(theta) * (Cos(theta) ^ 2))))	8 \mathrm{ Int }\left( \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	方法: 换元积分法
+u-sub-rule	(8 * Int((- (u ^ 2))))	8 \mathrm{ Int }\left(  - u ^{2}\right) 	换元: u = g(x), du = g'(x) dx
+constant-multiple-rule	(8 * (- Int((u ^ 2))))	-8 \mathrm{ Int }\left( u ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+power-rule	(-8 * ((u ^ 3) / 3))	 - \frac{8 u ^{3}}{3} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+back-sub-rule	((-8 * (Cos(theta) ^ 3)) / 3)	\frac{ - 8 \left( \cos \theta \right)  ^{3}}{3} 	回代: u → g(x)
+trig-sub-back	((-8 * (Cos(theta) ^ 3)) / 3)	\frac{ - 8 \left( \cos \theta \right)  ^{3}}{3} 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+trig-sub-back	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+back-sub-rule	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	回代: u → g(x)

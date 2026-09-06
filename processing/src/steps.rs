@@ -190,7 +190,8 @@ mod tests {
         let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
         // 分部积分
         let steps = derive_integrals(&mut engine, "x*Sin(x)", "x").expect("StepsI 失败");
-        assert_eq!(steps[0].rule, "parts-rule");
+        // x*Sin(x):分部策略横幅为第一步
+        assert_eq!(steps[0].rule, "method-parts");
         let diff = engine
             .eval("Simplify(StepsI(x*Sin(x), x)[Length(StepsI(x*Sin(x), x))][2] - (Sin(x)-x*Cos(x)))")
             .expect("验证求值失败");

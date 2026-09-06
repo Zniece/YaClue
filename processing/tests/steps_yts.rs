@@ -86,7 +86,7 @@ fn split_statements(src: &str) -> Vec<String> {
 const IS_ASSERTION_PREFIXES: [&str; 2] = ["Verify(", "TestYacas("];
 
 /// 规范模块(顺序即装载序;common 定义跨模块共享的 helper)
-const SPEC_FILES: [(&str, &str); 7] = [
+const SPEC_FILES: [(&str, &str); 8] = [
     ("common.yts", include_str!("steps/common.yts")),
     ("deriv.yts", include_str!("steps/deriv.yts")),
     ("integral_basic.yts", include_str!("steps/integral_basic.yts")),
@@ -96,6 +96,7 @@ const SPEC_FILES: [(&str, &str); 7] = [
         "integral_partial_fractions.yts",
         include_str!("steps/integral_partial_fractions.yts"),
     ),
+    ("integral_trig_sub.yts", include_str!("steps/integral_trig_sub.yts")),
     ("texts.yts", include_str!("steps/texts.yts")),
 ];
 

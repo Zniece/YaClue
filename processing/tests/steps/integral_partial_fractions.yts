@@ -5,8 +5,8 @@
    用 Simplify 差值断言,容忍 Ln 常数因子的形态差;先捕获一次再断言,
    避免 StepsI 重复求值) */
 sPF1 := StepsI(1/(x^2-1), x);
-Verify(FirstRule(sPF1), "partial-fraction-rule");
+Verify(FirstRule(sPF1), "method-partial-fraction");
 TestYacas(Simplify(LastStepExpr(sPF1) - Integrate(x) 1/(x^2-1)), 0);
 sPF2 := StepsI(x/(x^2+3*x+2), x);
-Verify(FirstRule(sPF2), "partial-fraction-rule");
+Verify(FirstRule(sPF2), "method-partial-fraction");
 TestYacas(Simplify(LastStepExpr(sPF2) - Integrate(x) x/(x^2+3*x+2)), 0);

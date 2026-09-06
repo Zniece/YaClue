@@ -6,7 +6,10 @@
      - kind "p" (pending): replace Pending(target) by after, where Pending is
        DPrime (StepsD) or Int (StepsI);
      - kind "s" (symbol): replace the symbol target by after (u-substitution
-       back-substitution).
+       back-substitution);
+     - kind "m" (method): strategy banner, no substitution (the method
+       declaration heads a multi-step technique: u-sub / parts / partial
+       fractions).
    - SD'Merge(cur, sub, pending) applies raw steps to a running expression and
      returns visible steps {rule, expression} plus the final expression.
    - Rule ordering: the generic fallback rule must be defined FIRST (later
@@ -40,9 +43,11 @@ SD'Merge(cur, sub, pending) :=
     kind := s[2];
     t := s[3];
     after := s[4];
-    If (kind = "s",
-      cur := ApplyPure("Subst", {t, after, cur}),
-      cur := ApplyPure("Subst", {Apply(pending, {t}), after, cur}));
+    If (kind = "m",
+      cur := cur,
+      If (kind = "s",
+        cur := ApplyPure("Subst", {t, after, cur}),
+        cur := ApplyPure("Subst", {Apply(pending, {t}), after, cur})));
     steps := Append(steps, {rule, cur});
   ];
   {steps, cur};
@@ -226,7 +231,11 @@ StepsI(expr, var) :=
 [
   Local(p, steps, tidied);
   p := SD'Merge(Int(expr), SI'Diff(expr, var), "Int");
-  tidied := Tidy(p[2]);
+  /* θ 机器的终式由精确 Subst 构造,已是成品;Tidy 的全量 Simplify
+     对它实测 5s 仍是无操作,按链尾规则定向跳过 */
+  If (p[1][Length(p[1])][1] = "back-sub-rule",
+    tidied := p[2],
+    tidied := Tidy(p[2]));
   If (tidied = p[2],
     steps := p[1],
     steps := Append(p[1], {"simplify", tidied}));
@@ -250,7 +259,8 @@ SI'USub(integrand, g, fam, rest, v) :=
        输出无限递归(1/(2u)→1/(4u)→1/(16u)→...),改交引擎直积。 */
     {{{"direct", "p", integrand, Integrate(v) integrand}}, Integrate(v) integrand},
     [
-      steps := {{"u-sub-rule", "p", integrand, Int(fu)}};
+      steps := {{"method-u-sub", "m", integrand, integrand},
+                {"u-sub-rule", "p", integrand, Int(fu)}};
       cur := Int(fu);
       /* 原始步骤原样拼接;merge 只用于推进 cur(取其最终值) */
       sub := SI'Diff(fu, u);
@@ -306,7 +316,8 @@ SI'PartFrac(integrand, p, q, v) :=
     /* 分解无进展(不可约分母):交引擎直积 */
     {{{"direct", "p", integrand, Integrate(v) integrand}}, Integrate(v) integrand},
     [
-      steps := {{"partial-fraction-rule", "p", integrand, Int(decomp)}};
+      steps := {{"method-partial-fraction", "m", integrand, integrand},
+                {"partial-fraction-rule", "p", integrand, Int(decomp)}};
       cur := Int(decomp);
       sub := SI'Diff(decomp, v);
       cur := SD'Merge(cur, sub, "Int")[2];
@@ -365,9 +376,11 @@ SI'PartFrac(integrand, p, q, v) :=
 ];
 
 /* arctan 族:∫c/(1+a^2) dv = c*ArcTan(a)(a = v 时;算法书 IntPureSquare 的教学化拆分)。
-   注意 yacas 会把 1+a^2 重排为 a^2+1,故用顺序无关的 _d + _a^2 加 d = 1 条件 */
-10 # SI'Diff(_c / (_a ^ 2 + _d), _v)_(d = 1 And IsFreeOf(v, c) And a = v) <--
-  {{{"arctan-rule", "p", c / (a ^ 2 + d), c * ArcTan(a)}}, c * ArcTan(a)};
+   注意 yacas 会把 1+a^2 重排为 a^2+1,故用顺序无关的 _d + _a^2 形式;
+   d 限正数常数(负数/符号 a 交给部分分式或保持 direct)。 */
+10 # SI'Diff(_c / (_a ^ 2 + _d), _v)_(d > 0 And IsFreeOf(v, c) And a = v) <--
+  {{{"arctan-rule", "p", c / (a ^ 2 + d), (c / Sqrt(d)) * ArcTan(a / Sqrt(d))}},
+   (c / Sqrt(d)) * ArcTan(a / Sqrt(d))};
 
 /* 幂法则(含 n=-1 → Ln) */
 10 # SI'Diff(_a ^ _b, _v)_(a = v And IsFreeOf(v, b)) <--
@@ -393,10 +406,25 @@ SI'PartFrac(integrand, p, q, v) :=
 10 # SI'Diff(Tanh(_u), _v)_(u = v) <--
   {{{"tanh-rule", "p", Tanh(u), Ln(Cosh(u))}}, Ln(Cosh(u))};
 
-/* 反正弦形:∫c/Sqrt(1 - u^2) du = c*ArcSin(u),与 arctan-rule 同族;
-   常数 1 硬编码,避开减法规范型的顺序问题(与 arctan 处的踩坑同源) */
-10 # SI'Diff(_c / Sqrt(1 - _a ^ 2), _v)_(IsFreeOf(v, c) And a = v) <--
-  {{{"arcsin-rule", "p", c / Sqrt(1 - a ^ 2), c * ArcSin(a)}}, c * ArcSin(a)};
+/* 反正弦形:∫c/Sqrt(d - v^2) dv = c*ArcSin(v/Sqrt(d))(d 为正数常数;
+   一般化自 d=1 特例)。 */
+10 # SI'Diff(_c / Sqrt(_d - _a ^ 2), _v)_(d > 0 And IsFreeOf(v, c) And a = v) <--
+  {{{"arcsin-rule", "p", c / Sqrt(d - a ^ 2), c * ArcSin(a / Sqrt(d))}},
+   c * ArcSin(a / Sqrt(d))};
+
+/* 平方和/差开方形式:∫c/Sqrt(v^2 ± d) dv = c*Ln(v + Sqrt(v^2 ± d))
+   (引擎 Integrate 不支持此形,由本规则直接给出;求导可自验:
+   d/dv Ln(v+Sqrt(v^2+d)) = 1/Sqrt(v^2+d)) */
+10 # SI'Diff(_c / Sqrt(_a ^ 2 + _d), _v)_(d > 0 And IsFreeOf(v, c) And a = v) <--
+  {{{"sqrt-sum-rule", "p", c / Sqrt(a ^ 2 + d), c * Ln(a + Sqrt(a ^ 2 + d))}},
+   c * Ln(a + Sqrt(a ^ 2 + d))};
+10 # SI'Diff(_c / Sqrt(_a ^ 2 - _d), _v)_(d > 0 And IsFreeOf(v, c) And a = v) <--
+  {{{"sqrt-diff-rule", "p", c / Sqrt(a ^ 2 - d), c * Ln(a + Sqrt(a ^ 2 - d))}},
+   c * Ln(a + Sqrt(a ^ 2 - d))};
+
+/* 平方根本身:∫c/Sqrt(v) dv = 2c*Sqrt(v)(幂法则 n = -1/2) */
+10 # SI'Diff(_c / Sqrt(_a), _v)_(a = v) <--
+  {{{"power-rule", "p", c / Sqrt(a), 2 * c * Sqrt(a)}}, 2 * c * Sqrt(a)};
 
 /* ---------- 分部积分:∫u*dv = u*v - ∫v*du(u 按 LIATE 选取,dv = 其余因子) ---------- */
 
@@ -404,7 +432,8 @@ SI'Parts(integrand, u, dvf, vval, var) :=
 [
   Local(du, cur, sub, steps);
   du := Deriv(var) u;
-  steps := {{"parts-rule", "p", integrand, u * vval - Int(vval * du)}};
+  steps := {{"method-parts", "m", integrand, integrand},
+            {"parts-rule", "p", integrand, u * vval - Int(vval * du)}};
   cur := u * vval - Int(vval * du);
   /* 残差先 Tidy,便于下一步规则匹配 */
   sub := SI'Diff(Tidy(vval * du), var);
@@ -453,6 +482,14 @@ SI'Parts(integrand, u, dvf, vval, var) :=
   SI'USub(Cos(g) * rest, g, Cos(g), rest, v);
 10 # SI'Diff(Exp(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
   SI'USub(Exp(g) * rest, g, Exp(g), rest, v);
+10 # SI'Diff(Tan(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(Tan(g) * rest, g, Tan(g), rest, v);
+10 # SI'Diff(Sinh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(Sinh(g) * rest, g, Sinh(g), rest, v);
+10 # SI'Diff(Cosh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(Cosh(g) * rest, g, Cosh(g), rest, v);
+10 # SI'Diff(Tanh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(Tanh(g) * rest, g, Tanh(g), rest, v);
 10 # SI'Diff(_g ^ _n * _rest, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
   SI'USub(g ^ n * rest, g, g ^ n, rest, v);
 10 # SI'Diff(_rest / _g, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
@@ -468,6 +505,14 @@ SI'Parts(integrand, u, dvf, vval, var) :=
   SI'USub(Cos(g), g, Cos(g), 1, v);
 10 # SI'Diff(Exp(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
   SI'USub(Exp(g), g, Exp(g), 1, v);
+10 # SI'Diff(Tan(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+  SI'USub(Tan(g), g, Tan(g), 1, v);
+10 # SI'Diff(Sinh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+  SI'USub(Sinh(g), g, Sinh(g), 1, v);
+10 # SI'Diff(Cosh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+  SI'USub(Cosh(g), g, Cosh(g), 1, v);
+10 # SI'Diff(Tanh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+  SI'USub(Tanh(g), g, Tanh(g), 1, v);
 10 # SI'Diff(_g ^ _n, _v)_(IsFreeOf(v, n) And Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
   SI'USub(g ^ n, g, g ^ n, 1, v);
 
@@ -479,6 +524,14 @@ SI'Parts(integrand, u, dvf, vval, var) :=
   SI'USub(rest * Cos(g), g, Cos(g), rest, v);
 10 # SI'Diff(_rest * Exp(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
   SI'USub(rest * Exp(g), g, Exp(g), rest, v);
+10 # SI'Diff(_rest * Tan(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest * Tan(g), g, Tan(g), rest, v);
+10 # SI'Diff(_rest * Sinh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest * Sinh(g), g, Sinh(g), rest, v);
+10 # SI'Diff(_rest * Cosh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest * Cosh(g), g, Cosh(g), rest, v);
+10 # SI'Diff(_rest * Tanh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest * Tanh(g), g, Tanh(g), rest, v);
 10 # SI'Diff(_rest * _g ^ _n, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
   SI'USub(rest * g ^ n, g, g ^ n, rest, v);
 
@@ -489,6 +542,118 @@ SI'Parts(integrand, u, dvf, vval, var) :=
    l = v(即 c/x)留给既有的 ln-rule,本规则不接。 */
 10 # SI'Diff(_c / _l, _v)_(IsPoly'(l, v) And Not(l = v) And IsFreeOf(v, c) And Degree(l, v) = 1) <--
   {{{"ln-rule", "p", c / l, (c / Deriv(v) l) * Ln(l)}}, (c / Deriv(v) l) * Ln(l)};
+
+/* 平方根复合:∫rest/Sqrt(g) dv = 2k*Sqrt(g),k = rest/g' 为常数
+   (即幂法则 n = -1/2 的复合一步式;∫x/Sqrt(x^2+a^2) 类由此接住,
+   引擎对它本无解析路径) */
+10 # SI'Diff(_rest / Sqrt(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  {{{"power-rule", "p", rest / Sqrt(g), 2 * (rest / (Deriv(v) g)) * Sqrt(g)}},
+   2 * (rest / (Deriv(v) g)) * Sqrt(g)};
+
+/* 常数除法因子:∫f/c dv = (1/c)*∫f dv(分母为常数的除法形态;
+   u-sub 内层的 Sin(u)/2 之类由此进入具名步骤而非 direct。
+   谓词 IsFreeOf(v, c) 与线性-ln/ln 规则按分母形态自然分工) */
+10 # SI'Diff(_f / _c, _v)_(IsFreeOf(v, c)) <--
+[
+  Local(steps, cur, sf);
+  steps := {{"constant-multiple-rule", "p", f / c, Int(f) / c}};
+  cur := Int(f) / c;
+  sf := SI'Diff(f, v);
+  cur := SD'Merge(cur, sf, "Int")[2];
+  steps := Concat(steps, sf[1]);
+  {steps, cur};
+];
+
+/* ---------- 三角换元 θ 机器(M2c:sin 形式,Sqrt(d - v^2)) ----------
+   被积式含 Sqrt(d - v^2)(d 正数常数)且裸形规则未接住时:
+   v = Sqrt(d)*Sin(theta)。整条管线先静默算通,回代后验"无 theta 残留、
+   无 Integrate 泄漏"才提交;失败(如 R 次数过高产生 Sin(4*theta))
+   自动回落 direct,绝不输出半成品。
+   双倍角/三倍角展开由恒等表承担(覆盖 R 次数 <= 2 的 theta 域
+   反导数词汇表)。注意:换元哑元名不得与 SD'Merge 的局部变量
+   (t 等)冲突,故用 theta。 */
+
+/* 恒等式表只构建一次(实测每次重建约 1s,θ 流程要调两次) */
+SI'TrigIdTable := {};
+
+SI'TrigIdentity() :=
+[
+  If (Length(SI'TrigIdTable) = 0,
+    SI'TrigIdTable := {{Sin(2 * theta), 2 * Sin(theta) * Cos(theta)},
+   {Sin((-2) * theta), -(2 * Sin(theta) * Cos(theta))},
+   {Cos(2 * theta), 2 * Cos(theta) ^ 2 - 1},
+   {Cos((-2) * theta), 2 * Cos(theta) ^ 2 - 1},
+   {Sin(3 * theta), 3 * Sin(theta) - 4 * Sin(theta) ^ 3},
+   {Sin((-3) * theta), -(3 * Sin(theta) - 4 * Sin(theta) ^ 3)},
+   {Cos(3 * theta), 4 * Cos(theta) ^ 3 - 3 * Cos(theta)},
+   {Cos((-3) * theta), 4 * Cos(theta) ^ 3 - 3 * Cos(theta)},
+   {Sin(4 * theta), 4 * Sin(theta) * Cos(theta) * (2 * Cos(theta) ^ 2 - 1)},
+   {Sin((-4) * theta), -(4 * Sin(theta) * Cos(theta) * (2 * Cos(theta) ^ 2 - 1))},
+   {Cos(4 * theta), 8 * Cos(theta) ^ 4 - 8 * Cos(theta) ^ 2 + 1},
+   {Cos((-4) * theta), 8 * Cos(theta) ^ 4 - 8 * Cos(theta) ^ 2 + 1}});
+  SI'TrigIdTable;
+];
+
+SI'TrigSub(integrand, v, d) :=
+[
+  Local(substv, jac, radpattern, tform, sub, cur, pre, steps, final, id, ids);
+  substv := Sqrt(d) * Sin(theta);
+  /* 雅可比对换元变量 theta 求(Deriv(v) 是概念错误:substv 中已无 v) */
+  jac := Deriv(theta) substv;
+  tform := ApplyPure("Subst", {v, substv, integrand}) * jac;
+  /* 根式重写:Sqrt(d - (Sqrt(d)*Sin(theta))^2) = Sqrt(d)*Cos(theta)
+     (theta ∈ (-pi/2, pi/2) 教科书约定;引擎 Simplify 不做此事,
+     由换元数据按精确规范形 Subst) */
+  radpattern := ApplyPure("Subst", {v, substv, Sqrt(d - v ^ 2)});
+  tform := ApplyPure("Subst", {radpattern, Sqrt(d) * Cos(theta), tform});
+  /* 约简 theta 形态(如 ((2Sin)^2*2Cos)/(2Cos) -> 4*Sin(theta)^2) */
+  tform := Simplify(tform);
+  /* theta 域积分(静默) */
+  sub := SI'Diff(tform, theta);
+  cur := sub[2];
+  /* 静默回代:恒等展开 -> 三角形 -> 裸 theta;
+     pre 留作发射判据(发射循环看到的是已转换的 cur) */
+  pre := cur;
+  ids := SI'TrigIdentity();
+  ForEach(id, ids)
+    If (Not(IsFreeOf(id[1], cur)),
+      cur := ApplyPure("Subst", {id[1], id[2], cur}));
+  cur := ApplyPure("Subst", {Sin(theta), v / Sqrt(d), cur});
+  cur := ApplyPure("Subst", {Cos(theta), Sqrt(d - v ^ 2) / Sqrt(d), cur});
+  final := ApplyPure("Subst", {theta, ArcSin(v / Sqrt(d)), cur});
+  /* 提交门禁:theta 消净且无 Integrate 泄漏 */
+  If (IsFreeOf(theta, final) And IsFreeOf(Integrate, final),
+    [
+      steps := {{"method-trig-sub", "m", integrand, integrand},
+                {"trig-sub-rule", "p", integrand, Int(tform)}};
+      /* 复用静默阶段的 theta 域原始步骤(求值确定性),不重跑 */
+      steps := Concat(steps, sub[1]);
+      ForEach(id, ids)
+        If (Not(IsFreeOf(id[1], pre)),
+          steps := Append(steps, {"trig-identity-rule", "s", id[1], id[2]}));
+      steps := Append(steps, {"trig-sub-back", "s", Sin(theta), v / Sqrt(d)});
+      steps := Append(steps, {"trig-sub-back", "s", Cos(theta), Sqrt(d - v ^ 2) / Sqrt(d)});
+      steps := Append(steps, {"back-sub-rule", "s", theta, ArcSin(v / Sqrt(d))});
+      /* final 用静默阶段已过门禁的结果(与步骤序列的 Subst 链一致) */
+      {steps, final};
+    ],
+    {{{"direct", "p", integrand, Integrate(v) integrand}}, Integrate(v) integrand});
+];
+
+/* 触发:被积式含 Sqrt(d - v^2) 且 R 为不含根式的 v 多项式;
+   f 为纯常数时让位给 arcsin-rule 裸形(一步更简洁) */
+10 # SI'Diff(Sqrt(_d - _v ^ 2), _v)_(d > 0) <--
+  SI'TrigSub(Sqrt(d - v ^ 2), v, d);
+/* IsFreeOf(theta, f):用户积分式含 theta 时让位 direct(换元哑元防冲突) */
+10 # SI'Diff(_f / Sqrt(_d - _v ^ 2), _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f) And Not(IsFreeOf(v, f)) And IsFreeOf(theta, f)) <--
+  SI'TrigSub(f / Sqrt(d - v ^ 2), v, d);
+10 # SI'Diff(_f * Sqrt(_d - _v ^ 2), _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f) And IsFreeOf(theta, f)) <--
+  SI'TrigSub(f * Sqrt(d - v ^ 2), v, d);
+10 # SI'Diff(Sqrt(_d - _v ^ 2) * _f, _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f) And IsFreeOf(theta, f)) <--
+  SI'TrigSub(Sqrt(d - v ^ 2) * f, v, d);
+
+/* ============================================================
+   解释文案(声明式):数据表 + 查询。
 
 /* ============================================================
    解释文案(声明式):数据表 + 查询。
@@ -568,12 +733,23 @@ RuleBase("Steps'Text", {key});
 10 # Steps'Text("i:sinh-rule") <-- "双曲正弦积分: ∫Sinh(x) dx = Cosh(x)";
 10 # Steps'Text("i:cosh-rule") <-- "双曲余弦积分: ∫Cosh(x) dx = Sinh(x)";
 10 # Steps'Text("i:tanh-rule") <-- "双曲正切积分: ∫Tanh(x) dx = Ln(Cosh(x))";
-10 # Steps'Text("i:arctan-rule") <-- "反正切积分: ∫1/(1 + x^2) dx = ArcTan(x)";
-10 # Steps'Text("i:arcsin-rule") <-- "反正弦积分: ∫1/Sqrt(1 - x^2) dx = ArcSin(x)";
+10 # Steps'Text("i:arctan-rule") <-- "反正切积分: ∫c/(x^2 + a^2) dx = (c/a)*ArcTan(x/a)";
+10 # Steps'Text("i:arcsin-rule") <-- "反正弦积分: ∫c/Sqrt(a^2 - x^2) dx = c*ArcSin(x/a)";
+10 # Steps'Text("sqrt-sum-rule") <-- "平方和开方: ∫c/Sqrt(x^2 + a^2) dx = c*Ln(x + Sqrt(x^2 + a^2))";
+10 # Steps'Text("sqrt-diff-rule") <-- "平方差开方: ∫c/Sqrt(x^2 - a^2) dx = c*Ln(x + Sqrt(x^2 - a^2))";
 10 # Steps'Text("u-sub-rule") <-- "换元: u = g(x), du = g'(x) dx";
 10 # Steps'Text("back-sub-rule") <-- "回代: u → g(x)";
 10 # Steps'Text("parts-rule") <-- "分部积分: ∫u dv = u*v - ∫v du";
 10 # Steps'Text("partial-fraction-rule") <-- "部分分式: P/Q 分解为最简分式之和,逐项积分";
+
+/* 方法横幅(M2b):多步策略的第一步,宣告所用方法 */
+10 # Steps'Text("method-u-sub") <-- "方法: 换元积分法";
+10 # Steps'Text("method-parts") <-- "方法: 分部积分法";
+10 # Steps'Text("method-partial-fraction") <-- "方法: 部分分式积分法";
+10 # Steps'Text("method-trig-sub") <-- "方法: 三角换元";
+10 # Steps'Text("trig-sub-rule") <-- "三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)";
+10 # Steps'Text("trig-identity-rule") <-- "三角恒等展开";
+10 # Steps'Text("trig-sub-back") <-- "三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)";
 
 /* ---------- 两侧通用 ---------- */
 10 # Steps'Text("simplify") <-- "化简";

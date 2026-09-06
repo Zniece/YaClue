@@ -23,3 +23,12 @@ TestYacas(LastStepExpr(StepsI(Sinh(x), x)), Integrate(x) Sinh(x));
 TestYacas(LastStepExpr(StepsI(Cosh(x), x)), Integrate(x) Cosh(x));
 TestYacas(LastStepExpr(StepsI(Tanh(x), x)), Integrate(x) Tanh(x));
 TestYacas(LastStepExpr(StepsI(2/Sqrt(1 - x^2), x)), 2*ArcSin(x));
+
+/* M2c: 三角/双曲形式表(一般正常数 a)。前两条与引擎 Integrate 对照;
+   引擎对 Sqrt(x^2 ± a^2) 无解析路径,后两条用硬编码预期(求导可自验) */
+TestYacas(LastStepExpr(StepsI(1/(x^2 + 4), x)), Integrate(x) 1/(x^2 + 4));
+TestYacas(LastStepExpr(StepsI(1/Sqrt(4 - x^2), x)), Integrate(x) 1/Sqrt(4 - x^2));
+TestYacas(LastStepExpr(StepsI(x/Sqrt(x^2 + 4), x)), Sqrt(x^2 + 4));
+TestYacas(LastStepExpr(StepsI(1/Sqrt(x^2 + 4), x)), Ln(x + Sqrt(x^2 + 4)));
+TestYacas(LastStepExpr(StepsI(3/Sqrt(x^2 - 4), x)), 3*Ln(x + Sqrt(x^2 - 4)));
+Verify(FirstRule(StepsI(1/(x^2 + 4), x)), "arctan-rule");

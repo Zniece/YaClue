@@ -1,0 +1,11 @@
+/* 积分规范:三角换元 theta 机器(M2c;sin 形式,R 为次数 <= 2 的多项式)。
+   最终结果用结构断言钉住(教科书答案;数学正确性:d/dx 手工验证,
+   引擎 Simplify 对 ArcSin 恒等差化简不足,数值断言受方言浮点折叠
+   限制 —— 硬编码预期为 u-sub 规范的同款先例)。 */
+
+TestYacas(LastStepExpr(StepsI(Sqrt(4 - x^2), x)),
+          2*(ArcSin(x/2) - ((-((x*Sqrt(4 - x^2))/2))/2)));
+TestYacas(LastStepExpr(StepsI(x^2/Sqrt(4 - x^2), x)),
+          2*(ArcSin(x/2) - ((x*Sqrt(4 - x^2))/4)));
+Verify(FirstRule(StepsI(Sqrt(4 - x^2), x)), "method-trig-sub");
+Verify(FirstRule(StepsI(x^3/Sqrt(4 - x^2), x)), "method-trig-sub");
