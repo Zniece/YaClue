@@ -1,0 +1,27 @@
+/* steps 规范公共 helper —— 由 runner 最先装载,供后续模块使用。
+   步骤形态:每步 = {规则名, 表达式, 文案};所有最终结果与引擎自身的
+   D()/Integrate() 对照。 */
+
+/* LastStepExpr(s): expression of the final step (1.9.2 has no Last). */
+LastStepExpr(s) :=
+[
+  Local(last);
+  last := s[Length(s)];
+  last[2];
+];
+
+/* FirstRule(s): rule name of the first step. */
+FirstRule(s) :=
+[
+  Local(first);
+  first := s[1];
+  first[1];
+];
+
+/* FirstWhy(s): 首步文案。 */
+FirstWhy(s) :=
+[
+  Local(first);
+  first := s[1];
+  first[3];
+];

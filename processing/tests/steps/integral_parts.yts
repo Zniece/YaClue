@@ -1,0 +1,14 @@
+/* 积分规范:分部积分(LIATE)+ 引擎 Integrate 修复对照(RESEARCH §8.5)。 */
+
+/* 分部积分(LIATE) */
+TestYacas(LastStepExpr(StepsI(x*Sin(x), x)), Integrate(x) x*Sin(x));
+TestYacas(LastStepExpr(StepsI(x*Cos(x), x)), Integrate(x) x*Cos(x));
+TestYacas(LastStepExpr(StepsI(x*Exp(x), x)), Integrate(x) x*Exp(x));
+TestYacas(LastStepExpr(StepsI(x^2*Sin(x), x)), 2*(x*Sin(x)+Cos(x))-x^2*Cos(x));  /* 引擎答案有误(见 RESEARCH §8.5),用硬编码预期 */
+TestYacas(LastStepExpr(StepsI(Ln(x), x)), Integrate(x) Ln(x));
+TestYacas(LastStepExpr(StepsI(Ln(x)*x, x)), Integrate(x) Ln(x)*x);
+Verify(FirstRule(StepsI(x*Sin(x), x)), "parts-rule");
+
+/* 引擎 Integrate 修复验证(§8.5:常数 exy 退化情形) */
+TestYacas(Integrate(x) x^2*Sin(x), 2*(x*Sin(x)+Cos(x))-x^2*Cos(x));
+TestYacas(Integrate(x) 2*x*Cos(x), 2*(x*Sin(x)+Cos(x)));

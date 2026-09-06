@@ -157,7 +157,7 @@ simplify	(-3 * Cos(x))	 - 3 \cos x	化简
 constant-multiple-rule	(- Int(Exp(x)))	 - \mathrm{ Int }\left( \exp \left( x\right) \right) 	常数倍法则: ∫c*f dx = c*∫f dx
 exp-rule	(- Exp(x))	 - \exp \left( x\right) 	自然指数积分: ∫Exp(x) dx = Exp(x)
 ### I 2/x @ x
-ln-rule	(2 * Ln(x))	2 \ln x	对数积分: ∫c/x dx = c*Ln(x)
+ln-rule	(2 * Ln(x))	2 \ln x	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
 ### I 1/(1 + x^2) @ x
 arctan-rule	ArcTan(x)	\arctan x	反正切积分: ∫1/(1 + x^2) dx = ArcTan(x)
 ### I Sin(x) @ x
@@ -193,7 +193,7 @@ direct	(Exp(u) / 2)	\frac{\exp \left( u\right) }{2} 	直接积分
 back-sub-rule	(Exp((x ^ 2)) / 2)	\frac{\exp \left( x ^{2}\right) }{2} 	回代: u → g(x)
 ### I x/(x^2 + 1) @ x
 u-sub-rule	Int((1 / (2 * u)))	\mathrm{ Int }\left( \frac{1}{2 u} \right) 	换元: u = g(x), du = g'(x) dx
-direct	(Ln((2 * u)) / 2)	\frac{\ln 2 u}{2} 	直接积分
+ln-rule	(Ln((2 * u)) / 2)	\frac{\ln 2 u}{2} 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
 back-sub-rule	(Ln((2 * ((x ^ 2) + 1))) / 2)	\frac{\ln 2 \left( x ^{2} + 1\right) }{2} 	回代: u → g(x)
 ### I Tan(x) @ x
 tan-rule	(- Ln(Cos(x)))	 - \ln \cos x	正切积分: ∫Tan(x) dx = -Ln(Cos(x))
@@ -207,3 +207,14 @@ cosh-rule	Sinh(x)	\sinh x	双曲余弦积分: ∫Cosh(x) dx = Sinh(x)
 tanh-rule	Ln(Cosh(x))	\ln \cosh x	双曲正切积分: ∫Tanh(x) dx = Ln(Cosh(x))
 ### I 2/Sqrt(1 - x^2) @ x
 arcsin-rule	(2 * ArcSin(x))	2 \arcsin x	反正弦积分: ∫1/Sqrt(1 - x^2) dx = ArcSin(x)
+### I 1/(x^2 - 1) @ x
+partial-fraction-rule	Int(((1 / (2 * (x - 1))) - (1 / (2 * (x + 1)))))	\mathrm{ Int }\left( \frac{1}{2 \left( x - 1\right) }  - \frac{1}{2 \left( x + 1\right) } \right) 	部分分式: P/Q 分解为最简分式之和,逐项积分
+sum-rule	(Int((-1 / (2 * (x + 1)))) + Int((1 / (2 * (x - 1)))))	\mathrm{ Int }\left( \frac{-1}{2 \left( x + 1\right) } \right)  + \mathrm{ Int }\left( \frac{1}{2 \left( x - 1\right) } \right) 	和法则: ∫(f + g) dx = ∫f dx + ∫g dx
+ln-rule	(((- Ln((2 * (x + 1)))) / 2) + Int((1 / (2 * (x - 1)))))	\mathrm{ Int }\left( \frac{1}{2 \left( x - 1\right) } \right)  - \frac{\ln 2 \left( x + 1\right) }{2} 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
+ln-rule	((Ln((2 * (x - 1))) / 2) - (Ln((2 * (x + 1))) / 2))	\frac{\ln 2 \left( x - 1\right) }{2}  - \frac{\ln 2 \left( x + 1\right) }{2} 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
+### I x/(x^2 + 3*x + 2) @ x
+partial-fraction-rule	Int(((2 / (x + 2)) - (1 / (x + 1))))	\mathrm{ Int }\left( \frac{2}{x + 2}  - \frac{1}{x + 1} \right) 	部分分式: P/Q 分解为最简分式之和,逐项积分
+sum-rule	(Int((2 / (x + 2))) + Int((-1 / (x + 1))))	\mathrm{ Int }\left( \frac{2}{x + 2} \right)  + \mathrm{ Int }\left( \frac{-1}{x + 1} \right) 	和法则: ∫(f + g) dx = ∫f dx + ∫g dx
+ln-rule	((2 * Ln((x + 2))) + Int((-1 / (x + 1))))	2 \ln \left( x + 2\right)  + \mathrm{ Int }\left( \frac{-1}{x + 1} \right) 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
+ln-rule	((2 * Ln((x + 2))) + (- Ln((x + 1))))	2 \ln \left( x + 2\right)  - \ln \left( x + 1\right) 	对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)
+simplify	((2 * Ln((x + 2))) - Ln((x + 1)))	2 \ln \left( x + 2\right)  - \ln \left( x + 1\right) 	化简

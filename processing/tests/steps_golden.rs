@@ -85,6 +85,8 @@ const CASES: &[(&str, &str, &str)] = &[
     ("I", "Cosh(x)", "x"),       // cosh-rule
     ("I", "Tanh(x)", "x"),       // tanh-rule
     ("I", "2/Sqrt(1 - x^2)", "x"), // arcsin-rule(反正弦形)
+    ("I", "1/(x^2 - 1)", "x"),    // partial-fraction-rule + sum + ln ×2
+    ("I", "x/(x^2 + 3*x + 2)", "x"), // partial-fraction-rule(分子含变量)
 ];
 
 /// code.ys 登记的全部规则键(普通键,含顶层追加的 simplify)。
@@ -107,6 +109,7 @@ const EXPECTED_RULES: &[&str] = &[
     "exponential-rule",
     "identity-rule",
     "ln-rule",
+    "partial-fraction-rule",
     "parts-rule",
     "power-rule",
     "product-rule",

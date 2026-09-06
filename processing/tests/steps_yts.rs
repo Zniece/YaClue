@@ -1,10 +1,11 @@
-//! steps.yts 行为规范 runner。
+//! 步骤层规范 runner。
 //!
 //! 步骤层(steps.rep + 其 .yts 规范)归 processing 所有后,规范随层走:
-//! 本测试把 `tests/steps.yts` 逐语句求值,断言类语句
+//! 本测试把 `tests/steps/` 下的规范模块按清单顺序逐语句求值,断言类语句
 //! (`Verify(expr, expected)` / `TestYacas(expr, expected)`)结果必须为 True。
 //! 两条断言命令的语义来自上游标准库 testers.rep(由 runner 显式装载),
-//! .yts 文件内容保持原样,不为 runner 改写。
+//! .yts 内容保持原样,不为 runner 改写。所有模块共用同一引擎环境,
+//! common.yts 定义的 helper 跨模块可见;新模块在 SPEC_FILES 追加条目。
 
 use processing::engine::{Engine, RustEngine};
 
@@ -84,20 +85,26 @@ fn split_statements(src: &str) -> Vec<String> {
 
 const IS_ASSERTION_PREFIXES: [&str; 2] = ["Verify(", "TestYacas("];
 
-// 默认不跑:全量逐语句求值约 8 分钟(重头是断言内 Simplify 对拍)。
+/// 规范模块(顺序即装载序;common 定义跨模块共享的 helper)
+const SPEC_FILES: [(&str, &str); 7] = [
+    ("common.yts", include_str!("steps/common.yts")),
+    ("deriv.yts", include_str!("steps/deriv.yts")),
+    ("integral_basic.yts", include_str!("steps/integral_basic.yts")),
+    ("integral_usub.yts", include_str!("steps/integral_usub.yts")),
+    ("integral_parts.yts", include_str!("steps/integral_parts.yts")),
+    (
+        "integral_partial_fractions.yts",
+        include_str!("steps/integral_partial_fractions.yts"),
+    ),
+    ("texts.yts", include_str!("steps/texts.yts")),
+];
+
+// 默认不跑:全量逐语句求值约 3 分钟(重头是断言内 Simplify 对拍)。
 // 发布验收/改动 steps.rep 后显式运行:
 //   cargo test -p processing --test steps_yts -- --ignored
 #[test]
-#[ignore = "规范门禁,约 8 分钟;显式运行见文件头注释"]
+#[ignore = "规范门禁,约 3 分钟;显式运行见文件头注释"]
 fn steps_yts_spec_all_green() {
-    let yts = include_str!("steps.yts");
-    let statements = split_statements(&strip_comments(yts));
-    assert!(
-        statements.len() >= 40,
-        "steps.yts 应切出 40+ 条语句,实际 {}",
-        statements.len()
-    );
-
     let mut engine = RustEngine::spawn().expect("RustEngine 启动失败");
     // testers.rep 属上游标准库,提供 Verify/TestYacas(启动链已登记,须用 Use 装载)
     engine
@@ -105,22 +112,23 @@ fn steps_yts_spec_all_green() {
         .expect("装载 testers.rep 失败");
 
     let mut asserted = 0;
-    for (i, stmt) in statements.iter().enumerate() {
-        let is_assertion = IS_ASSERTION_PREFIXES.iter().any(|p| stmt.starts_with(p));
-        let result = engine.eval(stmt).unwrap_or_else(|e| {
-            panic!("第 {i} 句求值失败: {stmt}\n{e}");
-        });
-        if is_assertion {
-            asserted += 1;
-            assert_eq!(
-                result.expr.to_string(),
-                "True",
-                "第 {i} 句断言未通过: {stmt}"
-            );
+    for (name, src) in SPEC_FILES {
+        let statements = split_statements(&strip_comments(src));
+        assert!(statements.len() >= 2, "{name} 应切出 2+ 条语句");
+        for (i, stmt) in statements.iter().enumerate() {
+            let is_assertion = IS_ASSERTION_PREFIXES.iter().any(|p| stmt.starts_with(p));
+            let result = engine.eval(stmt).unwrap_or_else(|e| {
+                panic!("{name} 第 {i} 句求值失败: {stmt}\n{e}");
+            });
+            if is_assertion {
+                asserted += 1;
+                assert_eq!(
+                    result.expr.to_string(),
+                    "True",
+                    "{name} 第 {i} 句断言未通过: {stmt}"
+                );
+            }
         }
     }
-    assert!(
-        asserted >= 30,
-        "断言语句应有 30+ 条(52 TestYacas + 11 Verify),实际 {asserted}"
-    );
+    assert!(asserted >= 30, "断言语句应有 30+ 条,实际 {asserted}");
 }

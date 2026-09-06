@@ -18,7 +18,7 @@
    - Subst is a bodied operator in 1.9.2, call via ApplyPure("Subst", ...);
    - IsFreeOf(var, expr): variable FIRST, expression SECOND;
    - D/Integrate/Deriv are bodied operators: D(var)expr, Integrate(var)expr.
-   - Tests: tests/steps.yts.
+   - Tests: tests/steps/*.yts(runner: tests/steps_yts.rs).
 */
 
 RuleBase("StepsD", {expr, var});
@@ -271,6 +271,55 @@ SI'USub(integrand, g, fam, rest, v) :=
       {{{"direct", "p", f, Integrate(v) f}}, Integrate(v) f}
     )
   );
+/* ---------- 部分分式:∫P(v)/Q(v) dv —— 倒数第二 resort ----------
+   有意定义在兜底之后(同优先级后定义先试,故本规则紧贴 direct 兜底
+   之前尝试):只有 u-sub/parts/基本表/arctan 全部 declined 的 / 形题
+   才会走到这里,谓词因此无需 Apart 预检 —— arctan/u-sub 题零除税。
+   "分解是否有效"的判定在规则体内:Apart 原样返回(不可约分母)时
+   按 direct 兜底语义出步骤,与 HEAD 行为完全一致。 */
+
+/* 有理函数判定:引擎与脚本库均无 IsPolynomial 原语,自写递归判定。
+   常数兜底用 IsFreeOf(Pi/Sqrt(2) 等无关系数也算常数);v 自身单独判定。 */
+RuleBase("IsPoly'", {f, v});
+
+/* 兜底最先定义(同优先级后定义胜出) */
+10 # IsPoly'(_f, _v) <-- False;
+10 # IsPoly'(_f, _v)_(IsFreeOf(v, f)) <-- True;
+10 # IsPoly'(_f, _v)_(f = v) <-- True;
+10 # IsPoly'(_f + _g, _v) <--
+  If (IsPoly'(f, v) And IsPoly'(g, v), True, False);
+10 # IsPoly'(_f - _g, _v) <--
+  If (IsPoly'(f, v) And IsPoly'(g, v), True, False);
+10 # IsPoly'(_f * _g, _v) <--
+  If (IsPoly'(f, v) And IsPoly'(g, v), True, False);
+10 # IsPoly'(_f / _g, _v)_(IsFreeOf(v, g)) <--
+  IsPoly'(f, v);
+10 # IsPoly'(_f ^ _n, _v)_(IsFreeOf(v, n)) <--
+  IsPoly'(f, v);
+10 # IsPoly'(-_f, _v) <-- IsPoly'(f, v);
+
+SI'PartFrac(integrand, p, q, v) :=
+[
+  Local(decomp, cur, sub, steps);
+  decomp := Apart(integrand, v);
+  If (decomp = integrand,
+    /* 分解无进展(不可约分母):交引擎直积 */
+    {{{"direct", "p", integrand, Integrate(v) integrand}}, Integrate(v) integrand},
+    [
+      steps := {{"partial-fraction-rule", "p", integrand, Int(decomp)}};
+      cur := Int(decomp);
+      sub := SI'Diff(decomp, v);
+      cur := SD'Merge(cur, sub, "Int")[2];
+      steps := Concat(steps, sub[1]);
+      {steps, cur};
+    ]);
+];
+
+/* 分母次数 >= 2 才值得分解(线性分母由线性-ln 规则/u-sub 接管,
+   也避免浅层 1/(2u) 形态触发 Apart)。 */
+10 # SI'Diff(_p / _q, _v)_(IsPoly'(p, v) And IsPoly'(q, v) And Degree(q, v) >= 2) <--
+  SI'PartFrac(p / q, p, q, v);
+
 
 /* 和法则 */
 10 # SI'Diff(_a + _b, _v) <--
@@ -433,6 +482,14 @@ SI'Parts(integrand, u, dvf, vval, var) :=
 10 # SI'Diff(_rest * _g ^ _n, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
   SI'USub(rest * g ^ n, g, g ^ n, rest, v);
 
+
+/* 线性分母:∫c/(a*v+b) dv = (c/a)*Ln(a*v+b),斜率取 Deriv(v)l(免展开依赖)。
+   定义在 u-sub 之后(先于 u-sub 尝试):部分分式的 A/(x-a) 项由此直接
+   接住,不再绕道 u-sub;深层 1/(2u) 形态也不再触发无进展守卫。
+   l = v(即 c/x)留给既有的 ln-rule,本规则不接。 */
+10 # SI'Diff(_c / _l, _v)_(IsPoly'(l, v) And Not(l = v) And IsFreeOf(v, c) And Degree(l, v) = 1) <--
+  {{{"ln-rule", "p", c / l, (c / Deriv(v) l) * Ln(l)}}, (c / Deriv(v) l) * Ln(l)};
+
 /* ============================================================
    解释文案(声明式):数据表 + 查询。
    风格约定:陈述规则本身(公式/操作),不做教学解说
@@ -500,7 +557,7 @@ RuleBase("Steps'Text", {key});
 10 # Steps'Text("i:constant-multiple-rule") <-- "常数倍法则: ∫c*f dx = c*∫f dx";
 10 # Steps'Text("i:sum-rule") <-- "和法则: ∫(f + g) dx = ∫f dx + ∫g dx";
 10 # Steps'Text("i:power-rule") <-- "幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)";
-10 # Steps'Text("i:ln-rule") <-- "对数积分: ∫c/x dx = c*Ln(x)";
+10 # Steps'Text("i:ln-rule") <-- "对数积分: ∫c/(a*x + b) dx = (c/a)*Ln(a*x + b)";
 10 # Steps'Text("i:sin-rule") <-- "正弦积分: ∫Sin(x) dx = -Cos(x)";
 10 # Steps'Text("i:cos-rule") <-- "余弦积分: ∫Cos(x) dx = Sin(x)";
 10 # Steps'Text("i:exp-rule") <-- "自然指数积分: ∫Exp(x) dx = Exp(x)";
@@ -516,6 +573,7 @@ RuleBase("Steps'Text", {key});
 10 # Steps'Text("u-sub-rule") <-- "换元: u = g(x), du = g'(x) dx";
 10 # Steps'Text("back-sub-rule") <-- "回代: u → g(x)";
 10 # Steps'Text("parts-rule") <-- "分部积分: ∫u dv = u*v - ∫v du";
+10 # Steps'Text("partial-fraction-rule") <-- "部分分式: P/Q 分解为最简分式之和,逐项积分";
 
 /* ---------- 两侧通用 ---------- */
 10 # Steps'Text("simplify") <-- "化简";

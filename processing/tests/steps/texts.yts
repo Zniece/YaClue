@@ -1,0 +1,18 @@
+/* 解释文案(声明式):查询命中 / 侧感知 / 兜底 / Full 三元组。 */
+
+TestYacas(Steps'Explain("power-rule"), "幂法则: (u^n)' = n*u^(n-1)*u'");
+TestYacas(Steps'Explain("sum-rule"), "和法则: (f + g)' = f' + g'");
+TestYacas(Steps'Explain("arctan-rule"), "反正切法则: (ArcTan(u))' = u'/(1 + u^2)");
+TestYacas(Steps'ExplainFor("arctan-rule", "i"), "反正切积分: ∫1/(1 + x^2) dx = ArcTan(x)");
+TestYacas(Steps'ExplainFor("tan-rule", "i"), "正切积分: ∫Tan(x) dx = -Ln(Cos(x))");
+TestYacas(FirstWhy(StepsD'Full(Tan(x ^ 2), x)), "链式法则: (Tan(u))' = u'/Cos(u)^2");
+/* 侧感知:积分侧覆盖,求导侧回退通用键 */
+TestYacas(Steps'ExplainFor("power-rule", "d"), Steps'Explain("power-rule"));
+TestYacas(Steps'ExplainFor("power-rule", "i"), "幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)");
+TestYacas(Steps'ExplainFor("direct", "d"), "直接求导");
+TestYacas(Steps'ExplainFor("direct", "i"), "直接积分");
+TestYacas(Steps'Explain("no-such-rule"), "");
+TestYacas(Steps'ExplainFor("no-such-rule", "i"), "");
+TestYacas(Length(StepsD'Full(x^2, x)), Length(StepsD(x^2, x)));
+TestYacas(FirstWhy(StepsD'Full(x, x)), Steps'Explain("identity-rule"));
+TestYacas(FirstWhy(StepsI'Full(x*Sin(x), x)), Steps'Explain("parts-rule"));

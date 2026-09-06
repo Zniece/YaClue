@@ -1,0 +1,25 @@
+/* 积分规范:基本表(与引擎 Integrate 对照)/ arctan 族 / M1 三角双曲表。 */
+
+/* 基本情形(与引擎 Integrate 对照) */
+TestYacas(LastStepExpr(StepsI(x^2, x)), Integrate(x) x^2);
+TestYacas(LastStepExpr(StepsI(Sin(x), x)), Integrate(x) Sin(x));
+TestYacas(LastStepExpr(StepsI(Cos(x), x)), Integrate(x) Cos(x));
+TestYacas(LastStepExpr(StepsI(Exp(x), x)), Integrate(x) Exp(x));
+TestYacas(LastStepExpr(StepsI(1/x, x)), Integrate(x) 1/x);
+TestYacas(LastStepExpr(StepsI(5, x)), Integrate(x) 5);
+TestYacas(LastStepExpr(StepsI(x*Sin(x), x)), Integrate(x) x*Sin(x));
+TestYacas(LastStepExpr(StepsI(Cos(x)+x^3, x)), Integrate(x)(Cos(x)+x^3));
+
+/* arctan 族(算法书 IntPureSquare 的教学化拆分) */
+TestYacas(LastStepExpr(StepsI(1/(1+x^2), x)), ArcTan(x));
+TestYacas(LastStepExpr(StepsI(3/(1+x^2), x)), 3*ArcTan(x));
+TestYacas(LastStepExpr(StepsI(Cos(x)/(1+Sin(x)^2), x)), ArcTan(Sin(x)));
+Verify(FirstRule(StepsI(1/(1+x^2), x)), "arctan-rule");
+
+/* M1: 三角/双曲基本表(与引擎 Integrate 对照)+ 反正弦形(硬编码预期) */
+TestYacas(LastStepExpr(StepsI(Tan(x), x)), Integrate(x) Tan(x));
+TestYacas(LastStepExpr(StepsI(Cot(x), x)), Integrate(x) Cot(x));
+TestYacas(LastStepExpr(StepsI(Sinh(x), x)), Integrate(x) Sinh(x));
+TestYacas(LastStepExpr(StepsI(Cosh(x), x)), Integrate(x) Cosh(x));
+TestYacas(LastStepExpr(StepsI(Tanh(x), x)), Integrate(x) Tanh(x));
+TestYacas(LastStepExpr(StepsI(2/Sqrt(1 - x^2), x)), 2*ArcSin(x));

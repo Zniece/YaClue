@@ -1,0 +1,12 @@
+/* 积分规范:部分分式(M2a)。结果与引擎 Integrate 代数等价,用 Simplify
+   差值断言,容忍 Ln 常数因子的形态差;先捕获一次再断言,避免重复求值。 */
+
+/* M2a: 部分分式(分解步骤 + 逐项积分;结果与引擎 Integrate 代数等价,
+   用 Simplify 差值断言,容忍 Ln 常数因子的形态差;先捕获一次再断言,
+   避免 StepsI 重复求值) */
+sPF1 := StepsI(1/(x^2-1), x);
+Verify(FirstRule(sPF1), "partial-fraction-rule");
+TestYacas(Simplify(LastStepExpr(sPF1) - Integrate(x) 1/(x^2-1)), 0);
+sPF2 := StepsI(x/(x^2+3*x+2), x);
+Verify(FirstRule(sPF2), "partial-fraction-rule");
+TestYacas(Simplify(LastStepExpr(sPF2) - Integrate(x) x/(x^2+3*x+2)), 0);
