@@ -18,8 +18,11 @@ const CASES: [&str; 5] = [
     "Ln(x^2+1)",
 ];
 
-/// 跑一组用例,返回 (expr, 每步 (rule, expr, tex) 序列, 末步一致性) 快照
-fn run_suite(engine: &mut dyn Engine, label: &str) -> Vec<(String, Vec<(String, String, String)>, bool)> {
+/// 单用例快照:(表达式, 每步 (rule, expr, tex) 序列, 末步一致性)
+type SuiteSnapshot = Vec<(String, Vec<(String, String, String)>, bool)>;
+
+/// 跑一组用例,返回快照
+fn run_suite(engine: &mut dyn Engine, label: &str) -> SuiteSnapshot {
     let mut out = Vec::new();
     for expr in CASES {
         let steps = derive_steps(engine, expr, "x")

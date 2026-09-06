@@ -9,6 +9,7 @@
 //! - `:=` 由脚本规则接管(原子:MacroSet+Eval 链;数字名 → InvalidArg 变体);
 //! - Delete 1 基、越界 ListNotLongEnough;DestructiveDelete 写回 arg0 变量(cc 本体变 {1,3});
 //! - IsAtom:数字/字符串 = True(照 cyacas 实测,非仅原子串)。
+//!
 //! 注:`{aa,bb}:={5,6}` 列表赋值依赖 Map(lists.rep 包脚本) → 归 T5,不在本批。
 
 use yacas_rs::env::Environment;

@@ -82,21 +82,13 @@ pub fn sample(
     let ys = eval_batched(engine, func, var, &xs, options.batch)?;
 
     // Refine each base interval by curvature, depth-first.
+    let cfg = RefineCfg { func, var, eps: options.eps, batch: options.batch };
     let mut pts: Vec<(f64, f64)> = xs.into_iter().zip(ys).collect();
     for i in (0..n).rev() {
         // `pts` grows as we splice; track the current segment end offset so
         // indices stay valid while refining left-to-right... we refine in
         // reverse insertion order to keep earlier indices stable.
-        let seg = refine_interval(
-            engine,
-            func,
-            var,
-            pts[i],
-            pts[i + 1],
-            options.max_depth,
-            options.eps,
-            options.batch,
-        )?;
+        let seg = refine_interval(engine, &cfg, pts[i], pts[i + 1], options.max_depth)?;
         let middle = &seg[1..seg.len() - 1];
         let at = i + 1;
         for (k, p) in middle.iter().enumerate() {
@@ -107,8 +99,8 @@ pub fn sample(
     // Breaks: a break after point i when i or i+1 is non-finite, or when the
     // x jump is not consistent with a continuous curve sample (defensive).
     let mut breaks = Vec::new();
-    for i in 0..pts.len() {
-        if !pts[i].1.is_finite() {
+    for (i, (_, y)) in pts.iter().enumerate() {
+        if !y.is_finite() {
             breaks.push(i);
         }
     }
@@ -119,25 +111,31 @@ pub fn sample(
     Ok(SampledPlot { points, breaks })
 }
 
+/// Refinement parameters that stay invariant during recursion, packed to
+/// keep the recursive signature lean.
+struct RefineCfg<'a> {
+    func: &'a str,
+    var: &'a str,
+    eps: f64,
+    batch: usize,
+}
+
 /// Refine one interval recursively: split at the midpoint when the midpoint
 /// value deviates from the endpoint interpolation by more than
 /// `eps * local_scale` (scale = largest |y| among the three, floored at 1 to
 /// keep the criterion relative but stable near zero).
 fn refine_interval(
     engine: &mut dyn Engine,
-    func: &str,
-    var: &str,
+    cfg: &RefineCfg,
     left: (f64, f64),
     right: (f64, f64),
     depth: u32,
-    eps: f64,
-    batch: usize,
 ) -> Result<Vec<(f64, f64)>, crate::engine::EngineError> {
     if depth == 0 {
         return Ok(vec![left, right]);
     }
     let xm = (left.0 + right.0) / 2.0;
-    let ym = eval_batched(engine, func, var, &[xm], batch)?
+    let ym = eval_batched(engine, cfg.func, cfg.var, &[xm], cfg.batch)?
         .into_iter()
         .next()
         .unwrap_or(f64::NAN);
@@ -147,9 +145,9 @@ fn refine_interval(
     }
     let interp = (left.1 + right.1) / 2.0;
     let scale = left.1.abs().max(right.1.abs()).max(ym.abs()).max(1.0);
-    if (ym - interp).abs() > eps * scale {
-        let l = refine_interval(engine, func, var, left, (xm, ym), depth - 1, eps, batch)?;
-        let r = refine_interval(engine, func, var, (xm, ym), right, depth - 1, eps, batch)?;
+    if (ym - interp).abs() > cfg.eps * scale {
+        let l = refine_interval(engine, cfg, left, (xm, ym), depth - 1)?;
+        let r = refine_interval(engine, cfg, (xm, ym), right, depth - 1)?;
         // l ends with (xm, ym), r starts with it — join without duplication.
         let mut out = l;
         out.extend(r.into_iter().skip(1));
