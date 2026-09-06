@@ -1,7 +1,7 @@
 # yacas — the CAS kernel tree
 
 This directory is **yacas-rs**: a general-purpose computer algebra system —
-a fork of [Yacas](https://github.com/grzegorzmanowski/yacas) (1.9.x), kept in
+a fork of [Yacas](https://github.com/grzegorzmazur/yacas) (1.9.x), kept in
 the same layout as upstream — with one deliberate substitution: **the C++
 engine has been replaced by a Rust engine**. It is an independent component:
 it computes, it knows nothing about YaClue's step-by-step product layer.

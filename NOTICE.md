@@ -17,7 +17,7 @@
 
 Behavioral questions about the script library's original semantics are
 settled against the upstream Yacas sources
-(<https://github.com/grzegorzmanowski/yacas>), which are not distributed
+(<https://github.com/grzegorzmazur/yacas>), which are not distributed
 with this repository.
 
 ## Frontend

@@ -6,7 +6,7 @@ inspect *why* each step applies. Every step names the rule that produced it.
 
 Under the hood, YaClue is powered by **yacas-rs**, a general-purpose computer
 algebra engine written in Rust — a dialect fork of
-[Yacas](https://github.com/grzegorzmanowski/yacas) (1.9.x): library semantics
+[Yacas](https://github.com/grzegorzmazur/yacas) (1.9.x): library semantics
 are kept aligned with the upstream engine while the engine itself is a fresh
 implementation. The step-generation layer and the desktop GUI live outside
 the kernel and are what make YaClue a product.
@@ -47,7 +47,7 @@ Red lines kept by design:
 
 ## yacas-rs's upstream
 
-- yacas-rs's upstream is [Yacas](https://github.com/grzegorzmanowski/yacas)
+- yacas-rs's upstream is [Yacas](https://github.com/grzegorzmazur/yacas)
   (LGPL-2.1+): the script library carries that lineage, while Yacas's C++
   engine is not part of this repository.
 - The script library receives ongoing maintenance fixes as part of

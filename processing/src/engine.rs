@@ -431,7 +431,7 @@ impl Engine for ReplEngine {
 fn default_yacas_bin() -> String {
     // Optional C++ reference binary used only by the dual-engine comparison
     // tests; override with YACAS_BIN. It is NOT part of this repository —
-    // build it from the upstream sources (github.com/grzegorzmanowski/yacas)
+    // build it from the upstream sources (github.com/grzegorzmazur/yacas)
     // if you want those tests to run.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
