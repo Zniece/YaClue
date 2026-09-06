@@ -305,3 +305,40 @@ trig-identity-rule	(2 * (theta + ((- (4 * ((Sin(theta) * Cos(theta)) * ((2 * (Co
 trig-sub-back	(2 * (theta - (((x / 2) * Cos(theta)) * ((2 * (Cos(theta) ^ 2)) - 1))))	2 \left( \theta  - \frac{\left( 2 \left( \cos \theta \right)  ^{2} - 1\right)  \cos \theta  x}{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 trig-sub-back	(2 * (theta - ((((2 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 2)) - 1) * ((Sqrt((4 - (x ^ 2))) / 2) * x)) / 2)))	2 \left( \theta  - \frac{\left( 2 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{2} - 1\right)  x \sqrt{4 - x ^{2}}}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 back-sub-rule	(2 * (ArcSin((x / 2)) - ((((2 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 2)) - 1) * (x * Sqrt((4 - (x ^ 2))))) / 4)))	2 \left( \arcsin \frac{x}{2}  - \frac{\left( 2 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{2} - 1\right)  x \sqrt{4 - x ^{2}}}{4} \right) 	回代: u → g(x)
+### ID x^2 @ x [0,2]
+power-rule	((x ^ 3) / 3)	\frac{x ^{3}}{3} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+definite-eval-rule	(8 / 3)	\frac{8}{3} 	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
+### ID Sin(x) @ x [0,Pi]
+sin-rule	(- Cos(x))	 - \cos x	正弦积分: ∫Sin(x) dx = -Cos(x)
+definite-eval-rule	2	2	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
+### ID Exp(x) @ x [0,1]
+exp-rule	Exp(x)	\exp \left( x\right) 	自然指数积分: ∫Exp(x) dx = Exp(x)
+definite-eval-rule	(Exp(1) - 1)	\exp \left( 1\right)  - 1	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
+### ID x^3 @ x [-1,1]
+power-rule	((x ^ 4) / 4)	\frac{x ^{4}}{4} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+definite-eval-rule	0	0	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
+### ID x^2/Sqrt(4 - x^2) @ x [0,2]
+method-trig-sub	Int(((x ^ 2) / Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( \frac{x ^{2}}{\sqrt{4 - x ^{2}}} \right) 	方法: 三角换元
+trig-sub-rule	Int((4 * (Sin(theta) ^ 2)))	\mathrm{ Int }\left( 4 \left( \sin \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
+constant-multiple-rule	(4 * Int((Sin(theta) ^ 2)))	4 \mathrm{ Int }\left( \left( \sin \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+power-reduction-rule	(4 * ((Int(1) / 2) - ((Sin(theta) * Cos(theta)) / 2)))	4 \left( \frac{\mathrm{ Int }\left( 1\right) }{2}  - \frac{\sin \theta  \cos \theta }{2} \right) 	幂约简递推: ∫Sin^n(u) du = -(Sin^(n-1)(u)*Cos(u))/n + ((n-1)/n)*∫Sin^(n-2)(u) du (Cos^n 对称)
+const-integral-rule	(4 * ((theta / 2) - ((Sin(theta) * Cos(theta)) / 2)))	4 \left( \frac{\theta }{2}  - \frac{\sin \theta  \cos \theta }{2} \right) 	常数积分: ∫c dx = c*x
+trig-sub-back	(4 * ((theta / 2) - (((x / 2) * Cos(theta)) / 2)))	4 \left( \frac{\theta }{2}  - \frac{\cos \theta  x}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+trig-sub-back	(4 * ((theta / 2) - (((Sqrt((4 - (x ^ 2))) / 2) * x) / 4)))	4 \left( \frac{\theta }{2}  - \frac{x \sqrt{4 - x ^{2}}}{8} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+back-sub-rule	(4 * ((ArcSin((x / 2)) / 2) - ((x * Sqrt((4 - (x ^ 2)))) / 8)))	4 \left( \frac{\arcsin \frac{x}{2} }{2}  - \frac{x \sqrt{4 - x ^{2}}}{8} \right) 	回代: u → g(x)
+definite-eval-rule	Pi	\pi 	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
+### ID x*Sqrt(4 - x^2) @ x [0,2]
+method-trig-sub	Int((x * Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( x \sqrt{4 - x ^{2}}\right) 	方法: 三角换元
+trig-sub-rule	Int((8 * (Sin(theta) * (Cos(theta) ^ 2))))	\mathrm{ Int }\left( 8 \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
+constant-multiple-rule	(8 * Int((Sin(theta) * (Cos(theta) ^ 2))))	8 \mathrm{ Int }\left( \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+method-u-sub	(8 * Int((Sin(theta) * (Cos(theta) ^ 2))))	8 \mathrm{ Int }\left( \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	方法: 换元积分法
+u-sub-rule	(8 * Int((- (u ^ 2))))	8 \mathrm{ Int }\left(  - u ^{2}\right) 	换元: u = g(x), du = g'(x) dx
+constant-multiple-rule	(8 * (- Int((u ^ 2))))	-8 \mathrm{ Int }\left( u ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
+power-rule	(-8 * ((u ^ 3) / 3))	 - \frac{8 u ^{3}}{3} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+back-sub-rule	((-8 * (Cos(theta) ^ 3)) / 3)	\frac{ - 8 \left( \cos \theta \right)  ^{3}}{3} 	回代: u → g(x)
+trig-sub-back	((-8 * (Cos(theta) ^ 3)) / 3)	\frac{ - 8 \left( \cos \theta \right)  ^{3}}{3} 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+trig-sub-back	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
+back-sub-rule	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	回代: u → g(x)
+definite-eval-rule	(8 / 3)	\frac{8}{3} 	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
+### ID Sin(x)/Sqrt(4 - x^2) @ x [0,1]
+direct	Integrate(x,0,1,(Sin(x) / Sqrt((4 - (x ^ 2)))))	\int _{0} ^{1 } \frac{\sin x}{\sqrt{4 - x ^{2}}}  dx	直接积分

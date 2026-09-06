@@ -787,6 +787,8 @@ RuleBase("Steps'Text", {key});
 10 # Steps'Text("trig-sub-back") <-- "三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)";
 
 /* ---------- 两侧通用 ---------- */
+10 # Steps'Text("definite-eval-rule") <-- "牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)";
+
 10 # Steps'Text("simplify") <-- "化简";
 
 /* 查询入口:未登记键由兜底规则返回 ""(前端回退到规则键本身) */
@@ -832,6 +834,44 @@ StepsD'Full(expr, var, order) :=
   out;
 ];
 StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var), "i");
+
+/* ---------- 定积分 StepsI'Def:不定积分链 + 牛顿-莱布尼茨求值 ----------
+   教学化引擎 IntegrateRange(Where 代限值)的思路:先走完整不定积分
+   步骤链得原函数 F,再追加"代限值"步骤 F(b) - F(a) 并求值。
+   上下限代入用 Subst + Eval(Where 语义,数值立即折叠)。
+   兜底:不定积分链以 direct 结尾(无解析原函数)时,留 Hold 的
+   定限 Integrate 不求值,数值方法待接入。 */
+
+RuleBase("StepsI'Def", {expr, var, from, to});
+
+StepsI'Def(expr, var, from, to) :=
+[
+  Local(p, F, upper, lower, final, tidied);
+  p := SD'Merge(Int(expr), SI'Diff(expr, var), "Int");
+  F := p[1][Length(p[1])][2];
+  /* 兜底判定看链尾规则名(direct = 引擎直积,无解析原函数);
+     不用 IsFreeOf(Integrate, F) —— IsFreeOf 对函数头有误判(见引擎缺陷清单) */
+  If (p[1][Length(p[1])][1] = "direct",
+    /* 无解析原函数:留 Hold 不求值(引擎直积在此上下文会触发
+       IntegrateMultiplicative 的 MatchLinear 重试错误),数值方法待接入 */
+    SD'Merge(Int(expr),
+             {{{"direct", "p", expr, `Hold(Integrate(@var, @from, @to)(@expr))}},
+              `Hold(Integrate(@var, @from, @to)(@expr))},
+             "Int")[1],
+    [
+      upper := Eval(ApplyPure("Subst", {var, to, F}));
+      lower := Eval(ApplyPure("Subst", {var, from, F}));
+      final := upper - lower;
+      tidied := Tidy(final);
+      If (tidied = final,
+        Append(p[1], {"definite-eval-rule", final}),
+        Append(Append(p[1], {"definite-eval-rule", final}),
+               {"simplify", tidied}));
+    ]);
+];
+
+StepsI'Def'Full(expr, var, from, to) :=
+  Steps'Annotate(StepsI'Def(expr, var, from, to), "i");
 
 /* ---------- DPrime 占位符的 TeX 形态 ----------
    DPrime(t) 是 SD'Merge 的"待定内层导数"占位符;渲染为撇号记法 (t)',

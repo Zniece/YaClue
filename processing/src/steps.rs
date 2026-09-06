@@ -126,6 +126,20 @@ pub fn derive_integrals(
     steps_from_command(engine, &format!("StepsI'Full({expr}, {var})"))
 }
 
+/// 定积分:不定积分步骤链 + 牛顿-莱布尼茨求值(上下限可为任意表达式,如 `Pi`)
+pub fn derive_definite(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    from: &str,
+    to: &str,
+) -> Result<Vec<Step>, EngineError> {
+    validate_expr(expr)?;
+    validate_expr(from)?;
+    validate_expr(to)?;
+    steps_from_command(engine, &format!("StepsI'Def'Full({expr}, {var}, {from}, {to})"))
+}
+
 /// 去掉 TeXForm 输出的首尾各一个 `$`(只剥一对,不用 trim_matches)
 fn strip_dollars(tex: &str) -> String {
     let t = tex.trim();

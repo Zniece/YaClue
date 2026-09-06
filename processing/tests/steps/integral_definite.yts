@@ -1,0 +1,14 @@
+/* 积分规范:定积分(M2d)。不定积分链 + 牛顿-莱布尼茨求值;
+   无解析原函数时留 Hold 的定限 Integrate(数值方法待接入)。 */
+
+TestYacas(LastStepExpr(StepsI'Def(x^2, x, 0, 2)), 8/3);
+TestYacas(LastStepExpr(StepsI'Def(Sin(x), x, 0, Pi)), 2);
+TestYacas(LastStepExpr(StepsI'Def(Exp(x), x, 0, 1)), Exp(1) - 1);
+TestYacas(LastStepExpr(StepsI'Def(x^3, x, -1, 1)), 0);
+TestYacas(LastStepExpr(StepsI'Def(Cos(x), x, 0, Pi/2)), 1);
+TestYacas(LastStepExpr(StepsI'Def(x^2/Sqrt(4 - x^2), x, 0, 2)), Pi);
+TestYacas(LastStepExpr(StepsI'Def(x*Sqrt(4 - x^2), x, 0, 2)), 8/3);
+TestYacas(StepsI'Def(Sin(x)/Sqrt(4 - x^2), x, 0, 1)[1][1], "direct");
+TestYacas(Length(StepsI'Def(x^2, x, 0, 2)), 2);
+Verify(Steps'ExplainFor("definite-eval-rule", "i"),
+       "牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)");

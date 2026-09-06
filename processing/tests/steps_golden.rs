@@ -19,7 +19,7 @@
 use std::collections::BTreeSet;
 
 use processing::engine::{Engine, RustEngine};
-use processing::steps::{derive_integrals, derive_steps, derive_steps_order};
+use processing::steps::{derive_definite, derive_integrals, derive_steps, derive_steps_order};
 
 const GOLDEN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/steps_golden.txt");
 
@@ -102,6 +102,17 @@ const CASES: &[(&str, &str, &str)] = &[
     ("I", "x^2*Sqrt(4 - x^2)", "x"), // θ 机器(混合积,Sin^2*Cos^2 → 恒等展开)
 ];
 
+/// 定积分用例:(expr, var, from, to)
+const DEF_CASES: &[(&str, &str, &str, &str)] = &[
+    ("x^2", "x", "0", "2"),
+    ("Sin(x)", "x", "0", "Pi"),
+    ("Exp(x)", "x", "0", "1"),
+    ("x^3", "x", "-1", "1"), // 奇对称区间,FTC 得 0
+    ("x^2/Sqrt(4 - x^2)", "x", "0", "2"), // θ 链 + 代限值 → Pi
+    ("x*Sqrt(4 - x^2)", "x", "0", "2"),
+    ("Sin(x)/Sqrt(4 - x^2)", "x", "0", "1"), // 无解析原函数 → Hold 兜底
+];
+
 /// code.ys 登记的全部规则键(普通键,含顶层追加的 simplify)。
 /// 覆盖断言保证题目清单把每个键都命中一次,规则不被静默遗漏。
 /// 链式键("<name>-chain-rule")由 SD'FuncDiff 按普通键自动派生,
@@ -114,6 +125,7 @@ const EXPECTED_RULES: &[&str] = &[
     "back-sub-rule",
     "const-integral-rule",
     "const-rule",
+    "definite-eval-rule",
     "constant-multiple-rule",
     "cos-rule",
     "cosh-rule",
@@ -182,6 +194,18 @@ fn golden_matches_baseline() {
                 if !rule.is_empty() {
                     seen.insert(rule.to_string());
                 }
+            }
+        }
+        body.push_str(&text);
+    }
+    for (expr, var, from, to) in DEF_CASES {
+        let steps = derive_definite(&mut engine, expr, var, from, to)
+            .unwrap_or_else(|e| panic!("定积分用例 {expr} [{from},{to}] 生成失败: {e}"));
+        let mut text = format!("### ID {expr} @ {var} [{from},{to}]\n");
+        for st in &steps {
+            text.push_str(&format!("{}\t{}\t{}\t{}\n", st.rule, st.expr, st.tex, st.why));
+            if !st.rule.is_empty() {
+                seen.insert(st.rule.clone());
             }
         }
         body.push_str(&text);
