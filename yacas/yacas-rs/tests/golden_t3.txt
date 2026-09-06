@@ -1,0 +1,24 @@
+Macro(m5,{y})(y);	True
+m5(3);	y
+y:=99;	99
+Macro(p1,{y})(y);	True
+p1(3);	99
+Macro(m6,{y})(@y+7);	True
+m6(3);	10
+Macro(m4,{x})(x+x);	True
+x:=10;	10
+m4(3);	20
+qq:=99;	99
+Macro(q,{qq})(@qq+0);	True
+q(3);	3
+if(True) 11 else 22;	11
+if(False) 11 else 22;	22
+Eval(11 else 22);	11 else 22
+if(1<2) 7 else 8;	7
+N(2/3,10);	0.6666666666
+5=5;	True
+2=3;	False
+"a"="a";	True
+x=x;	True
+1+1=2;	True
+MathEquals(5,5);	MathEquals(5,5)

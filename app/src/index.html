@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>分步 CAS 计算器</title>
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>分步 CAS 计算器</h1>
+      <p class="hint">输入表达式,对 <code>x</code> 分步求导,例如 <code>Sin(x)^2</code> 或 <code>x*Sin(x)</code></p>
+
+      <div class="row">
+        <select id="mode" title="运算类型">
+          <option value="d">求导</option>
+          <option value="i">积分</option>
+        </select>
+        <input id="expr" type="text" placeholder="Sin(x)^2" autofocus />
+        <button id="go">计算</button>
+      </div>
+
+      <section id="steps">
+        <h2>解题步骤</h2>
+        <div id="steps-list"></div>
+      </section>
+
+      <p id="error" class="error"></p>
+    </main>
+    <script src="vendor/katex/katex.min.js"></script>
+    <script src="main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+[package]
+name = "processing"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Step-by-step CAS processing layer: engine traits, expressions, step generation"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+yacas-rs = { path = "../yacas/yacas-rs" }

@@ -1,0 +1,487 @@
+/* steps.rep/code.ys
+   Step generators: differentiation (StepsD) and integration (StepsI), pedagogical.
+
+   Design:
+   - Raw steps are {rule, kind, target, after}:
+     - kind "p" (pending): replace Pending(target) by after, where Pending is
+       DPrime (StepsD) or Int (StepsI);
+     - kind "s" (symbol): replace the symbol target by after (u-substitution
+       back-substitution).
+   - SD'Merge(cur, sub, pending) applies raw steps to a running expression and
+     returns visible steps {rule, expression} plus the final expression.
+   - Rule ordering: the generic fallback rule must be defined FIRST (later
+     rules win in 1.9.2).
+
+   NOTES (all verified empirically against 1.9.2, see ../RESEARCH.md §7):
+   - pattern rules (10 #) must NOT be wrapped in LocalSymbols blocks;
+   - pattern variable names must avoid "expr"/"var";
+   - Subst is a bodied operator in 1.9.2, call via ApplyPure("Subst", ...);
+   - IsFreeOf(var, expr): variable FIRST, expression SECOND;
+   - D/Integrate/Deriv are bodied operators: D(var)expr, Integrate(var)expr.
+   - Tests: tests/steps.yts.
+*/
+
+RuleBase("StepsD", {expr, var});
+RuleBase("SD'Diff", {f, v});
+RuleBase("StepsI", {expr, var});
+RuleBase("SI'Diff", {f, v});
+
+/* ---------- 通用:把原始步骤应用到运行中表达式 ---------- */
+
+SD'Merge(cur, sub, pending) :=
+[
+  Local(steps, i, s, rule, kind, t, after);
+  steps := {};
+  For (i := 1, i <= Length(sub[1]), i++)
+  [
+    s := sub[1];
+    s := s[i];
+    rule := s[1];
+    kind := s[2];
+    t := s[3];
+    after := s[4];
+    If (kind = "s",
+      cur := ApplyPure("Subst", {t, after, cur}),
+      cur := ApplyPure("Subst", {Apply(pending, {t}), after, cur}));
+    steps := Append(steps, {rule, cur});
+  ];
+  {steps, cur};
+];
+
+/* ---------- 轻量化简 Tidy:仅采纳"局部清理"式的化简 ---------- */
+
+RuleBase("Tidy", {expr});
+
+/* 仅当 Simplify 的结果是原表达式的子表达式时采纳(用 Subst 探测):
+   展开/合并公分母会重构结构(不再是子表达式),天然被拒,保留原形式。 */
+Tidy(expr) :=
+[
+  Local(s, probe);
+  s := Simplify(expr);
+  probe := ApplyPure("Subst", {s, Tidy'Marker, expr});
+  If (probe = expr, expr, s);
+];
+
+/* ============================================================
+   求导步骤 StepsD
+   ============================================================ */
+
+StepsD(expr, var) :=
+[
+  Local(p, steps, tidied);
+  p := SD'Merge(DPrime(expr), SD'Diff(expr, var), "DPrime");
+  tidied := Tidy(p[2]);
+  If (tidied = p[2],
+    steps := p[1],
+    steps := Append(p[1], {"simplify", tidied}));
+  steps;
+];
+
+/* 兜底(最先定义):常数 / 自变量 / 未知结构 */
+10 # SD'Diff(_f, _v) <--
+  If (IsNumber(f) Or IsFreeOf(v, f),
+    {{{"const-rule", "p", f, 0}}, 0},
+    If (f = v,
+      {{{"identity-rule", "p", f, 1}}, 1},
+      {{{"direct", "p", f, Deriv(v) f}}, Deriv(v) f}
+    )
+  );
+
+/* 一元负号:按常数倍 -1 处理 */
+10 # SD'Diff(-_f, _v) <--
+[
+  Local(steps, cur, sf);
+  steps := {{"constant-multiple-rule", "p", -f, -DPrime(f)}};
+  cur := -DPrime(f);
+  sf := SD'Diff(f, v);
+  cur := SD'Merge(cur, sf, "DPrime")[2];
+  steps := Concat(steps, sf[1]);
+  {steps, cur};
+];
+
+/* 和法则 */
+10 # SD'Diff(_a + _b, _v) <--
+[
+  Local(steps, cur, p, sa, sb);
+  steps := {{"sum-rule", "p", a + b, DPrime(a) + DPrime(b)}};
+  cur := DPrime(a) + DPrime(b);
+  sa := SD'Diff(a, v);
+  cur := SD'Merge(cur, sa, "DPrime")[2];
+  steps := Concat(steps, sa[1]);
+  sb := SD'Diff(b, v);
+  cur := SD'Merge(cur, sb, "DPrime")[2];
+  steps := Concat(steps, sb[1]);
+  {steps, cur};
+];
+
+/* 积法则 / 常数倍法则 */
+10 # SD'Diff(_a * _b, _v) <--
+[
+  Local(steps, cur, p, sa, sb);
+  If (IsFreeOf(v, a),
+    [ /* 常数倍法则:c*f' */
+      steps := {{"constant-multiple-rule", "p", a * b, a * DPrime(b)}};
+      cur := a * DPrime(b);
+      sb := SD'Diff(b, v);
+      cur := SD'Merge(cur, sb, "DPrime")[2];
+      steps := Concat(steps, sb[1]);
+    ],
+    [ /* 乘积法则:f'*g + f*g' */
+      steps := {{"product-rule", "p", a * b, DPrime(a) * b + a * DPrime(b)}};
+      cur := DPrime(a) * b + a * DPrime(b);
+      sa := SD'Diff(a, v);
+      cur := SD'Merge(cur, sa, "DPrime")[2];
+      steps := Concat(steps, sa[1]);
+      sb := SD'Diff(b, v);
+      cur := SD'Merge(cur, sb, "DPrime")[2];
+      steps := Concat(steps, sb[1]);
+    ]);
+  {steps, cur};
+];
+
+/* 商法则 */
+10 # SD'Diff(_a / _b, _v) <--
+[
+  Local(steps, cur, p, sa, sb);
+  steps := {{"quotient-rule", "p", a / b, (DPrime(a) * b - a * DPrime(b)) / b ^ 2}};
+  cur := (DPrime(a) * b - a * DPrime(b)) / b ^ 2;
+  sa := SD'Diff(a, v);
+  cur := SD'Merge(cur, sa, "DPrime")[2];
+  steps := Concat(steps, sa[1]);
+  sb := SD'Diff(b, v);
+  cur := SD'Merge(cur, sb, "DPrime")[2];
+  steps := Concat(steps, sb[1]);
+  {steps, cur};
+];
+
+/* 幂法则 / 指数法则 */
+10 # SD'Diff(_a ^ _b, _v) <--
+[
+  Local(steps, cur, p, sa, sb);
+  If (IsFreeOf(v, b),
+    [ /* 幂法则(含链式):b*a^(b-1) * a' */
+      steps := {{"power-rule", "p", a ^ b, b * a ^ (b - 1) * DPrime(a)}};
+      cur := b * a ^ (b - 1) * DPrime(a);
+      sa := SD'Diff(a, v);
+      cur := SD'Merge(cur, sa, "DPrime")[2];
+      steps := Concat(steps, sa[1]);
+    ],
+    If (IsFreeOf(v, a),
+      [ /* 指数法则:a^b * Ln(a) * b' */
+        steps := {{"exponential-rule", "p", a ^ b, a ^ b * Ln(a) * DPrime(b)}};
+        cur := a ^ b * Ln(a) * DPrime(b);
+        sb := SD'Diff(b, v);
+        cur := SD'Merge(cur, sb, "DPrime")[2];
+        steps := Concat(steps, sb[1]);
+      ],
+      [ /* 底和指数都依赖自变量:直接求导兜底 */
+        steps := {{"direct", "p", a ^ b, Deriv(v)(a ^ b)}};
+        cur := Deriv(v)(a ^ b);
+      ]));
+  {steps, cur};
+];
+
+/* 基本函数(链式) */
+10 # SD'Diff(Sin(_u), _v) <--
+[
+  Local(steps, cur, p, su);
+  steps := {{"sin-rule", "p", Sin(u), Cos(u) * DPrime(u)}};
+  cur := Cos(u) * DPrime(u);
+  su := SD'Diff(u, v);
+  cur := SD'Merge(cur, su, "DPrime")[2];
+  steps := Concat(steps, su[1]);
+  {steps, cur};
+];
+
+10 # SD'Diff(Cos(_u), _v) <--
+[
+  Local(steps, cur, p, su);
+  steps := {{"cos-rule", "p", Cos(u), (-Sin(u)) * DPrime(u)}};
+  cur := (-Sin(u)) * DPrime(u);
+  su := SD'Diff(u, v);
+  cur := SD'Merge(cur, su, "DPrime")[2];
+  steps := Concat(steps, su[1]);
+  {steps, cur};
+];
+
+10 # SD'Diff(Exp(_u), _v) <--
+[
+  Local(steps, cur, p, su);
+  steps := {{"exp-rule", "p", Exp(u), Exp(u) * DPrime(u)}};
+  cur := Exp(u) * DPrime(u);
+  su := SD'Diff(u, v);
+  cur := SD'Merge(cur, su, "DPrime")[2];
+  steps := Concat(steps, su[1]);
+  {steps, cur};
+];
+
+10 # SD'Diff(Ln(_u), _v) <--
+[
+  Local(steps, cur, p, su);
+  steps := {{"ln-rule", "p", Ln(u), DPrime(u) / u}};
+  cur := DPrime(u) / u;
+  su := SD'Diff(u, v);
+  cur := SD'Merge(cur, su, "DPrime")[2];
+  steps := Concat(steps, su[1]);
+  {steps, cur};
+];
+
+10 # SD'Diff(Sqrt(_u), _v) <--
+[
+  Local(steps, cur, p, su);
+  steps := {{"sqrt-rule", "p", Sqrt(u), DPrime(u) / (2 * Sqrt(u))}};
+  cur := DPrime(u) / (2 * Sqrt(u));
+  su := SD'Diff(u, v);
+  cur := SD'Merge(cur, su, "DPrime")[2];
+  steps := Concat(steps, su[1]);
+  {steps, cur};
+];
+
+/* ============================================================
+   积分步骤 StepsI(v1:线性/幂/基本函数/u-substitution/兜底)
+   ============================================================ */
+
+StepsI(expr, var) :=
+[
+  Local(p, steps, tidied);
+  p := SD'Merge(Int(expr), SI'Diff(expr, var), "Int");
+  tidied := Tidy(p[2]);
+  If (tidied = p[2],
+    steps := p[1],
+    steps := Append(p[1], {"simplify", tidied}));
+  steps;
+];
+
+/* 通用 u-substitution 机制:
+   integrand = fam(g) * rest,rest = c * g'(常数倍);
+   u = g,du = g' dx → ∫c*f(u) du,再回代 u → g。
+   返回 {raw steps, final}。 */
+SI'USub(integrand, g, fam, rest, v) :=
+[
+  Local(c, fu, cur, sub, steps);
+  c := Simplify(rest / (Deriv(v) g));
+  /* 精确结构替换:先 g^2 → u^2(覆盖 1/(g^2+1) 这类),再 g → u */
+  fu := ApplyPure("Subst", {g ^ 2, u ^ 2, c * fam});
+  fu := ApplyPure("Subst", {g, u, fu});
+  steps := {{"u-sub-rule", "p", integrand, Int(fu)}};
+  cur := Int(fu);
+  /* 原始步骤原样拼接;merge 只用于推进 cur(取其最终值) */
+  sub := SI'Diff(fu, u);
+  cur := SD'Merge(cur, sub, "Int")[2];
+  steps := Concat(steps, sub[1]);
+  /* 回代 u → g */
+  steps := Append(steps, {"back-sub-rule", "s", u, g});
+  {steps, ApplyPure("Subst", {u, g, cur})};
+];
+
+/* 兜底(最先定义):常数 / 自变量 / 未知结构(引擎直接积分) */
+10 # SI'Diff(_f, _v) <--
+  If (IsFreeOf(v, f),
+    {{{"const-integral-rule", "p", f, f * v}}, f * v},
+    If (f = v,
+      {{{"power-rule", "p", f, f ^ 2 / 2}}, f ^ 2 / 2},
+      {{{"direct", "p", f, Integrate(v) f}}, Integrate(v) f}
+    )
+  );
+
+/* 和法则 */
+10 # SI'Diff(_a + _b, _v) <--
+[
+  Local(steps, cur, p, sa, sb);
+  steps := {{"sum-rule", "p", a + b, Int(a) + Int(b)}};
+  cur := Int(a) + Int(b);
+  sa := SI'Diff(a, v);
+  cur := SD'Merge(cur, sa, "Int")[2];
+  steps := Concat(steps, sa[1]);
+  sb := SI'Diff(b, v);
+  cur := SD'Merge(cur, sb, "Int")[2];
+  steps := Concat(steps, sb[1]);
+  {steps, cur};
+];
+
+/* 常数倍法则 */
+10 # SI'Diff(_c * _f, _v)_(IsFreeOf(v, c)) <--
+[
+  Local(steps, cur, p, sf);
+  steps := {{"constant-multiple-rule", "p", c * f, c * Int(f)}};
+  cur := c * Int(f);
+  sf := SI'Diff(f, v);
+  cur := SD'Merge(cur, sf, "Int")[2];
+  steps := Concat(steps, sf[1]);
+  {steps, cur};
+];
+
+/* 分式:∫c/x dx = c*Ln(x) */
+10 # SI'Diff(_c / _a, _v)_(IsFreeOf(v, c) And a = v) <--
+  {{{"ln-rule", "p", c / a, c * Ln(a)}}, c * Ln(a)};
+
+/* 一元负号:按常数倍 -1 处理 */
+10 # SI'Diff(-_f, _v) <--
+[
+  Local(steps, cur, sf);
+  steps := {{"constant-multiple-rule", "p", -f, -Int(f)}};
+  cur := -Int(f);
+  sf := SI'Diff(f, v);
+  cur := SD'Merge(cur, sf, "Int")[2];
+  steps := Concat(steps, sf[1]);
+  {steps, cur};
+];
+
+/* arctan 族:∫c/(1+a^2) dv = c*ArcTan(a)(a = v 时;算法书 IntPureSquare 的教学化拆分)。
+   注意 yacas 会把 1+a^2 重排为 a^2+1,故用顺序无关的 _d + _a^2 加 d = 1 条件 */
+10 # SI'Diff(_c / (_a ^ 2 + _d), _v)_(d = 1 And IsFreeOf(v, c) And a = v) <--
+  {{{"arctan-rule", "p", c / (a ^ 2 + d), c * ArcTan(a)}}, c * ArcTan(a)};
+
+/* 幂法则(含 n=-1 → Ln) */
+10 # SI'Diff(_a ^ _b, _v)_(a = v And IsFreeOf(v, b)) <--
+  If (b = -1,
+    {{{"ln-rule", "p", a ^ b, Ln(a)}}, Ln(a)},
+    {{{"power-rule", "p", a ^ b, a ^ (b + 1) / (b + 1)}}, a ^ (b + 1) / (b + 1)});
+
+/* 基本函数(仅当参数恰为积分变量) */
+10 # SI'Diff(Sin(_u), _v)_(u = v) <--
+  {{{"sin-rule", "p", Sin(u), -Cos(u)}}, -Cos(u)};
+10 # SI'Diff(Cos(_u), _v)_(u = v) <--
+  {{{"cos-rule", "p", Cos(u), Sin(u)}}, Sin(u)};
+10 # SI'Diff(Exp(_u), _v)_(u = v) <--
+  {{{"exp-rule", "p", Exp(u), Exp(u)}}, Exp(u)};
+
+/* ---------- 分部积分:∫u*dv = u*v - ∫v*du(u 按 LIATE 选取,dv = 其余因子) ---------- */
+
+SI'Parts(integrand, u, dvf, vval, var) :=
+[
+  Local(du, cur, sub, steps);
+  du := Deriv(var) u;
+  steps := {{"parts-rule", "p", integrand, u * vval - Int(vval * du)}};
+  cur := u * vval - Int(vval * du);
+  /* 残差先 Tidy,便于下一步规则匹配 */
+  sub := SI'Diff(Tidy(vval * du), var);
+  cur := SD'Merge(cur, sub, "Int")[2];
+  steps := Concat(steps, sub[1]);
+  {steps, cur};
+];
+
+/* Ln 单独:∫Ln(v) dv = v*Ln(v) - v */
+10 # SI'Diff(Ln(_g), _v)_(g = v) <--
+  SI'Parts(Ln(g), Ln(g), 1, v, v);
+
+/* Ln × 其余:u = Ln(g)(LIATE 对数优先) */
+10 # SI'Diff(Ln(_g) * _rest, _v) <--
+  SI'Parts(Ln(g) * rest, Ln(g), rest, Integrate(v) rest, v);
+10 # SI'Diff(_rest * Ln(_g), _v) <--
+  SI'Parts(rest * Ln(g), Ln(g), rest, Integrate(v) rest, v);
+
+/* 代数 × 三角/指数:u = a(a = v) */
+10 # SI'Diff(_a * Sin(_g), _v)_(a = v And Not(IsFreeOf(v, Simplify(a / (Deriv(v) g))))) <--
+  SI'Parts(a * Sin(g), a, Sin(g), Integrate(v) Sin(g), v);
+10 # SI'Diff(_a * Cos(_g), _v)_(a = v And Not(IsFreeOf(v, Simplify(a / (Deriv(v) g))))) <--
+  SI'Parts(a * Cos(g), a, Cos(g), Integrate(v) Cos(g), v);
+10 # SI'Diff(_a * Exp(_g), _v)_(a = v And Not(IsFreeOf(v, Simplify(a / (Deriv(v) g))))) <--
+  SI'Parts(a * Exp(g), a, Exp(g), Integrate(v) Exp(g), v);
+10 # SI'Diff(Sin(_g) * _a, _v)_(a = v And Not(IsFreeOf(v, Simplify(a / (Deriv(v) g))))) <--
+  SI'Parts(Sin(g) * a, a, Sin(g), Integrate(v) Sin(g), v);
+10 # SI'Diff(Cos(_g) * _a, _v)_(a = v And Not(IsFreeOf(v, Simplify(a / (Deriv(v) g))))) <--
+  SI'Parts(Cos(g) * a, a, Cos(g), Integrate(v) Cos(g), v);
+10 # SI'Diff(Exp(_g) * _a, _v)_(a = v And Not(IsFreeOf(v, Simplify(a / (Deriv(v) g))))) <--
+  SI'Parts(Exp(g) * a, a, Exp(g), Integrate(v) Exp(g), v);
+
+/* 幂 × 三角/指数:u = a^n */
+10 # SI'Diff(_a ^ _n * Sin(_g), _v)_(IsFreeOf(v, n) And a = v) <--
+  SI'Parts(a ^ n * Sin(g), a ^ n, Sin(g), Integrate(v) Sin(g), v);
+10 # SI'Diff(_a ^ _n * Cos(_g), _v)_(IsFreeOf(v, n) And a = v) <--
+  SI'Parts(a ^ n * Cos(g), a ^ n, Cos(g), Integrate(v) Cos(g), v);
+10 # SI'Diff(_a ^ _n * Exp(_g), _v)_(IsFreeOf(v, n) And a = v) <--
+  SI'Parts(a ^ n * Exp(g), a ^ n, Exp(g), Integrate(v) Exp(g), v);
+
+/* ---------- u-substitution:带 rest 因子(∫ fam(g) * rest dx,rest = c*g') ---------- */
+
+10 # SI'Diff(Sin(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(Sin(g) * rest, g, Sin(g), rest, v);
+10 # SI'Diff(Cos(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(Cos(g) * rest, g, Cos(g), rest, v);
+10 # SI'Diff(Exp(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(Exp(g) * rest, g, Exp(g), rest, v);
+10 # SI'Diff(_g ^ _n * _rest, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(g ^ n * rest, g, g ^ n, rest, v);
+10 # SI'Diff(_rest / _g, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest / g, g, 1 / g, rest, v);
+10 # SI'Diff(_rest / (_g ^ 2 + _d), _v)_(d = 1 And Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest / (g ^ 2 + d), g, 1 / (g ^ 2 + d), rest, v);
+
+/* ---------- u-substitution:无 rest 因子(∫ fam(g) dx,g' 为常数) ---------- */
+
+10 # SI'Diff(Sin(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+  SI'USub(Sin(g), g, Sin(g), 1, v);
+10 # SI'Diff(Cos(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+  SI'USub(Cos(g), g, Cos(g), 1, v);
+10 # SI'Diff(Exp(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+  SI'USub(Exp(g), g, Exp(g), 1, v);
+10 # SI'Diff(_g ^ _n, _v)_(IsFreeOf(v, n) And Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+  SI'USub(g ^ n, g, g ^ n, 1, v);
+
+/* ---------- u-substitution:反向因子顺序(rest * fam(g),rest = c*g') ---------- */
+
+10 # SI'Diff(_rest * Sin(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest * Sin(g), g, Sin(g), rest, v);
+10 # SI'Diff(_rest * Cos(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest * Cos(g), g, Cos(g), rest, v);
+10 # SI'Diff(_rest * Exp(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest * Exp(g), g, Exp(g), rest, v);
+10 # SI'Diff(_rest * _g ^ _n, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+  SI'USub(rest * g ^ n, g, g ^ n, rest, v);
+
+/* ============================================================
+   解释文案(声明式):数据表 + 查询。
+   风格约定:陈述规则本身(公式/操作),不做教学解说
+   ("为什么"留白给使用者)—— 与 PLAN §6 的"数据驱动"一致。
+   ============================================================ */
+
+/* 数据即规则:每条文案 = 一条 10 # 规则(声明式数据表),
+   兜底规则(最前定义)负责未登记键 → ""。
+   注意:1.9.2 中 Return 在 For 循环体内不生效(踩坑验证),
+   故查询走规则系统而非循环遍历。 */
+RuleBase("Steps'Text", {key});
+
+/* 兜底必须定义在最前(同优先级后定义胜出,§7.2.2) */
+10 # Steps'Text(_key) <-- "";
+
+10 # Steps'Text("const-rule") <-- "常数求导为 0";
+10 # Steps'Text("identity-rule") <-- "自变量对自身求导为 1";
+10 # Steps'Text("direct") <-- "直接求导";
+10 # Steps'Text("constant-multiple-rule") <-- "常数倍提出导号";
+10 # Steps'Text("sum-rule") <-- "和法则: 逐项求导";
+10 # Steps'Text("product-rule") <-- "积法则: f'*g + f*g'";
+10 # Steps'Text("quotient-rule") <-- "商法则: (f'*g - f*g')/g^2";
+10 # Steps'Text("power-rule") <-- "幂法则: n*u^(n-1)*u'";
+10 # Steps'Text("exponential-rule") <-- "指数法则: a^u*Ln(a)*u'";
+10 # Steps'Text("sin-rule") <-- "d/dx Sin(u) = Cos(u)*u'";
+10 # Steps'Text("cos-rule") <-- "d/dx Cos(u) = -Sin(u)*u'";
+10 # Steps'Text("exp-rule") <-- "d/dx Exp(u) = Exp(u)*u'";
+10 # Steps'Text("ln-rule") <-- "d/dx Ln(u) = u'/u";
+10 # Steps'Text("sqrt-rule") <-- "d/dx Sqrt(u) = u'/(2*Sqrt(u))";
+10 # Steps'Text("simplify") <-- "化简";
+10 # Steps'Text("const-integral-rule") <-- "常数积分: c*x";
+10 # Steps'Text("u-sub-rule") <-- "换元 u = g(x), du = g'(x) dx";
+10 # Steps'Text("back-sub-rule") <-- "回代 u → g(x)";
+10 # Steps'Text("parts-rule") <-- "分部积分: u*v - ∫v du";
+10 # Steps'Text("arctan-rule") <-- "∫ 1/(1+x^2) dx = ArcTan(x)";
+
+/* 查询入口:未登记键由兜底规则返回 ""(前端回退到规则键本身) */
+Steps'Explain(key) := Steps'Text(key);
+
+/* Full 变体:步骤三元组 {规则, 表达式, 文案},一次调用取齐渲染素材。
+   原 StepsD/StepsI 的二元组契约不变(steps.yts 兼容)。 */
+Steps'Annotate(steps) :=
+[
+  Local(i, s, out);
+  out := {};
+  For (i := 1, i <= Length(steps), i++)
+  [
+    s := steps[i];
+    out := Append(out, {s[1], s[2], Steps'Explain(s[1])});
+  ];
+  out;
+];
+
+StepsD'Full(expr, var) := Steps'Annotate(StepsD(expr, var));
+StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var));

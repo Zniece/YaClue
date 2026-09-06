@@ -1,0 +1,3 @@
+[workspace]
+members = ["yacas/yacas-rs", "processing", "app/src-tauri"]
+resolver = "2"

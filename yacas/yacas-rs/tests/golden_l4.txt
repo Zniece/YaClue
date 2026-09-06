@@ -1,0 +1,48 @@
+FullForm(aa)	aa 
+FullForm(1.5)	1.5 
+FullForm(1e10)	1e10 
+FullForm(.5)	.5 
+FullForm(2.5e-3)	2.5e-3 
+FullForm(12345.678)	12345.678 
+FullForm("hello")	"hello" 
+FullForm("a\"b")	"a"b" 
+FullForm(aa+bb)	(+ aa bb )
+FullForm(aa+bb*cc)	(+ aa 
+    (* bb cc ))
+FullForm(aa-bb-cc)	(- 
+    (- aa bb )cc )
+FullForm(aa^bb^cc)	(^ aa 
+    (^ bb cc ))
+FullForm(aa^bb^cc^dd)	(^ aa 
+    (^ bb 
+      (^ cc dd )))
+FullForm(aa/bb)	(/ aa bb )
+FullForm(aa<bb)	(< aa bb )
+FullForm(aa==bb)	(== aa bb )
+FullForm(aa<>bb)	(<> aa bb )
+FullForm((aa))	aa 
+FullForm(-aa)	(- aa )
+FullForm(-aa^2)	(- 
+    (^ aa 2 ))
+FullForm(aa!)	(! aa )
+FullForm(aa! + bb)	(+ 
+    (! aa )bb )
+FullForm(ff(aa))	(ff aa )
+FullForm(ff(aa,bb,cc))	(ff aa bb cc )
+FullForm(ff(gg(aa),hh(bb)))	(ff 
+    (gg aa )
+    (hh bb ))
+FullForm(Sin(aa)+Cos(bb))	(+ 
+    (Sin aa )
+    (Cos bb ))
+FullForm(aa[bb])	(Nth aa bb )
+FullForm(aa[bb][cc])	(Nth 
+    (Nth aa bb )cc )
+FullForm(aa[1])	(Nth aa 1 )
+FullForm({aa,bb,cc})	(List aa bb cc )
+FullForm({})	(List )
+FullForm({aa,{bb,cc}})	(List aa 
+    (List bb cc ))
+FullForm(aa_1)	(_ aa 1 )
+FullForm(aa<-bb)	(<- aa bb )
+FullForm(aa + /* comment */ bb)	(+ aa bb )

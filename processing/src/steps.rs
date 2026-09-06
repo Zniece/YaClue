@@ -1,0 +1,223 @@
+//! 加工层的步骤 API:调用引擎的 StepsD'Full/StepsI'Full(.ys 步骤生成器),
+//! 提取结构化步骤(规则名 + 表达式 + 文案 + LaTeX)供 GUI 渲染。
+//!
+//! 步骤数据格式(来自 StepsX'Full):{规则名, 表达式, 文案} 三元组列表;
+//! 本模块将其转为 `Step { rule, expr, why, tex }`。
+
+use crate::engine::{Engine, EngineError, Expr};
+use serde::Serialize;
+
+/// 一步:规则名 + 表达式 + 文案(声明式)+ LaTeX(GUI 渲染用)
+#[derive(Debug, Clone, Serialize)]
+pub struct Step {
+    /// 规则名(英文键,文案命中失败时前端回退显示它)
+    pub rule: String,
+    /// 表达式(yacas 形式)
+    pub expr: String,
+    /// 声明式文案(来自 Steps'Explain;空串 = 未登记键,前端回退)
+    pub why: String,
+    /// LaTeX(已去 $...$ 包裹,直接喂 KaTeX)
+    pub tex: String,
+}
+
+/// 校验用户表达式输入:必须是单个表达式,拒绝可注入引擎的字符。
+/// 防护目标:命令注入(`;`/换行/`:=`/引号)、协议破坏(换行)、括号不闭合。
+fn validate_expr(expr: &str) -> Result<(), EngineError> {
+    let e = expr.trim();
+    if e.is_empty() {
+        return Err(EngineError::Eval("表达式为空".into()));
+    }
+    for bad in [';', '\n', '\r', ':', '"'] {
+        if e.contains(bad) {
+            return Err(EngineError::Eval(format!(
+                "表达式包含不允许的字符 '{bad}'"
+            )));
+        }
+    }
+    // 括号平衡
+    let open = e.chars().filter(|&c| c == '(').count();
+    let close = e.chars().filter(|&c| c == ')').count();
+    if open != close {
+        return Err(EngineError::Eval("表达式括号不匹配".into()));
+    }
+    Ok(())
+}
+
+/// 执行 StepsX'Full 命令并提取步骤(规则名 + 表达式 + 文案 + LaTeX)
+fn steps_from_command(
+    engine: &mut dyn Engine,
+    command: &str,
+) -> Result<Vec<Step>, EngineError> {
+    let r = engine.eval(command)?;
+    let mut steps = Vec::new();
+
+    if let Expr::Call { head, args } = &r.expr {
+        if head == "List" {
+            for step in args {
+                if let Expr::Call { args: pair, .. } = step {
+                    if pair.len() >= 2 {
+                        let rule = match &pair[0] {
+                            Expr::Symbol(s) => s.trim_matches('"').to_string(),
+                            other => other.to_string(),
+                        };
+                        let expr_str = pair[1].to_string();
+                        // 三元组 {规则, 表达式, 文案};旧二元组兼容(why="")
+                        let why = match pair.get(2) {
+                            Some(Expr::Symbol(s)) => s.trim_matches('"').to_string(),
+                            Some(other) => other.to_string(),
+                            None => String::new(),
+                        };
+                        // 逐步 TeX:求值该步表达式并取其 TeXForm;
+                        // tex 获取失败时回退为表达式原文(至少可见可调试)
+                        let tex = engine
+                            .eval(&expr_str)
+                            .map(|r| strip_dollars(&r.tex))
+                            .unwrap_or_else(|_| expr_str.clone());
+                        steps.push(Step {
+                            rule,
+                            expr: expr_str,
+                            why,
+                            tex,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    if steps.is_empty() {
+        return Err(EngineError::Eval(format!(
+            "未能生成步骤(表达式可能不受支持): {command}"
+        )));
+    }
+    Ok(steps)
+}
+
+/// 对 `expr` 关于 `var` 生成分步求导过程
+pub fn derive_steps(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+) -> Result<Vec<Step>, EngineError> {
+    validate_expr(expr)?;
+    steps_from_command(engine, &format!("StepsD'Full({expr}, {var})"))
+}
+
+/// 对 `expr` 关于 `var` 生成分步积分过程
+pub fn derive_integrals(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+) -> Result<Vec<Step>, EngineError> {
+    validate_expr(expr)?;
+    steps_from_command(engine, &format!("StepsI'Full({expr}, {var})"))
+}
+
+/// 去掉 TeXForm 输出的首尾各一个 `$`(只剥一对,不用 trim_matches)
+fn strip_dollars(tex: &str) -> String {
+    let t = tex.trim();
+    if t.len() >= 2 && t.starts_with('$') && t.ends_with('$') {
+        t[1..t.len() - 1].to_string()
+    } else {
+        t.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::ReplEngine;
+
+    #[test]
+    fn derive_steps_returns_rules_and_tex() {
+        if !crate::engine::cpp_reference_available() {
+            eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
+            return;
+        }
+        let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+        let steps = derive_steps(&mut engine, "Sin(x)^2", "x").expect("StepsD 失败");
+
+        assert!(steps.len() >= 3, "步骤过少: {}", steps.len());
+        assert_eq!(steps[0].rule, "power-rule");
+        assert!(steps.iter().any(|s| s.rule == "sin-rule"));
+        assert_eq!(steps.last().unwrap().rule, "simplify");
+        // 每步都有可渲染的 LaTeX 与声明式文案
+        for s in &steps {
+            assert!(!s.tex.is_empty(), "步骤缺少 TeX: {s:?}");
+            assert!(!s.why.is_empty(), "步骤缺少文案: {s:?}");
+        }
+        // 文案内容抽查(声明式,非教学腔)
+        assert_eq!(steps[0].why, "幂法则: n*u^(n-1)*u'");
+        // 最后一步与引擎 D 代数等价
+        let diff = engine
+            .eval("Simplify(StepsD(Sin(x)^2, x)[Length(StepsD(Sin(x)^2, x))][2] - D(x)Sin(x)^2)")
+            .expect("验证求值失败");
+        assert_eq!(diff.expr.to_string(), "0");
+    }
+
+    #[test]
+    fn derive_steps_errors_on_bad_input() {
+        if !crate::engine::cpp_reference_available() {
+            eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
+            return;
+        }
+        let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+        // 非法语法(D 的逗号形式,见 RESEARCH §6.3)应报错而非静默
+        let err = derive_steps(&mut engine, "D(x^2,x)", "x").unwrap_err();
+        assert!(err.to_string().contains("错误"), "应报告错误: {err}");
+    }
+
+    #[test]
+    fn derive_integrals_works() {
+        if !crate::engine::cpp_reference_available() {
+            eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
+            return;
+        }
+        let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+        // 分部积分
+        let steps = derive_integrals(&mut engine, "x*Sin(x)", "x").expect("StepsI 失败");
+        assert_eq!(steps[0].rule, "parts-rule");
+        let diff = engine
+            .eval("Simplify(StepsI(x*Sin(x), x)[Length(StepsI(x*Sin(x), x))][2] - (Sin(x)-x*Cos(x)))")
+            .expect("验证求值失败");
+        assert_eq!(diff.expr.to_string(), "0", "分部积分结果错误: {}", diff.expr);
+
+        // u-substitution
+        let steps = derive_integrals(&mut engine, "Sin(x^2)*2*x", "x").expect("StepsI 失败");
+        assert!(steps.iter().any(|s| s.rule == "u-sub-rule"));
+        // u-sub 步骤带换元文案
+        let usub = steps.iter().find(|s| s.rule == "u-sub-rule").unwrap();
+        assert_eq!(usub.why, "换元 u = g(x), du = g'(x) dx");
+        let diff = engine
+            .eval("Simplify(StepsI(Sin(x^2)*2*x, x)[Length(StepsI(Sin(x^2)*2*x, x))][2] - (-Cos(x^2)))")
+            .expect("验证求值失败");
+        assert_eq!(diff.expr.to_string(), "0", "u-sub 结果错误: {}", diff.expr);
+
+        // 非法输入同样被校验拦截
+        assert!(derive_integrals(&mut engine, "x); Echo(1); (x", "x").is_err());
+    }
+
+    #[test]
+    fn derive_steps_rejects_injection() {
+        if !crate::engine::cpp_reference_available() {
+            eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
+            return;
+        }
+        let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+        // 命令注入尝试:分号、换行、赋值、引号、括号不匹配
+        for bad in [
+            "x); Echo(\"pwned\"); (x",
+            "x;\nEcho(1)",
+            "a:=99; Sin(x)^2",
+            "Sin(x",
+            "",
+            "   ",
+        ] {
+            assert!(
+                derive_steps(&mut engine, bad, "x").is_err(),
+                "应拒绝恶意输入: {bad:?}"
+            );
+        }
+        // 合法输入不受影响
+        assert!(derive_steps(&mut engine, "Sin(x)^2", "x").is_ok());
+    }
+}

@@ -1,0 +1,6 @@
+Use("functional.rep/code.ys");
+Local(q1); Set(q1,55);
+Echo("Q1=",FullForm(@q1));
+Echo("Q2=",FullForm((@ q1)));
+Echo("Q3=",Length(ArgList(@,2)));
+Echo("Q4=",IsFunction(@));

@@ -1,0 +1,57 @@
+FullForm(x)	
+FullForm(1.5)	1.5 
+FullForm(1e10)	1e10 
+FullForm(.5)	.5 
+FullForm(2.5e-3)	2.5e-3 
+FullForm(12345.678)	12345.678 
+FullForm("hello")	"hello" 
+FullForm("a\"b")	"a"b" 
+FullForm(x+y)	(+ x y )
+FullForm(x+y*z)	(+ x 
+    (* y z ))
+FullForm(x-y-z)	(- 
+    (- x y )z )
+FullForm(x^y^z)	(^ x 
+    (^ y z ))
+FullForm(x^y^z^w)	(^ x 
+    (^ y 
+      (^ z w )))
+FullForm(x/y)	(/ x y )
+FullForm(a<b)	(< a b )
+FullForm(a<=b)	(Not 
+    (< b a ))
+FullForm(x==y)	(== x y )
+FullForm(x<>y)	(<> x y )
+FullForm(x:=y)	y 
+FullForm((x+y)*z)	(* 2 
+    (* y z ))
+FullForm(x*(y+z))	(* y 
+    (+ y z ))
+FullForm(((x)))	y 
+FullForm(-x)	(- y )
+FullForm(-x^2)	(- 
+    (^ y 2 ))
+FullForm(-x+y)	0 
+FullForm(x!)	(! y )
+FullForm(x! + y)	(+ 
+    (! y )y )
+FullForm(f(x))	(f y )
+FullForm(f(x,y,z))	(f y y z )
+FullForm(f(g(x),h(y)))	(f 
+    (g y )
+    (h y ))
+FullForm(Sin(x)+Cos(y))	(+ 
+    (Sin y )
+    (Cos y ))
+FullForm(a[b])	(Nth a b )
+FullForm(a[b][c])	(Nth 
+    (Nth a b )c )
+FullForm(a[1])	(Nth a 1 )
+FullForm({a,b,c})	(List a b c )
+FullForm({})	(List )
+FullForm({a,{b,c}})	(List a 
+    (List b c ))
+FullForm(a_1)	(_ a 1 )
+FullForm(a<-b)	(<- a b )
+FullForm(x+/* comment */y)	
+FullForm(x )	y 

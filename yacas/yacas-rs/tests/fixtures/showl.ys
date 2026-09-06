@@ -1,0 +1,6 @@
+DefMacroRuleBase("ShowL",{func,args,body});
+Rule("ShowL",3,0,True)
+[
+  Echo("L1=",FullForm(@func));
+  Echo("L2=",FullForm(func));
+];

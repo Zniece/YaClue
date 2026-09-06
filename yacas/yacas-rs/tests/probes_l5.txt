@@ -1,0 +1,13 @@
+>10 # f(_x) <-- 2*x;
+>10 # g(_x,_y) <-- x+y;
+>v1 := aa;
+f(aa)
+g(aa,bb)
+g(f(aa),bb)
+v1
+v1+bb
+h(aa)
+{aa,bb}
+aa_1
+f(aa,bb)
+aa+bb*cc

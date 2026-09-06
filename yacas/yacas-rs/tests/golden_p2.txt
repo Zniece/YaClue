@@ -1,0 +1,42 @@
+D(x) x^3+2*x;	3*x^2+2
+D(x) Sin(x)*Cos(x);	Cos(x)^2-Sin(x)^2
+D({x,y}) x^2+y^3;	{2*x,3*y^2}
+Limit(x,0) Sin(x)/x;	1
+Limit(x,Infinity) (1+1/x)^x;	Exp(1)
+Taylor(x,0,5) Exp(x);	x+x^2/2+x^3/6+x^4/24+x^5/120+1
+Integrate(x) x^2;	x^3/3
+Integrate(x,1,2) Sin(x);	Cos(1)-Cos(2)
+Expand((x+1)^4);	x^4+4*x^3+6*x^2+4*x+1
+Factor(x^2-1);	(x+1)*(x-1)
+Together(1/x+1/y);	(y+x)/(y*x)
+Apart(1/(x^2-1));	(-1)/(2*(x+1))+1/(2*(x-1))
+Coef((x+1)^3,x,2);	3
+Degree(x^4+x,x);	4
+Simplify((x^2-1)/(x-1));	x+1
+Quotient(x^3+x,x^2+1);	Quotient(x^3+x,x^2+1)
+Remainder(x^3+x,x^2+1);	Remainder(x^3+x,x^2+1)
+Gcd(12,18);	6
+Lcm(4,6);	12
+Divisors(24);	8
+FactorizeInt(360);	{{2,3},{3,2},{5,1}}
+Prime(100);	Prime(100)
+Fibonacci(10);	55
+IsPrime(1000003);	True
+NextPrime(999983);	1000003
+Mod(100,7);	2
+Div(100,7);	14
+Identity(3);	{{1,0,0},{0,1,0},{0,0,1}}
+Determinant({{2,1},{1,3}});	5
+Inverse({{2,1},{1,3}});	{{3/5,(-1)/5},{(-1)/5,2/5}}
+Transpose({{1,2},{3,4}});	{{1,3},{2,4}}
+Table(i!, i, 1, 5);	Table(6,3,1,5)
+Select("IsInteger",{1,2.5,3});	{1,3}
+Apply("+",{2,3});	5
+MapSingle("Sin",{x,y});	{Sin(x),Sin(y)}
+Nth({a,b,c},2);	b
+Subst(x,a+b) x^2;	(a+b)^2
+Solve(x^2-4==0, x);	{x==2,x==(-2)}
+N(Sin(1),10);	0.8414709848
+N(Ln(2),10);	0.6931471806
+N(Sqrt(2),25);	1.4142135623730950488016887
+N(Pi,20);	3.1415926535897932384626433

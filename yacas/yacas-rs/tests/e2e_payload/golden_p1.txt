@@ -1,0 +1,19 @@
+NextPrime(100);	101
+NextPrime(99991);	100003
+IsPrime(7919);	True
+IsPrime(1000000007);	True
+Taylor(x,0,6)Sin(x);	x-x^3/6+x^5/120
+Taylor(x,0,4)Cos(x);	1-x^2/2+x^4/24
+Taylor(x,0,5)Exp(x);	x+x^2/2+x^3/6+x^4/24+x^5/120+1
+D(x)(x^3+x);	3*x^2+1
+D(x)Sin(x^2);	2*x*Cos(x^2)
+D(x)Exp(Sin(x));	Cos(x)*Exp(Sin(x))
+Limit(x,0)Sin(x)/x;	1
+Limit(x,0)(1-Cos(x))/x^2;	1/2
+N(Pi,30);	3.14159265358979323846264338327950288
+N(Sqrt(2),25);	1.4142135623730950488016887
+a := {{1,2},{3,4}};	{{1,2},{3,4}}
+Determinant(a);	-2
+Inverse(a);	{{-2,1},{3/2,(-1)/2}}
+b := {{1,0,0},{0,1,0},{0,0,1}};	{{1,0,0},{0,1,0},{0,0,1}}
+Determinant(b);	1

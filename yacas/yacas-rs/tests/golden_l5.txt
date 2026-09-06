@@ -1,0 +1,10 @@
+f(aa)	2*aa
+g(aa,bb)	aa+bb
+g(f(aa),bb)	2*aa+bb
+v1	aa
+v1+bb	aa+bb
+h(aa)	h(aa)
+{aa,bb}	{aa,bb}
+aa_1	aa _1
+f(aa,bb)	f(aa,bb)
+aa+bb*cc	aa+bb*cc

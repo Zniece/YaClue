@@ -1,0 +1,25 @@
+
+NextTest("Converting to and from OpenMath expressions");
+
+Verify(ToString() OMForm(3), "<OMOBJ>" : Nl() : "  <OMI>3</OMI>" : Nl() : "</OMOBJ>" : Nl());
+Verify(ToString() OMForm("<OMSTR>a\"b'c&</OMSTR>"), "<OMOBJ>" : Nl() : "  <OMSTR>&lt;OMSTR&gt;a&quot;b&apos;c&amp;&lt;/OMSTR&gt;</OMSTR>" : Nl() : "</OMOBJ>" : Nl());
+
+Verify(FromString("<OMOBJ> <OMI>3</OMI> </OMOBJ>") OMRead(), 3);
+Verify(FromString("<OMOBJ> <OMSTR> a </OMSTR> </OMOBJ>") OMRead(), " a ");
+Verify(FromString("<OMOBJ><OMSTR>&lt;OMSTR&gt;a&quot;b&apos;c&amp;&lt;/OMSTR&gt;</OMSTR></OMOBJ>") OMRead(), "<OMSTR>a\"b'c&</OMSTR>");
+
+Verify(FromString("<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\" cdbase=\"http://www.openmath.org/cd\"><OMF dec=\"1\"/></OMOBJ> ")OMRead(), 1);
+Verify(FromString("<OMOBJ><OMF dec=\"-INF\"/></OMOBJ> ")OMRead(), -Infinity);
+
+Macro(OMTest1,{expr})
+[
+  Local(string,result);
+  string:=ToString() OMForm(@expr);
+  result:=FromString(string)OMRead();
+//  Echo(Hold(@expr),`Hold(@result));
+  Verify(Hold(@expr),`Hold(@result));
+];
+
+OMTest1(2+3);
+OMTest1(2*a+3*Sin(Cos(a*x+b)));
+

@@ -1,0 +1,169 @@
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #0f0f0f;
+  background-color: #f6f6f6;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+h1 {
+  text-align: center;
+}
+
+.hint {
+  text-align: center;
+  color: #666;
+}
+
+code {
+  background: #e8e8e8;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+input {
+  flex: 1;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  padding: 0.6em 1em;
+  font-size: 1em;
+  font-family: inherit;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.4em;
+  font-size: 1em;
+  font-weight: 500;
+  cursor: pointer;
+  background: #396cd8;
+  color: #fff;
+}
+
+button:hover {
+  background: #2f5ac0;
+}
+
+section {
+  margin-top: 1.5rem;
+}
+
+section h2 {
+  font-size: 0.9em;
+  color: #888;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.3em;
+}
+
+pre {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+#render {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1em;
+  font-size: 1.2em;
+}
+
+.error {
+  color: #c0392b;
+  margin-top: 1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f6f6f6;
+    background-color: #2f2f2f;
+  }
+  code {
+    background: #444;
+  }
+  pre,
+  #render {
+    background: #1f1f1f;
+    border-color: #444;
+  }
+  input {
+    background: #1f1f1f;
+    color: #f6f6f6;
+    border-color: #444;
+  }
+}
+
+/* 解题步骤 */
+#steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.5em 0.9em;
+}
+
+.step .rule {
+  flex: 0 0 auto;
+  min-width: 7em;
+  font-size: 0.85em;
+  color: #396cd8;
+  font-weight: 500;
+}
+
+.step .math {
+  flex: 1;
+  overflow-x: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .step {
+    background: #1f1f1f;
+    border-color: #444;
+  }
+  .step .rule {
+    color: #8ab4f8;
+  }
+}
+
+/* 模式选择 */
+select {
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  padding: 0.6em 0.8em;
+  font-size: 1em;
+  font-family: inherit;
+  background: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  select {
+    background: #1f1f1f;
+    color: #f6f6f6;
+    border-color: #444;
+  }
+}

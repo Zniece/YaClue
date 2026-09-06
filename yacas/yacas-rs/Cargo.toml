@@ -1,0 +1,10 @@
+[package]
+name = "yacas-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust implementation of the yacas engine"
+license = "MIT"
+
+[[bin]]
+name = "golden"
+path = "src/bin/golden.rs"

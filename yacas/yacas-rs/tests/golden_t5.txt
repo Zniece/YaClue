@@ -1,0 +1,19 @@
+Length(DefFileList());	88
+RuleBaseDefined("Nth",2);	True
+Nth({a,b,c},2);	b
+if(True) 11 else 22;	11
+2^10;	1024
+7/2;	7/2
+1/4+1/4;	1/2
+Sqrt(16);	4
+Gcd(12,18);	6
+MathAdd(5,2);	7
+Mod(17,5);	2
+2&5;	0
+1|2;	3
+5%2;	1
+RuleBaseDefined("D",2);	False
+D(x)x^2;	2*x
+RuleBaseDefined("D",2);	True
+N(Pi,10);	3.141592653589793
+Limit(x,0)Sin(x)/x;	1

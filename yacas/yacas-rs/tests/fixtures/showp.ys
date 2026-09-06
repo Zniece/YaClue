@@ -1,0 +1,7 @@
+Bodied("ShowP",0);
+DefMacroRuleBase("ShowP",{func,args,body});
+Rule("ShowP",3,0,True)
+[
+  Echo("P1=",FullForm(@func));
+];
+Echo("PARSE=",FullForm('(@func)));

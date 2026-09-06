@@ -1,0 +1,7 @@
+DefMacroRuleBase("ShowS",{x,y});
+Rule("ShowS",2,0,True)
+[
+  Echo("S1=",FullForm(x));
+  Echo("S2=",FullForm(@x));
+  Echo("S3=",FullForm(Apply("MathAdd",{x,y})));
+];

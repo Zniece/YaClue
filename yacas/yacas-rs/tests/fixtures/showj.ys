@@ -1,0 +1,6 @@
+Bodied("ShowK",0);
+DefMacroRuleBase("ShowK",{func,args,body});
+Rule("ShowK",3,0,True)
+[
+  Echo("K1=",FullForm(@func));
+];

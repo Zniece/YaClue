@@ -1,0 +1,2 @@
+Loaded'Probe1 := True;
+Probe1(x) := 2*x;

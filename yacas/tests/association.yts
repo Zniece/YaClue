@@ -1,0 +1,37 @@
+NextTest("StrictTotalOrder");
+
+Verify(StrictTotalOrder(1, 2), True);
+Verify(StrictTotalOrder(2, 2), False);
+Verify(StrictTotalOrder(2, 1), False);
+Verify(StrictTotalOrder(3, "1"), True);
+
+NextTest("Association");
+
+[
+    Local(a);
+
+    a := Association'Create();
+
+    Verify(Association'Size(a), 0);
+    Verify(Length(a), 0);
+
+    Verify(Association'Contains(a, x), False);
+
+    Verify(Association'Set(a, x, y), True);
+    Verify(Association'Set(a, p, q), True);
+    Verify(Association'Contains(a, x), True);
+    Verify(Association'Keys(a), {p, x});
+    Verify(Association'ToList(a), {{p,q}, {x,y}});
+    Verify(Association'Head(a), {p,q});
+    Verify(Association'Size(a), 2);
+    Verify(Length(a), 2);
+    Verify(Association'Get(a, x), y);
+    Verify(Association'Drop(a, x), True);
+    Verify(Association'Drop(a, x), False);
+    Verify(Association'Get(a, x), Undefined);
+    Verify(Association'Size(a), 1);
+    Verify(Length(a), 1);
+
+    a := Association'CreateFromList({{1,2},{3,4}});
+    Verify(Association'ToList(a), {{1,2}, {3,4}});
+];

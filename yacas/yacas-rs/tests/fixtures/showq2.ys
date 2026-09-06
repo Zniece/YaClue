@@ -1,0 +1,7 @@
+DefMacroRuleBase("ShowR",{x,y});
+Rule("ShowR",2,0,True)
+[
+  Echo("R1=",FullForm(x));
+  Echo("R2=",FullForm(@x));
+  Echo("R3=",FullForm((+ x y)));
+];
