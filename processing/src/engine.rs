@@ -6,7 +6,7 @@
 //   - 引擎实现可互换:C++ 原版(子进程 REPL)与 Rust 移植版(进程内)都实现
 //     同一个 `Engine` trait,上层零改动。
 //
-// 协议细节(已在 RESEARCH.md §6 实测):
+// C++ 子进程适配器的协议细节:
 //   - `yacas -pc --rootdir <scripts>`:无提示符,每条输入后 flush;
 //   - 哨兵 `"__YACAS_END__"` 分隔每条命令的输出;
 //   - `FullForm(expr)` 输出前缀嵌套形式,如 `(+ (+ (^ x 2) (* 2 x)) 1)`;
@@ -204,7 +204,7 @@ pub enum EngineError {
     Eval(String),
     /// FullForm/TeXForm 输出解析失败
     Parse(String),
-    /// 命令执行超时(疑似死循环),引擎已终止
+    /// 命令执行超时；Rust 引擎中断当前求值，C++ 代理终止子进程
     Timeout(String),
 }
 
@@ -481,6 +481,10 @@ fn default_steps_dir() -> String {
 /// 步骤包不再经 packages.ys 懒加载链登记,由加工层显式加载
 fn steps_boot_cmds() -> Vec<String> {
     let dir = std::env::var("YACAS_STEPS_SCRIPTS").unwrap_or_else(|_| default_steps_dir());
+    steps_boot_cmds_from_dir(&dir)
+}
+
+fn steps_boot_cmds_from_dir(dir: &str) -> Vec<String> {
     vec![
         format!("DefaultDirectory(\"{dir}/\")"),
         "Load(\"steps.rep/code.ys\")".to_string(),
@@ -500,7 +504,12 @@ pub struct RustEngine {
 impl RustEngine {
     /// 装载脚本库(scripts 目录默认 yacas/scripts,可用 YACAS_SCRIPTS 覆盖)
     pub fn spawn() -> Result<Self, EngineError> {
-        let mut scripts = std::env::var("YACAS_SCRIPTS").unwrap_or_else(|_| default_scripts_dir());
+        let scripts = std::env::var("YACAS_SCRIPTS").unwrap_or_else(|_| default_scripts_dir());
+        let steps = std::env::var("YACAS_STEPS_SCRIPTS").unwrap_or_else(|_| default_steps_dir());
+        Self::spawn_with_scripts(scripts, steps)
+    }
+
+    fn spawn_with_scripts(mut scripts: String, steps: String) -> Result<Self, EngineError> {
         // 与 cyacas main 注入 rootdir 的方式一致:目录以 '/' 结尾
         if !scripts.ends_with('/') {
             scripts.push('/');
@@ -510,7 +519,7 @@ impl RustEngine {
             .map_err(|e| EngineError::Spawn(format!("DefaultDirectory 失败: {e:?}")))?;
         eval_cmd(&mut env, "Load(\"yacasinit.ys\")")
             .map_err(|e| EngineError::Spawn(format!("装载 yacasinit.ys 失败: {e:?}")))?;
-        for cmd in steps_boot_cmds() {
+        for cmd in steps_boot_cmds_from_dir(&steps) {
             eval_cmd(&mut env, &cmd)
                 .map_err(|e| EngineError::Spawn(format!("装载步骤包失败({cmd}): {e:?}")))?;
         }
@@ -532,31 +541,85 @@ fn eval_cmd(
 /// Rust 引擎单次求值超时(病态输入的兜底;正常用例远低于此值,θ 链最重 ~3s)
 const RUST_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+impl RustEngine {
+    /// One deadline covers command evaluation and TeX generation. All Result
+    /// paths clear it so a failed request does not poison the next request.
+    fn eval_with_timeout(
+        &mut self,
+        command: &str,
+        timeout: Duration,
+    ) -> Result<EvalResult, EngineError> {
+        self.env.set_eval_timeout(Some(timeout));
+        let response = (|| {
+            let result = eval_cmd(&mut self.env, command)
+                .map_err(|e| self.eval_error(e, "求值失败"))?;
+            let fullform = yacas_rs::printer::full_form(&result);
+            let expr = Expr::parse_fullform(&fullform).map_err(EngineError::Parse)?;
+
+            // Pass the result object as Hold(result), without printing/parsing
+            // it or executing the original command again. Hold also preserves
+            // deliberately unevaluated expressions supplied by the caller.
+            let tex_value = tex_form_value(&mut self.env, &result)
+                .map_err(|e| self.eval_error(e, "TeXForm 失败"))?;
+            let printed = yacas_rs::printer::infix_print(&self.env, &tex_value);
+            let tex = printed.trim();
+            let tex = tex
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or(tex)
+                .to_string();
+            Ok(EvalResult { expr, tex })
+        })();
+        // The evaluator samples its clock; also check short requests and time
+        // spent converting the result after the last evaluator clock sample.
+        let expired = self.deadline_expired();
+        self.env.set_eval_timeout(None);
+        if response.is_ok() && expired {
+            Err(EngineError::Timeout("求值或 TeX 生成超过时限".into()))
+        } else {
+            response
+        }
+    }
+
+    fn deadline_expired(&self) -> bool {
+        self.env
+            .eval_deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    }
+
+    fn eval_error(&self, error: yacas_rs::errors::YacasError, stage: &str) -> EngineError {
+        if matches!(error, yacas_rs::errors::YacasError::UserInterrupt)
+            && self.deadline_expired()
+        {
+            EngineError::Timeout(format!("{stage}: 超过求值时限"))
+        } else {
+            EngineError::Eval(format!("{stage}: {error:?}"))
+        }
+    }
+}
+
+fn tex_form_value(
+    env: &mut yacas_rs::env::Environment,
+    value: &std::rc::Rc<yacas_rs::value::LispObject>,
+) -> Result<std::rc::Rc<yacas_rs::value::LispObject>, yacas_rs::errors::YacasError> {
+    use yacas_rs::value::{build_list, clone_kind, LispObject, ObjectKind};
+
+    let held = build_list(vec![
+        ObjectKind::Atom(env.symtab.look_up("Hold")),
+        clone_kind(&value.kind),
+    ])
+    .expect("Hold has a head and an argument");
+    let call = build_list(vec![
+        ObjectKind::Atom(env.symtab.look_up("TeXForm")),
+        ObjectKind::Sublist(held),
+    ])
+    .expect("TeXForm has a head and an argument");
+    yacas_rs::evaluator::eval(env, &LispObject::new(ObjectKind::Sublist(call)))
+}
+
 impl Engine for RustEngine {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
-        // 每次求值挂截止时间:引擎在 eval 循环内按 1024 操作采样检查,
-        // 超时返回 UserInterrupt(病态输入不再挂死前端)
-        self.env.set_eval_timeout(Some(RUST_EVAL_TIMEOUT));
-        // 求值一次,同一结果对象打两种形式(比 ReplEngine 三次求值更忠实)
-        let result = eval_cmd(&mut self.env, command).map_err(|e| EngineError::Eval(format!("{e:?}")))?;
-        self.env.set_eval_timeout(None);
-        let fullform = yacas_rs::printer::full_form(&result);
-        let expr = Expr::parse_fullform(&fullform).map_err(EngineError::Parse)?;
-        // TeXForm 需再求值一次(它是脚本层命令,作用于表达式本身)
-        let tex = match eval_cmd(&mut self.env, &format!("TeXForm({command})")) {
-            Ok(t) => {
-                let s = yacas_rs::printer::infix_print(&self.env, &t);
-                s.trim()
-                    .strip_prefix('"')
-                    .and_then(|x| x.strip_suffix('"'))
-                    .unwrap_or(s.trim())
-                    .to_string()
-            }
-            // TeXForm 失败不拖垮结果本身(与 ReplEngine 行为对齐:那里失败会报错,
-            // 但步骤层所有表达式都应可 TeX;此处保留严格性)
-            Err(e) => return Err(EngineError::Eval(format!("TeXForm 失败: {e:?}"))),
-        };
-        Ok(EvalResult { expr, tex })
+        self.eval_with_timeout(command, RUST_EVAL_TIMEOUT)
     }
 }
 
@@ -566,29 +629,55 @@ impl Engine for RustEngine {
 /// +通道模式对齐,GUI 侧零感知。
 pub struct RustEngineProxy {
     tx: Option<mpsc::Sender<String>>,
-    rx: mpsc::Receiver<Result<EvalResult, String>>,
+    rx: mpsc::Receiver<Result<EvalResult, EngineError>>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl RustEngineProxy {
     pub fn spawn() -> Result<Self, EngineError> {
+        Self::spawn_with_initializer(RustEngine::spawn)
+    }
+
+    fn spawn_with_initializer(
+        initialize: impl FnOnce() -> Result<RustEngine, EngineError> + Send + 'static,
+    ) -> Result<Self, EngineError> {
         let (tx, cmd_rx) = mpsc::channel::<String>();
         let (res_tx, rx) = mpsc::channel();
-        let handle = thread::spawn(move || match RustEngine::spawn() {
-            Err(e) => {
-                let _ = res_tx.send(Err(format!("{e:?}")));
-                for _ in cmd_rx {} // 吸干命令,避免调用端 recv 挂死
-            }
-            Ok(mut eng) => {
-                for cmd in cmd_rx {
-                    let r = eng.eval(&cmd).map_err(|e| format!("{e:?}"));
-                    if res_tx.send(r).is_err() {
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let handle = thread::Builder::new()
+            .name("yacas-engine".into())
+            .spawn(move || {
+                let mut engine = match initialize() {
+                    Ok(engine) => engine,
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error));
+                        return;
+                    }
+                };
+                if ready_tx.send(Ok(())).is_err() {
+                    return;
+                }
+                for command in cmd_rx {
+                    if res_tx.send(engine.eval(&command)).is_err() {
                         break;
                     }
                 }
+            })
+            .map_err(|e| EngineError::Spawn(format!("无法启动引擎线程: {e}")))?;
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(RustEngineProxy { tx: Some(tx), rx, handle: Some(handle) }),
+            startup => {
+                // Close commands before joining, including a worker that exits
+                // without a startup response. No unusable proxy escapes.
+                drop(tx);
+                let _ = handle.join();
+                Err(match startup {
+                    Ok(Err(error)) => error,
+                    Err(error) => EngineError::Spawn(format!("引擎线程初始化期间退出: {error}")),
+                    Ok(Ok(())) => unreachable!(),
+                })
             }
-        });
-        Ok(RustEngineProxy { tx: Some(tx), rx, handle: Some(handle) })
+        }
     }
 }
 
@@ -609,7 +698,6 @@ impl Engine for RustEngineProxy {
         self.rx
             .recv()
             .map_err(|e| EngineError::Io(e.to_string()))?
-            .map_err(EngineError::Eval)
     }
 }
 
@@ -620,6 +708,114 @@ impl Engine for RustEngineProxy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keep a broken channel/timeout regression from hanging the whole suite.
+    fn finishes_promptly(work: impl FnOnce() + Send + 'static) {
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            work();
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("engine operation must complete within 10 seconds");
+        worker.join().expect("engine test worker panicked");
+    }
+
+    #[test]
+    fn rust_eval_executes_input_once_and_preserves_held_values() {
+        let mut engine = RustEngine::spawn().unwrap();
+        engine.eval("reviewCounter:=0").unwrap();
+        let result = engine.eval("reviewCounter:=reviewCounter+1").unwrap();
+        assert_eq!(result.expr.to_string(), "1");
+        assert_eq!(result.tex, "$1$");
+        assert_eq!(engine.eval("reviewCounter").unwrap().expr.to_string(), "1");
+
+        let held = engine.eval("Hold(reviewCounter:=reviewCounter+1)").unwrap();
+        assert!(held.expr.to_string().contains("reviewCounter"));
+        assert!(held.tex.contains("reviewCounter"));
+        assert_eq!(engine.eval("reviewCounter").unwrap().expr.to_string(), "1");
+        assert!(engine.env.eval_deadline.is_none());
+    }
+
+    #[test]
+    fn rust_eval_recovers_after_parse_and_tex_errors() {
+        let mut engine = RustEngine::spawn().unwrap();
+        eval_cmd(&mut engine.env, "1 # TeXForm(ReviewBrokenTex) <-- Check(False, \"broken TeX\")")
+            .unwrap();
+        for command in ["Sin(", "ReviewBrokenTex"] {
+            let error = engine.eval(command).unwrap_err();
+            assert!(matches!(error, EngineError::Eval(_)), "{error}");
+            assert!(engine.env.eval_deadline.is_none());
+            let result = engine.eval("2+3").expect("engine recovers after errors");
+            assert_eq!(result.expr.to_string(), "5");
+            assert_eq!(result.tex, "$5$");
+        }
+    }
+
+    #[test]
+    fn rust_eval_times_out_in_command_and_tex_then_recovers() {
+        finishes_promptly(|| {
+            let mut engine = RustEngine::spawn().unwrap();
+            eval_cmd(&mut engine.env, "1 # TeXForm(ReviewSlowTex) <-- While(True) 1")
+                .unwrap();
+            for command in ["While(True) 1", "ReviewSlowTex"] {
+                let error = engine
+                    .eval_with_timeout(command, Duration::from_millis(20))
+                    .unwrap_err();
+                assert!(matches!(error, EngineError::Timeout(_)), "{error}");
+                assert!(engine.env.eval_deadline.is_none());
+                let result = engine.eval("2+3").expect("engine recovers after interruption");
+                assert_eq!(result.expr.to_string(), "5");
+                assert_eq!(result.tex, "$5$");
+            }
+        });
+    }
+
+    #[test]
+    fn rust_proxy_rejects_bad_script_paths_during_spawn() {
+        finishes_promptly(|| {
+            // An existing file cannot be a script directory. No process-wide
+            // environment changes, so this is safe alongside other tests.
+            let not_a_directory = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+            for (scripts, steps) in [
+                (not_a_directory.to_string(), default_steps_dir()),
+                (default_scripts_dir(), not_a_directory.to_string()),
+            ] {
+                for _ in 0..2 {
+                    let scripts = scripts.clone();
+                    let steps = steps.clone();
+                    let result = RustEngineProxy::spawn_with_initializer(move || {
+                        RustEngine::spawn_with_scripts(scripts, steps)
+                    });
+                    assert!(matches!(result, Err(EngineError::Spawn(_))));
+                }
+            }
+            let mut engine = RustEngineProxy::spawn().expect("valid startup still succeeds");
+            assert_eq!(engine.eval("2+3").unwrap().tex, "$5$");
+            drop(engine); // Also check worker shutdown after a successful request.
+        });
+    }
+
+    #[test]
+    fn rust_proxy_recovers_after_request_error_and_shuts_down() {
+        finishes_promptly(|| {
+            let mut engine = RustEngineProxy::spawn().unwrap();
+            assert!(matches!(engine.eval("Sin("), Err(EngineError::Eval(_))));
+            for command in ["1+1", "2"] {
+                assert_eq!(engine.eval(command).unwrap().tex, "$2$");
+            }
+            drop(engine);
+        });
+    }
+
+    #[test]
+    fn rust_proxy_reports_worker_exit_during_initialization() {
+        finishes_promptly(|| {
+            let result = RustEngineProxy::spawn_with_initializer(|| panic!("startup failure"));
+            assert!(matches!(result, Err(EngineError::Spawn(_))));
+        });
+    }
 
     #[test]
     fn parse_fullform_basic() {
@@ -759,7 +955,7 @@ mod tests {
             return;
         }
         let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
-        // D 是 bodied 运算符,逗号形式是非法语法(见 RESEARCH §6.3)——应报错而非静默
+        // D 是 bodied 运算符,逗号形式是非法语法——应报错而非静默
         let err = engine.eval("D(x^2,x)").unwrap_err();
         assert!(err.to_string().contains("错误"), "应报告错误: {err}");
     }
