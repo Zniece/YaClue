@@ -196,6 +196,18 @@ pub struct EvalResult {
     pub tex: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExpressionHandle {
+    session: u64,
+    id: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RetainedEvalResult {
+    pub result: EvalResult,
+    pub handle: Option<ExpressionHandle>,
+}
+
 #[derive(Debug)]
 pub enum EngineError {
     Spawn(String),
@@ -225,6 +237,11 @@ pub trait Engine {
     /// 执行一条 Yacas 命令,返回结构化结果 + TeXForm
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError>;
 
+    /// 求值并在支持它的引擎会话中暂存原生结果树。
+    fn eval_retained(&mut self, command: &str) -> Result<RetainedEvalResult, EngineError> {
+        Ok(RetainedEvalResult { result: self.eval(command)?, handle: None })
+    }
+
     /// 在同一宿主请求中依次求值表达式并生成 TeX。实现可覆盖此方法，
     /// 以复用解析器、Environment、截止时间和线程往返。
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
@@ -232,6 +249,18 @@ pub trait Engine {
             .iter()
             .map(|expression| self.eval(expression).map(|result| result.tex))
             .collect()
+    }
+
+    /// 消费暂存结果句柄，沿零基参数路径取得子表达式并批量渲染。
+    /// 不支持句柄的实现使用 `fallback` 表达式。
+    fn render_tex_fields(
+        &mut self,
+        handle: Option<ExpressionHandle>,
+        _paths: &[Vec<usize>],
+        fallback: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        let _ = handle;
+        self.render_tex_batch(fallback)
     }
 
     /// 追踪信息:命中的规则列表(供步骤层使用);未实现时返回空
@@ -508,6 +537,9 @@ fn steps_boot_cmds_from_dir(dir: &str) -> Vec<String> {
 /// 求值出错直接从 yacas-rs 拿到 YacasError,不再依赖错误标记启发式。
 pub struct RustEngine {
     pub env: yacas_rs::env::Environment,
+    session_id: u64,
+    next_handle: u64,
+    retained: std::collections::HashMap<u64, std::rc::Rc<yacas_rs::value::LispObject>>,
 }
 
 impl RustEngine {
@@ -532,7 +564,13 @@ impl RustEngine {
             eval_cmd(&mut env, &cmd)
                 .map_err(|e| EngineError::Spawn(format!("装载步骤包失败({cmd}): {e:?}")))?;
         }
-        Ok(RustEngine { env })
+        static NEXT_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Ok(RustEngine {
+            env,
+            session_id: NEXT_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            next_handle: 1,
+            retained: std::collections::HashMap::new(),
+        })
     }
 }
 
@@ -613,6 +651,95 @@ impl RustEngine {
         }
     }
 
+    fn eval_retained_with_timeout(
+        &mut self,
+        command: &str,
+        timeout: Duration,
+    ) -> Result<RetainedEvalResult, EngineError> {
+        self.env.set_eval_timeout(Some(timeout));
+        let response = (|| {
+            let value = eval_cmd(&mut self.env, command)
+                .map_err(|error| self.eval_error(error, "求值失败"))?;
+            let expr = Expr::parse_fullform(&yacas_rs::printer::full_form(&value))
+                .map_err(EngineError::Parse)?;
+            let tex_value = tex_form_value(&mut self.env, &value)
+                .map_err(|error| self.eval_error(error, "TeXForm 失败"))?;
+            let result = EvalResult {
+                expr,
+                tex: unquote_printed(&yacas_rs::printer::infix_print(&self.env, &tex_value)),
+            };
+            let id = self.next_handle;
+            self.next_handle = self.next_handle.wrapping_add(1).max(1);
+            self.retained.insert(id, value);
+            Ok(RetainedEvalResult {
+                result,
+                handle: Some(ExpressionHandle { session: self.session_id, id }),
+            })
+        })();
+        let expired = self.deadline_expired();
+        self.env.set_eval_timeout(None);
+        if response.is_ok() && expired {
+            if let Ok(retained) = &response {
+                if let Some(handle) = retained.handle {
+                    self.retained.remove(&handle.id);
+                }
+            }
+            Err(EngineError::Timeout("求值或 TeX 生成超过时限".into()))
+        } else {
+            response
+        }
+    }
+
+    fn render_tex_fields_with_timeout(
+        &mut self,
+        handle: ExpressionHandle,
+        paths: &[Vec<usize>],
+        fallback: &[String],
+        timeout: Duration,
+    ) -> Result<Vec<String>, EngineError> {
+        if handle.session != self.session_id {
+            return Err(EngineError::Eval("表达式句柄不属于当前引擎会话".into()));
+        }
+        let root = self
+            .retained
+            .remove(&handle.id)
+            .ok_or_else(|| EngineError::Eval("表达式句柄不存在或已被消费".into()))?;
+        self.env.set_eval_timeout(Some(timeout));
+        if paths.len() != fallback.len() {
+            return Err(EngineError::Parse("字段路径与回退表达式数量不一致".into()));
+        }
+        let response: Result<Vec<String>, EngineError> = paths
+            .iter()
+            .zip(fallback)
+            .map(|(path, fallback)| {
+                let field = expression_at_path(&root, path)?;
+                // Stored trees normally avoid all reparsing. Negative arguments of odd
+                // functions are the one presentation-sensitive case where top-level
+                // parsing performs a useful canonical rewrite (Sin(-u) -> -Sin(u)).
+                let value = if contains_negative_odd_function(&field) {
+                    eval_cmd(&mut self.env, fallback)
+                        .map_err(|error| self.eval_error(error, "展示规范化失败"))?
+                } else {
+                    yacas_rs::evaluator::eval(&mut self.env, &field)
+                        .map_err(|error| self.eval_error(error, "字段求值失败"))?
+                };
+                let tex_value = tex_form_value(&mut self.env, &value)
+                    .map_err(|error| self.eval_error(error, "字段 TeXForm 失败"))?;
+                Ok(unquote_printed(&yacas_rs::printer::infix_print(
+                    &self.env,
+                    &tex_value,
+                )))
+            })
+            .collect();
+        let expired = self.deadline_expired();
+        self.env.set_eval_timeout(None);
+        if response.is_ok() && expired {
+            Err(EngineError::Timeout("字段批量求值或 TeX 生成超过时限".into()))
+        } else {
+            response
+        }
+    }
+
     fn deadline_expired(&self) -> bool {
         self.env
             .eval_deadline
@@ -637,6 +764,45 @@ fn unquote_printed(printed: &str) -> String {
         .and_then(|value| value.strip_suffix('"'))
         .unwrap_or(printed)
         .to_string()
+}
+
+fn expression_at_path(
+    root: &std::rc::Rc<yacas_rs::value::LispObject>,
+    path: &[usize],
+) -> Result<std::rc::Rc<yacas_rs::value::LispObject>, EngineError> {
+    use yacas_rs::value::{copy_node, spine_refs};
+
+    let mut current = copy_node(root);
+    for index in path {
+        let list = current
+            .sublist()
+            .ok_or_else(|| EngineError::Parse("表达式路径经过了非复合节点".into()))?;
+        let next = spine_refs(list)
+            .nth(index + 1)
+            .map(copy_node)
+            .ok_or_else(|| EngineError::Parse("表达式路径索引越界".into()))?;
+        current = next;
+    }
+    Ok(current)
+}
+
+fn contains_negative_odd_function(value: &std::rc::Rc<yacas_rs::value::LispObject>) -> bool {
+    use yacas_rs::value::{spine_refs, ObjectKind};
+
+    let ObjectKind::Sublist(list) = &value.kind else { return false };
+    let nodes: Vec<_> = spine_refs(list).collect();
+    let is_odd = nodes.first().and_then(|node| node.atom_string()).is_some_and(|head| {
+        matches!(head.as_ref(), "Sin" | "Tan" | "Sinh" | "Tanh" | "ArcSin" | "ArcTan")
+    });
+    if is_odd && nodes.get(1).is_some_and(|argument| {
+        let Some(product) = argument.sublist() else { return false };
+        let mut parts = spine_refs(product);
+        parts.next().and_then(|node| node.atom_string()).is_some_and(|head| head.as_ref() == "*")
+            && parts.next().and_then(|node| node.number_string()).is_some_and(|n| n.starts_with('-'))
+    }) {
+        return true;
+    }
+    nodes.iter().skip(1).any(|node| contains_negative_odd_function(node))
 }
 
 fn tex_form_value(
@@ -666,6 +832,24 @@ impl Engine for RustEngine {
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
         self.render_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
     }
+
+    fn eval_retained(&mut self, command: &str) -> Result<RetainedEvalResult, EngineError> {
+        self.eval_retained_with_timeout(command, RUST_EVAL_TIMEOUT)
+    }
+
+    fn render_tex_fields(
+        &mut self,
+        handle: Option<ExpressionHandle>,
+        paths: &[Vec<usize>],
+        fallback: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        match handle {
+            Some(handle) => {
+                self.render_tex_fields_with_timeout(handle, paths, fallback, RUST_EVAL_TIMEOUT)
+            }
+            None => self.render_tex_batch(fallback),
+        }
+    }
 }
 
 /// RustEngine 的线程代理:`Environment` 内含 Rc/RefCell(非 Send),不能直接放进
@@ -674,12 +858,20 @@ impl Engine for RustEngine {
 /// +通道模式对齐,GUI 侧零感知。
 enum EngineRequest {
     Eval(String),
+    EvalRetained(String),
     RenderTex(Vec<String>),
+    RenderFields {
+        handle: Option<ExpressionHandle>,
+        paths: Vec<Vec<usize>>,
+        fallback: Vec<String>,
+    },
 }
 
 enum EngineResponse {
     Eval(Result<EvalResult, EngineError>),
+    EvalRetained(Result<RetainedEvalResult, EngineError>),
     RenderTex(Result<Vec<String>, EngineError>),
+    RenderFields(Result<Vec<String>, EngineError>),
 }
 
 pub struct RustEngineProxy {
@@ -715,8 +907,16 @@ impl RustEngineProxy {
                 for request in cmd_rx {
                     let response = match request {
                         EngineRequest::Eval(command) => EngineResponse::Eval(engine.eval(&command)),
+                        EngineRequest::EvalRetained(command) => {
+                            EngineResponse::EvalRetained(engine.eval_retained(&command))
+                        }
                         EngineRequest::RenderTex(expressions) => {
                             EngineResponse::RenderTex(engine.render_tex_batch(&expressions))
+                        }
+                        EngineRequest::RenderFields { handle, paths, fallback } => {
+                            EngineResponse::RenderFields(
+                                engine.render_tex_fields(handle, &paths, &fallback),
+                            )
                         }
                     };
                     if res_tx.send(response).is_err() {
@@ -758,7 +958,17 @@ impl Engine for RustEngineProxy {
             .map_err(|e| EngineError::Io(e.to_string()))?;
         match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
             EngineResponse::Eval(result) => result,
-            EngineResponse::RenderTex(_) => Err(EngineError::Io("引擎响应类型不匹配".into())),
+            _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
+        }
+    }
+
+    fn eval_retained(&mut self, command: &str) -> Result<RetainedEvalResult, EngineError> {
+        let tx = self.tx.as_ref().ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
+        tx.send(EngineRequest::EvalRetained(command.to_string()))
+            .map_err(|e| EngineError::Io(e.to_string()))?;
+        match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
+            EngineResponse::EvalRetained(result) => result,
+            _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
         }
     }
 
@@ -768,7 +978,26 @@ impl Engine for RustEngineProxy {
             .map_err(|e| EngineError::Io(e.to_string()))?;
         match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
             EngineResponse::RenderTex(result) => result,
-            EngineResponse::Eval(_) => Err(EngineError::Io("引擎响应类型不匹配".into())),
+            _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
+        }
+    }
+
+    fn render_tex_fields(
+        &mut self,
+        handle: Option<ExpressionHandle>,
+        paths: &[Vec<usize>],
+        fallback: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        let tx = self.tx.as_ref().ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
+        tx.send(EngineRequest::RenderFields {
+            handle,
+            paths: paths.to_vec(),
+            fallback: fallback.to_vec(),
+        })
+        .map_err(|e| EngineError::Io(e.to_string()))?;
+        match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
+            EngineResponse::RenderFields(result) => result,
+            _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
         }
     }
 }
@@ -828,6 +1057,37 @@ mod tests {
         ));
         assert!(batched.env.eval_deadline.is_none());
         assert_eq!(batched.eval("2+3").unwrap().tex, "$5$");
+    }
+
+    #[test]
+    fn retained_expression_fields_are_session_bound_and_consumed() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let retained = engine.eval_retained("{3*2*x,Sin(-4*x)}").unwrap();
+        let handle = retained.handle.unwrap();
+        let paths = vec![vec![0], vec![1]];
+        let expected = engine
+            .render_tex_batch(&["3*2*x".into(), "Sin(-4*x)".into()])
+            .unwrap();
+        assert_eq!(
+            engine.render_tex_fields(Some(handle), &paths, &[]).unwrap(),
+            expected
+        );
+        assert!(matches!(
+            engine.render_tex_fields(Some(handle), &paths, &[]),
+            Err(EngineError::Eval(_))
+        ));
+
+        let retained = engine.eval_retained("{x}").unwrap();
+        let handle = retained.handle.unwrap();
+        let mut other = RustEngine::spawn().unwrap();
+        assert!(matches!(
+            other.render_tex_fields(Some(handle), &[vec![0]], &[]),
+            Err(EngineError::Eval(_))
+        ));
+        assert_eq!(
+            engine.render_tex_fields(Some(handle), &[vec![0]], &[]).unwrap(),
+            vec!["$x$"]
+        );
     }
 
     #[test]
@@ -902,6 +1162,17 @@ mod tests {
                     .render_tex_batch(&["2+3".into(), "Sin(x)".into()])
                     .unwrap(),
                 vec!["$5$", "$\\sin x$"]
+            );
+            let retained = engine.eval_retained("{x^2,3*x}").unwrap();
+            assert_eq!(
+                engine
+                    .render_tex_fields(
+                        retained.handle,
+                        &[vec![0], vec![1]],
+                        &["x^2".into(), "3*x".into()],
+                    )
+                    .unwrap(),
+                vec!["$x ^{2}$", "$3 x$"]
             );
             drop(engine);
         });

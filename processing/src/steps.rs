@@ -68,7 +68,8 @@ fn steps_from_command(
     command: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    let r = engine.eval(command)?;
+    let retained = engine.eval_retained(command)?;
+    let r = retained.result;
     let mut candidates = Vec::new();
 
     if let Expr::Call { head, args } = &r.expr {
@@ -102,7 +103,7 @@ fn steps_from_command(
                         if !keep {
                             continue;
                         }
-                        candidates.push((rule, expr_str, why, importance));
+                        candidates.push((rule, expr_str, why, importance, vec![index, 1]));
                     }
                 }
             }
@@ -115,16 +116,20 @@ fn steps_from_command(
     }
     let expressions: Vec<_> = candidates
         .iter()
-        .map(|(_, expression, _, _)| expression.clone())
+        .map(|(_, expression, _, _, _)| expression.clone())
         .collect();
-    let tex = engine.render_tex_batch(&expressions)?;
+    let paths: Vec<_> = candidates
+        .iter()
+        .map(|(_, _, _, _, path)| path.clone())
+        .collect();
+    let tex = engine.render_tex_fields(retained.handle, &paths, &expressions)?;
     if tex.len() != candidates.len() {
         return Err(EngineError::Parse("批量 TeX 结果数量与步骤数量不一致".into()));
     }
     Ok(candidates
         .into_iter()
         .zip(tex)
-        .map(|((rule, expr, why, importance), tex)| Step {
+        .map(|((rule, expr, why, importance, _), tex)| Step {
             rule,
             expr,
             why,
@@ -307,7 +312,7 @@ fn strip_dollars(tex: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{EvalResult, ReplEngine, RustEngine};
+    use crate::engine::{EvalResult, ExpressionHandle, ReplEngine, RetainedEvalResult, RustEngine};
 
     struct CountingEngine {
         inner: RustEngine,
@@ -321,9 +326,25 @@ mod tests {
             self.inner.eval(command)
         }
 
+        fn eval_retained(&mut self, command: &str) -> Result<RetainedEvalResult, EngineError> {
+            self.eval_calls += 1;
+            self.inner.eval_retained(command)
+        }
+
         fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
             self.batch_sizes.push(expressions.len());
             self.inner.render_tex_batch(expressions)
+        }
+
+        fn render_tex_fields(
+            &mut self,
+            handle: Option<ExpressionHandle>,
+            paths: &[Vec<usize>],
+            fallback: &[String],
+        ) -> Result<Vec<String>, EngineError> {
+            assert!(handle.is_some(), "Rust engine must retain the native result tree");
+            self.batch_sizes.push(paths.len());
+            self.inner.render_tex_fields(handle, paths, fallback)
         }
     }
 
