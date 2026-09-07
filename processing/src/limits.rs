@@ -23,7 +23,7 @@ pub enum LimitStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LimitCondition {
-    pub symbol: String,
+    pub expression: String,
     pub fact: String,
 }
 
@@ -95,7 +95,7 @@ fn unpack_conditional(expr: Expr) -> Result<(Expr, Vec<LimitCondition>), EngineE
                 )));
             }
             Ok(LimitCondition {
-                symbol: pair[0].to_string(),
+                expression: pair[0].to_string(),
                 fact: pair[1].to_string(),
             })
         })
@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(
             result.conditions,
             vec![LimitCondition {
-                symbol: "n".into(),
+                expression: "n".into(),
                 fact: "Positive".into(),
             }]
         );

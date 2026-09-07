@@ -10,6 +10,11 @@ IsNonNegativeNumber
 IsZero
 IsNotZero
 IsNonZeroInteger
+IsKnownInteger
+IsKnownReal
+IsKnownPositive
+IsKnownNegative
+IsKnownNonZero
 IsPositiveInteger
 IsNegativeInteger
 IsNonNegativeInteger

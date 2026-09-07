@@ -1735,8 +1735,9 @@ pub fn cmd_is_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
     Ok(crate::standard::internal_boolean(env, is_int))
 }
 
-/// Add/query/clear environment-local assumptions. Arguments are held atoms so
-/// assumptions do not depend on a symbol's current assigned value.
+/// Add/query/clear environment-local assumptions. `Assume` and `IsAssumed`
+/// hold the symbol name. `IsAssumedValue` evaluates its first argument once
+/// for use inside script rules whose pattern parameter is locally bound.
 pub fn cmd_assume(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
@@ -1753,6 +1754,23 @@ pub fn cmd_is_assumed(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
         return Err(YacasError::WrongNumberOfArgs);
     }
     let symbol = arg(inner, 0)?.atom_string().ok_or(YacasError::InvalidArg)?;
+    let fact_name = arg(inner, 1)?.atom_string().ok_or(YacasError::InvalidArg)?;
+    let fact = Assumption::parse(fact_name).ok_or(YacasError::InvalidArg)?;
+    Ok(crate::standard::internal_boolean(
+        env,
+        env.is_assumed(symbol, fact),
+    ))
+}
+
+pub fn cmd_is_assumed_value(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
+    if arity_of(inner) != 2 {
+        return Err(YacasError::WrongNumberOfArgs);
+    }
+    let symbol_node = eval(env, arg(inner, 0)?)?;
+    let symbol = symbol_node.atom_string().ok_or(YacasError::InvalidArg)?;
     let fact_name = arg(inner, 1)?.atom_string().ok_or(YacasError::InvalidArg)?;
     let fact = Assumption::parse(fact_name).ok_or(YacasError::InvalidArg)?;
     Ok(crate::standard::internal_boolean(
@@ -3918,6 +3936,7 @@ pub fn register_core_commands(env: &mut Environment) {
     add(env, "IsNegativeInteger", cmd_is_negative_integer);
     add(env, "Assume", cmd_assume);
     add(env, "IsAssumed", cmd_is_assumed);
+    add(env, "IsAssumedValue", cmd_is_assumed_value);
     add(env, "ClearAssumptions", cmd_clear_assumptions);
     add(env, "IsList", cmd_is_list);
     add(env, "IsString", cmd_is_string);

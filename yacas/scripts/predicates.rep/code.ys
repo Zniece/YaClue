@@ -135,6 +135,67 @@ IsPositiveInteger(x):= IsInteger(x) And x > 0;
 
 IsNonZeroInteger(x) := (IsInteger(x) And x != 0);
 
+/* Assumption-aware predicates. "Known" means proven from an exact value,
+   an explicit assumption, or a small set of sign-preserving constructors.
+   They never turn a symbolic value into a concrete numeric node. */
+60000 # IsKnownInteger(_x) <--
+  IsInteger(x) Or (IsAtom(x) And IsAssumedValue(x, Integer));
+10 # IsKnownInteger(-(_x)) <-- IsKnownInteger(x);
+10 # IsKnownInteger(_a + _b) <-- IsKnownInteger(a) And IsKnownInteger(b);
+10 # IsKnownInteger(_a * _b) <-- IsKnownInteger(a) And IsKnownInteger(b);
+
+60000 # IsKnownReal(_x) <--
+  IsRationalOrNumber(x) Or (IsAtom(x) And IsAssumedValue(x, Real));
+10 # IsKnownReal(-(_x)) <-- IsKnownReal(x);
+10 # IsKnownReal(_a + _b) <-- IsKnownReal(a) And IsKnownReal(b);
+10 # IsKnownReal(_a * _b) <-- IsKnownReal(a) And IsKnownReal(b);
+10 # IsKnownReal(_a / _b) <-- IsKnownReal(a) And IsKnownReal(b) And IsKnownNonZero(b);
+10 # IsKnownReal(_a ^ _n) <--
+  IsKnownReal(a) And IsKnownInteger(n) And
+  (IsKnownNonZero(a) Or IsKnownPositive(n));
+10 # IsKnownReal(Exp(_x)) <-- IsKnownReal(x);
+10 # IsKnownReal(Ln(_x)) <-- IsKnownPositive(x);
+10 # IsKnownReal(Sqrt(_x)) <-- IsKnownPositive(x);
+10 # IsKnownReal(Abs(_x)) <-- IsKnownReal(x);
+
+60000 # IsKnownPositive(_x) <--
+  (IsRationalOrNumber(x) And x > 0) Or (IsAtom(x) And IsAssumedValue(x, Positive));
+10 # IsKnownPositive(-(_x)) <-- IsKnownNegative(x);
+10 # IsKnownPositive(_a * _b) <--
+  (IsKnownPositive(a) And IsKnownPositive(b)) Or
+  (IsKnownNegative(a) And IsKnownNegative(b));
+10 # IsKnownPositive(_a + _b) <-- IsKnownPositive(a) And IsKnownPositive(b);
+10 # IsKnownPositive(_a / _b) <--
+  (IsKnownPositive(a) And IsKnownPositive(b)) Or
+  (IsKnownNegative(a) And IsKnownNegative(b));
+10 # IsKnownPositive(_a ^ 2) <-- IsKnownReal(a) And IsKnownNonZero(a);
+10 # IsKnownPositive(_a ^ _n) <-- IsKnownPositive(a) And IsKnownReal(n);
+10 # IsKnownPositive(Exp(_x)) <-- IsKnownReal(x);
+10 # IsKnownPositive(Sqrt(_x)) <-- IsKnownPositive(x);
+10 # IsKnownPositive(Abs(_x)) <-- IsKnownReal(x) And IsKnownNonZero(x);
+
+60000 # IsKnownNegative(_x) <--
+  (IsRationalOrNumber(x) And x < 0) Or (IsAtom(x) And IsAssumedValue(x, Negative));
+10 # IsKnownNegative(-(_x)) <-- IsKnownPositive(x);
+10 # IsKnownNegative(_a * _b) <--
+  (IsKnownPositive(a) And IsKnownNegative(b)) Or
+  (IsKnownNegative(a) And IsKnownPositive(b));
+10 # IsKnownNegative(_a + _b) <-- IsKnownNegative(a) And IsKnownNegative(b);
+10 # IsKnownNegative(_a / _b) <--
+  (IsKnownPositive(a) And IsKnownNegative(b)) Or
+  (IsKnownNegative(a) And IsKnownPositive(b));
+
+60000 # IsKnownNonZero(_x) <--
+  (IsRationalOrNumber(x) And x != 0) Or
+  (IsAtom(x) And IsAssumedValue(x, NonZero)) Or
+  IsKnownPositive(x) Or IsKnownNegative(x);
+10 # IsKnownNonZero(-(_x)) <-- IsKnownNonZero(x);
+10 # IsKnownNonZero(_a * _b) <-- IsKnownNonZero(a) And IsKnownNonZero(b);
+10 # IsKnownNonZero(_a / _b) <-- IsKnownNonZero(a) And IsKnownNonZero(b);
+10 # IsKnownNonZero(_a ^ _n) <-- IsKnownNonZero(a) And IsKnownReal(n);
+10 # IsKnownNonZero(Exp(_x)) <-- IsKnownReal(x);
+10 # IsKnownNonZero(Abs(_x)) <-- IsKnownNonZero(x);
+
 // why do we need this? Why doesn't x=1 not work?
 10 # IsOne(x_IsNumber) <-- IsZero(MathSubtract(x,1));
 60000 # IsOne(_x) <-- False;

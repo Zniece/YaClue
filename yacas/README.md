@@ -42,6 +42,11 @@ entry points are `Assume(symbol, fact)`, `IsAssumed(symbol, fact)`, and
 integers are real, while positive and negative symbols are real and nonzero.
 Contradictory signs are rejected.
 
+Script rules use `IsAssumedValue(parameter, fact)`, which resolves a locally
+bound pattern parameter before querying it. `IsAssumed` deliberately holds the
+public symbol name, so assigning a value to that symbol does not silently make
+its stored assumptions inaccessible.
+
 These facts are queried explicitly. Legacy value predicates such as
 `IsInteger(n)` still mean that the evaluated node is a concrete integer; they
 do not consume assumptions. Mathematical rules must opt in through
@@ -53,3 +58,9 @@ Assumption-aware rules keep their dependency in the expression as
 this internal carrier for display while retaining the condition metadata. The
 first consumer is the positive/negative parameter branch of
 `Limit(x, Infinity) x^n/Ln(x)`.
+
+The script library exposes proof-oriented predicates `IsKnownInteger`,
+`IsKnownReal`, `IsKnownPositive`, `IsKnownNegative`, and `IsKnownNonZero`.
+They combine exact values and assumptions through safe rules for negation,
+sums, products, quotients, integer powers, `Exp`, `Ln`, `Sqrt`, and `Abs`.
+`False` means the property was not proved; it does not prove the opposite.

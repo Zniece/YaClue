@@ -114,6 +114,8 @@ mod tests {
         assert_eq!(run(&mut first, "Assume(n,Integer)"), "True");
         assert_eq!(run(&mut first, "Assume(n,Positive)"), "True");
         assert_eq!(run(&mut first, "IsAssumed(n,Real)"), "True");
+        assert_eq!(run(&mut first, "Set(n,2)"), "2");
+        assert_eq!(run(&mut first, "IsAssumed(n,Positive)"), "True");
         assert_eq!(run(&mut second, "IsAssumed(n,Integer)"), "False");
         assert_eq!(run(&mut first, "ClearAssumptions()"), "True");
         assert_eq!(run(&mut first, "IsAssumed(n,Integer)"), "False");
