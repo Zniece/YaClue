@@ -441,6 +441,12 @@ pub fn internal_use(env: &mut Environment, file_name: &str) -> Result<(), YacasE
         }
         let res = internal_load(env, file_name);
         LOAD_STACK.with(|s| s.borrow_mut().pop());
+        // Loading may fail after DefLoad temporarily unprotected its symbols.
+        // Keep the upstream no-retry loaded flag, but always restore this
+        // environment invariant before propagating the error.
+        for s in &symbols {
+            env.protect(s.as_ref());
+        }
         if let Err(e) = res {
             if load_trace_enabled() {
                 eprintln!("[LOAD-FAIL] {file_name}: {e:?}");
@@ -449,9 +455,6 @@ pub fn internal_use(env: &mut Environment, file_name: &str) -> Result<(), YacasE
         }
         if load_trace_enabled() {
             eprintln!("[LOAD-END] {file_name}");
-        }
-        for s in &symbols {
-            env.protect(s.as_ref());
         }
     }
     Ok(())

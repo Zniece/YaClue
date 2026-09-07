@@ -118,3 +118,22 @@ fn claimed_symbol_protected_until_loaded() {
         YacasError::SymbolProtected
     ));
 }
+
+#[test]
+fn failed_lazy_load_restores_symbol_protection() {
+    let mut env = Environment::new();
+    boot(&mut env);
+    assert_eq!(run(&mut env, "DefLoad(\"broken_lazy.ys\")"), "True");
+    let name = yacas_rs::standard::symbol_name(&mut env, "BrokenLazy");
+    assert!(env.is_protected(&name));
+
+    assert!(matches!(
+        run_err(&mut env, "BrokenLazy()"),
+        YacasError::FileNotFound
+    ));
+    assert!(
+        env.is_protected(&name),
+        "a failed lazy load must not leak its temporary unprotected state"
+    );
+    assert_eq!(run(&mut env, "2+2"), "4", "the environment remains usable");
+}
