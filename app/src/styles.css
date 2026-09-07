@@ -69,6 +69,7 @@ button.quiet { padding: 6px 9px; color: var(--blue); background: var(--blue-soft
 .section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
 .section-title h2 { margin: 2px 0 0; font-size: 17px; }
 .assumption-form { display: grid; grid-template-columns: 1fr 1.3fr; gap: 8px; }
+.assumption-form > * { min-width: 0; width: 100%; }
 .assumption-form button { grid-column: 1 / -1; }
 .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
 .chip { padding: 5px 9px; color: #2853b1; background: var(--blue-soft); border-radius: 15px; font-size: 12px; }
