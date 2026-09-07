@@ -1790,6 +1790,30 @@ pub fn cmd_clear_assumptions(
     Ok(env.true_atom())
 }
 
+pub fn cmd_push_assumptions(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
+    if arity_of(inner) != 0 {
+        return Err(YacasError::WrongNumberOfArgs);
+    }
+    env.push_assumptions();
+    Ok(env.true_atom())
+}
+
+pub fn cmd_pop_assumptions(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
+    if arity_of(inner) != 0 {
+        return Err(YacasError::WrongNumberOfArgs);
+    }
+    if !env.pop_assumptions() {
+        return Err(YacasError::InvalidArg);
+    }
+    Ok(env.true_atom())
+}
+
 /// IsList — true when the value is a sublist whose head is List
 /// (upstream: InternalIsList).
 pub fn cmd_is_list(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
@@ -3938,6 +3962,8 @@ pub fn register_core_commands(env: &mut Environment) {
     add(env, "IsAssumed", cmd_is_assumed);
     add(env, "IsAssumedValue", cmd_is_assumed_value);
     add(env, "ClearAssumptions", cmd_clear_assumptions);
+    add(env, "PushAssumptions", cmd_push_assumptions);
+    add(env, "PopAssumptions", cmd_pop_assumptions);
     add(env, "IsList", cmd_is_list);
     add(env, "IsString", cmd_is_string);
     add(env, "Insert", cmd_insert);

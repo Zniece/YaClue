@@ -50,6 +50,7 @@ pub struct LocalFrame {
 pub struct Environment {
     /// Facts about symbolic variables used by assumption-aware predicates.
     pub(crate) assumptions: crate::assumptions::AssumptionContext,
+    assumption_stack: Vec<crate::assumptions::AssumptionContext>,
     pub symtab: SymbolTable,
     pub prefix: OperatorTable,
     pub infix: OperatorTable,
@@ -228,6 +229,18 @@ impl Environment {
 
     pub fn clear_assumptions(&mut self) {
         self.assumptions.clear();
+    }
+
+    pub fn push_assumptions(&mut self) {
+        self.assumption_stack.push(self.assumptions.clone());
+    }
+
+    pub fn pop_assumptions(&mut self) -> bool {
+        let Some(previous) = self.assumption_stack.pop() else {
+            return false;
+        };
+        self.assumptions = previous;
+        true
     }
 
     pub fn precision(&self) -> u32 {

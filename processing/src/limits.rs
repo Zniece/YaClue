@@ -21,10 +21,32 @@ pub enum LimitStatus {
     Unresolved,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Relation {
+    Equal,
+    GreaterThan,
+    LessThan,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct LimitCondition {
-    pub expression: String,
-    pub fact: String,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LimitCondition {
+    Property {
+        expression: String,
+        fact: String,
+    },
+    Relation {
+        left: String,
+        relation: Relation,
+        right: String,
+    },
+    All {
+        conditions: Vec<LimitCondition>,
+    },
+    Any {
+        conditions: Vec<LimitCondition>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -85,28 +107,55 @@ fn unpack_conditional(expr: Expr) -> Result<(Expr, Vec<LimitCondition>), EngineE
     }
     let condition_expr = args.pop().unwrap();
     let value = args.pop().unwrap();
-    let conditions = list_items(&condition_expr)?
-        .iter()
-        .map(|condition| {
-            let pair = list_items(condition)?;
-            if pair.len() != 2 {
-                return Err(EngineError::Parse(format!(
-                    "极限条件不是二元组: {condition}"
-                )));
-            }
-            Ok(LimitCondition {
-                expression: pair[0].to_string(),
-                fact: pair[1].to_string(),
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let conditions = vec![parse_condition(&condition_expr)?];
     Ok((value, conditions))
 }
 
-fn list_items(expr: &Expr) -> Result<&[Expr], EngineError> {
+fn parse_condition(expr: &Expr) -> Result<LimitCondition, EngineError> {
     match expr {
-        Expr::Call { head, args } if head == "List" => Ok(args),
-        other => Err(EngineError::Parse(format!("极限条件不是列表: {other}"))),
+        Expr::Call { head, args }
+            if [
+                "=",
+                "==",
+                ">",
+                "<",
+                "ConditionEqual",
+                "ConditionGreater",
+                "ConditionLess",
+            ]
+            .contains(&head.as_str())
+                && args.len() == 2 =>
+        {
+            let relation = match head.as_str() {
+                "=" | "==" | "ConditionEqual" => Relation::Equal,
+                ">" | "ConditionGreater" => Relation::GreaterThan,
+                "<" | "ConditionLess" => Relation::LessThan,
+                _ => unreachable!(),
+            };
+            Ok(LimitCondition::Relation {
+                left: args[0].to_string(),
+                relation,
+                right: args[1].to_string(),
+            })
+        }
+        Expr::Call { head, args } if head == "ConditionProperty" && args.len() == 2 => {
+            Ok(LimitCondition::Property {
+                expression: args[0].to_string(),
+                fact: args[1].to_string(),
+            })
+        }
+        Expr::Call { head, args } if (head == "ConditionAnd" || head == "ConditionOr") => {
+            let conditions = args
+                .iter()
+                .map(parse_condition)
+                .collect::<Result<Vec<_>, _>>()?;
+            if head == "ConditionAnd" {
+                Ok(LimitCondition::All { conditions })
+            } else {
+                Ok(LimitCondition::Any { conditions })
+            }
+        }
+        other => Err(EngineError::Parse(format!("无法识别的极限条件: {other}"))),
     }
 }
 
@@ -224,9 +273,10 @@ mod tests {
         assert_eq!(result.value, "Infinity");
         assert_eq!(
             result.conditions,
-            vec![LimitCondition {
-                expression: "n".into(),
-                fact: "Positive".into(),
+            vec![LimitCondition::Relation {
+                left: "n".into(),
+                relation: Relation::GreaterThan,
+                right: "0".into(),
             }]
         );
 
@@ -242,7 +292,47 @@ mod tests {
         .unwrap();
         assert_eq!(negative.status, LimitStatus::Converged);
         assert_eq!(negative.value, "0");
-        assert_eq!(negative.conditions[0].fact, "Negative");
+        assert_eq!(
+            negative.conditions[0],
+            LimitCondition::Relation {
+                left: "n".into(),
+                relation: Relation::LessThan,
+                right: "0".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_nested_condition_trees() {
+        let condition = Expr::Call {
+            head: "ConditionAnd".into(),
+            args: vec![
+                Expr::Call {
+                    head: "ConditionGreater".into(),
+                    args: vec![Expr::Symbol("n".into()), Expr::Number("0".into())],
+                },
+                Expr::Call {
+                    head: "ConditionProperty".into(),
+                    args: vec![Expr::Symbol("a".into()), Expr::Symbol("Real".into())],
+                },
+            ],
+        };
+        assert_eq!(
+            parse_condition(&condition).unwrap(),
+            LimitCondition::All {
+                conditions: vec![
+                    LimitCondition::Relation {
+                        left: "n".into(),
+                        relation: Relation::GreaterThan,
+                        right: "0".into(),
+                    },
+                    LimitCondition::Property {
+                        expression: "a".into(),
+                        fact: "Real".into(),
+                    },
+                ],
+            }
+        );
     }
 
     #[test]

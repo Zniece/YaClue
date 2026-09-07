@@ -69,3 +69,10 @@ sums, products, quotients, integer powers, `Exp`, `Ln`, `Sqrt`, and `Abs`.
 `x`, the root becomes `Abs(x)`; a positive or negative sign assumption reduces
 both forms to `x` or `-x` as appropriate. Without a sufficient real-domain
 fact, the original expression is retained.
+
+`PushAssumptions()` and `PopAssumptions()` provide nested snapshots for a
+single calculation. `PopAssumptions()` rejects an unmatched pop. Conditional
+results use unevaluated semantic nodes such as `ConditionGreater(a, b)`,
+`ConditionProperty(expr, fact)`, `ConditionAnd(...)`, and `ConditionOr(...)`;
+these nodes carry relations without asking the legacy comparison operators to
+decide a symbolic truth value.

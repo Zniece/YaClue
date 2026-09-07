@@ -120,4 +120,21 @@ mod tests {
         assert_eq!(run(&mut first, "ClearAssumptions()"), "True");
         assert_eq!(run(&mut first, "IsAssumed(n,Integer)"), "False");
     }
+
+    #[test]
+    fn nested_scopes_restore_previous_facts() {
+        let mut env = Environment::new();
+        assert_eq!(run(&mut env, "Assume(x,Real)"), "True");
+        assert_eq!(run(&mut env, "PushAssumptions()"), "True");
+        assert_eq!(run(&mut env, "Assume(x,Positive)"), "True");
+        assert_eq!(run(&mut env, "PushAssumptions()"), "True");
+        assert_eq!(run(&mut env, "ClearAssumptions()"), "True");
+        assert_eq!(run(&mut env, "IsAssumed(x,Real)"), "False");
+        assert_eq!(run(&mut env, "PopAssumptions()"), "True");
+        assert_eq!(run(&mut env, "IsAssumed(x,Positive)"), "True");
+        assert_eq!(run(&mut env, "PopAssumptions()"), "True");
+        assert_eq!(run(&mut env, "IsAssumed(x,Real)"), "True");
+        assert_eq!(run(&mut env, "IsAssumed(x,Positive)"), "False");
+        assert!(!env.pop_assumptions());
+    }
 }

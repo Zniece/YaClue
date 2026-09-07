@@ -32,6 +32,12 @@ pub struct AssumptionState {
     pub active: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AssumptionSpec {
+    pub symbol: String,
+    pub fact: AssumptionFact,
+}
+
 pub fn assume(
     engine: &mut dyn Engine,
     symbol: &str,
@@ -65,6 +71,26 @@ pub fn is_assumed(
 pub fn clear_assumptions(engine: &mut dyn Engine) -> Result<(), EngineError> {
     engine.eval("ClearAssumptions()")?;
     Ok(())
+}
+
+pub fn with_assumptions<T>(
+    engine: &mut dyn Engine,
+    assumptions: &[AssumptionSpec],
+    operation: impl FnOnce(&mut dyn Engine) -> Result<T, EngineError>,
+) -> Result<T, EngineError> {
+    engine.eval("PushAssumptions()")?;
+    let result = (|| {
+        for assumption in assumptions {
+            assume(engine, &assumption.symbol, assumption.fact)?;
+        }
+        operation(engine)
+    })();
+    let restore = engine.eval("PopAssumptions()");
+    match (result, restore) {
+        (Ok(value), Ok(_)) => Ok(value),
+        (Err(error), Ok(_)) => Err(error),
+        (_, Err(error)) => Err(error),
+    }
 }
 
 fn validate_symbol(symbol: &str) -> Result<(), EngineError> {
@@ -118,5 +144,28 @@ mod tests {
         assume(&mut engine, "x", AssumptionFact::Positive).unwrap();
         assert!(assume(&mut engine, "x", AssumptionFact::Negative).is_err());
         assert!(is_assumed(&mut engine, "x", AssumptionFact::Positive).unwrap());
+    }
+
+    #[test]
+    fn scoped_assumptions_restore_after_success_and_error() {
+        let mut engine = RustEngine::spawn().unwrap();
+        assume(&mut engine, "x", AssumptionFact::Real).unwrap();
+        let specs = [AssumptionSpec {
+            symbol: "x".into(),
+            fact: AssumptionFact::Positive,
+        }];
+        let output = with_assumptions(&mut engine, &specs, |engine| {
+            Ok(transform(engine, "Sqrt(x^2)", TransformKind::Simplify, None)?.output)
+        })
+        .unwrap();
+        assert_eq!(output, "x");
+        assert!(is_assumed(&mut engine, "x", AssumptionFact::Real).unwrap());
+        assert!(!is_assumed(&mut engine, "x", AssumptionFact::Positive).unwrap());
+
+        let error = with_assumptions(&mut engine, &specs, |_engine| {
+            Err::<(), _>(EngineError::Eval("probe".into()))
+        });
+        assert!(error.is_err());
+        assert!(!is_assumed(&mut engine, "x", AssumptionFact::Positive).unwrap());
     }
 }
