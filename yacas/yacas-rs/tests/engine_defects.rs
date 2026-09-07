@@ -8,6 +8,7 @@
 //! parameter. It remains ignored until fixed.
 
 use yacas_rs::env::Environment;
+use yacas_rs::errors::YacasError;
 use yacas_rs::evaluator::eval;
 use yacas_rs::printer::infix_print;
 
@@ -17,6 +18,16 @@ fn run(env: &mut Environment, src: &str) -> String {
         .expect("非空");
     let result = eval(env, &tree).unwrap_or_else(|e| panic!("eval {src}: {e:?}"));
     infix_print(env, &result)
+}
+
+fn run_error(env: &mut Environment, src: &str) -> YacasError {
+    let tree = yacas_rs::parser::parse_expression(env, &format!("{src};"))
+        .unwrap_or_else(|e| panic!("parse {src}: {e:?}"))
+        .expect("非空");
+    match eval(env, &tree) {
+        Ok(value) => panic!("expression should fail, got {}", infix_print(env, &value)),
+        Err(error) => error,
+    }
 }
 
 /// 统一装载序(照 yacasinit.ys;含 predicates/numerical 等后续按需追加)。
@@ -68,6 +79,19 @@ fn malformed_exponent_is_rejected_without_poisoning_engine() {
         );
     }
     assert_eq!(run(&mut env, "2+2"), "4");
+}
+
+#[test]
+fn oversized_exact_binary_shifts_are_bounded_without_poisoning_engine() {
+    let mut env = Environment::new();
+    boot(&mut env);
+    for shift in ["1000001", "-1000001", "-9223372036854775808"] {
+        assert!(
+            matches!(run_error(&mut env, &format!("MathMul2Exp(1., {shift})")), YacasError::NumericOverflow),
+            "shift {shift} should return NumericOverflow"
+        );
+        assert_eq!(run(&mut env, "2+2"), "4");
+    }
 }
 
 #[test]

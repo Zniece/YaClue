@@ -12,6 +12,8 @@ pub enum YacasError {
     None,
     /// Division by zero.
     DivideByZero,
+    /// A numeric result would exceed the engine's bounded exact-work limit.
+    NumericOverflow,
     /// Invalid argument (the common check in most commands).
     InvalidArg,
     /// Not an integer (`Mod`, bit operations, etc. require integral operands).

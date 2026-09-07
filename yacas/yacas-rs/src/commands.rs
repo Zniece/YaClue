@@ -3645,7 +3645,10 @@ fn cmd_math_mul2_exp(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     }
     let (x, fl) = arg_float_flag(env, inner, 0)?;
     let n = int_text_of(&eval(env, arg(inner, 1)?)?)?;
-    Ok(num_of_flag(x.mul2exp(n), fl))
+    Ok(num_of_flag(
+        x.mul2exp(n).ok_or(YacasError::NumericOverflow)?,
+        fl,
+    ))
 }
 
 /// DigitsToBits/BitsToDigits: decimal digit count <-> bit count conversions.
@@ -4517,7 +4520,7 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     } else {
         q
     };
-    let f = crate::number::float::Float::from_parts_trimmed(q, dec, te as i32, dec, neg);
+    let f = crate::number::float::Float::from_parts_trimmed(q, dec, te, dec, neg);
     Ok(num_of_flag(f, true))
 }
 

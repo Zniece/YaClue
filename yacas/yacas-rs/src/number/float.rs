@@ -21,7 +21,7 @@ pub const DEFAULT_PREC: u32 = 25;
 pub struct Float {
     digits: Nat,     // integral digits (leading zeros trimmed; empty = 0)
     scale: u32,      // number of fractional digits (≥ 0)
-    tens_exp: i32,   // tens exponent (te==0 prints verbatim, te!=0 e-form)
+    tens_exp: i64,   // tens exponent (te==0 prints verbatim, te!=0 e-form)
     prec: u32,       // requested decimal precision (drives guard truncation)
     neg: bool,
     text: Option<String>, // original literal text (passthrough printing)
@@ -40,7 +40,7 @@ impl Float {
             .or_else(|| t.strip_prefix('+'))
             .unwrap_or(t);
         let (mant, te) = match mant.find(['e', 'E']) {
-            Some(i) => (&mant[..i], mant[i + 1..].parse::<i32>().ok()?),
+            Some(i) => (&mant[..i], mant[i + 1..].parse::<i32>().ok()? as i64),
             None => (mant, 0),
         };
         let (ip, fp) = match mant.find('.') {
@@ -69,45 +69,50 @@ impl Float {
 
     /// Raw constructor for exact core commands (e.g. the 2^n/5^m shifts of
     /// `MathMul2Exp`); value = digits × 10^(te − scale).
-    pub fn from_parts(digits: Nat, scale: u32, tens_exp: i32, prec: u32, neg: bool) -> Self {
+    pub fn from_parts(digits: Nat, scale: u32, tens_exp: i64, prec: u32, neg: bool) -> Self {
         Float { digits, scale, tens_exp, prec, neg, text: None }
     }
 
     /// ×2^n shift (always exact): n ≥ 0 multiplies the digits by 2^n;
     /// n < 0 divides by 2^m = ×5^m/10^m, which terminates exactly in
     /// decimal.
-    pub fn mul2exp(&self, n: i64) -> Float {
+    pub fn mul2exp(&self, n: i64) -> Option<Float> {
+        const MAX_EXACT_SHIFT_BITS: u64 = 1_000_000;
         if self.digits.is_zero() {
-            return Float {
+            return Some(Float {
                 digits: self.digits.clone(),
                 scale: 0,
                 tens_exp: 0,
                 prec: self.prec,
                 neg: self.neg,
                 text: None,
-            };
+            });
+        }
+        let magnitude = n.unsigned_abs();
+        if magnitude > MAX_EXACT_SHIFT_BITS {
+            return None;
         }
         if n >= 0 {
-            let two_n = Nat::from_decimal("2").expect("2").pow(n as u32);
-            Float {
+            let two_n = Nat::from_decimal("2").expect("2").pow(magnitude as u32);
+            Some(Float {
                 digits: self.digits.mul(&two_n),
                 scale: self.scale,
                 tens_exp: self.tens_exp,
                 prec: self.prec,
                 neg: self.neg,
                 text: None,
-            }
+            })
         } else {
-            let m = (-n) as u32;
+            let m = magnitude as u32;
             let five_m = Nat::from_decimal("5").expect("5").pow(m);
-            Float {
+            Some(Float {
                 digits: self.digits.mul(&five_m),
-                scale: self.scale + m,
+                scale: self.scale.checked_add(m)?,
                 tens_exp: self.tens_exp,
                 prec: self.prec,
                 neg: self.neg,
                 text: None,
-            }
+            })
         }
     }
 
@@ -195,7 +200,7 @@ impl Float {
         if self.digits.is_zero() {
             return true;
         }
-        let e = self.tens_exp as i64 - self.scale as i64;
+        let e = self.tens_exp - self.scale as i64;
         if e >= 0 {
             return true;
         }
@@ -263,8 +268,8 @@ impl Float {
             format!("{sign}{ip}.{fp}")
         } else {
             // e-form: mantissa in [0.1, 1), exponent = te − scale + digits.
-            let len = ds.len() as i32;
-            let e = tens_exp - scale as i32;
+            let len = ds.len() as i64;
+            let e = tens_exp - scale as i64;
             format!("{sign}0.{ds}e{}", e + len)
         }
     }
@@ -305,7 +310,7 @@ impl Float {
 
     /// Split the absolute value into (integer-part digits, fraction non-zero?).
     fn int_frac(&self) -> (Nat, bool) {
-        let effective_exp = self.tens_exp - self.scale as i32;
+        let effective_exp = self.tens_exp - self.scale as i64;
         if effective_exp >= 0 {
             return (self.digits.mul_pow10(effective_exp as u32), false);
         }
@@ -355,17 +360,17 @@ impl Float {
 
     /// Normalize the mantissa to `0.<significant digits> × 10^E`; returns
     /// (digits, digit count, tens_exp).
-    fn mantle(&self) -> (Nat, u32, i32) {
+    fn mantle(&self) -> (Nat, u32, i64) {
         let ds = self.digits.to_decimal();
         if ds == "0" {
             return (Nat::zero(), 0, 0);
         }
         let trimmed = ds.trim_end_matches('0');
-        let zeros = (ds.len() - trimmed.len()) as i32;
-        let e = self.tens_exp - self.scale as i32 + zeros;
+        let zeros = (ds.len() - trimmed.len()) as i64;
+        let e = self.tens_exp - self.scale as i64 + zeros;
         let digs = Nat::from_decimal(if trimmed.is_empty() { "0" } else { trimmed }).unwrap();
         let len = trimmed.len() as u32;
-        (digs, len, e + len as i32)
+        (digs, len, e + len as i64)
     }
 
     /// Normalize downward (when the value < 0.1): shift mantissa digits into
@@ -375,9 +380,9 @@ impl Float {
         if self.digits.is_zero() {
             return;
         }
-        let l = self.digits.to_decimal().len() as i32;
+        let l = self.digits.to_decimal().len() as i64;
         let te = self.tens_exp;
-        let sc = self.scale as i32;
+        let sc = self.scale as i64;
         if te < sc - l {
             let (d, s, t) = self.mantle();
             self.digits = d;
@@ -395,8 +400,8 @@ impl Float {
         if o.digits.is_zero() {
             return None;
         }
-        let e_s = self.tens_exp as i64 - self.scale as i64;
-        let e_o = o.tens_exp as i64 - o.scale as i64;
+        let e_s = self.tens_exp - self.scale as i64;
+        let e_o = o.tens_exp - o.scale as i64;
         let e = e_s - e_o;
         // Exact division: quotient digits = self.digits/o.digits with
         // exponent e, keeping the dividend's full digit count (storage form,
@@ -425,7 +430,7 @@ impl Float {
                 text: None,
             };
             if e >= 0 {
-                f.tens_exp = e as i32;
+                f.tens_exp = e;
             } else {
                 f.scale = (-e) as u32;
             }
@@ -466,7 +471,7 @@ impl Float {
             text: None,
         };
         if e_adj >= 0 {
-            f.tens_exp = e_adj as i32;
+            f.tens_exp = e_adj;
             f.scale = (k + 1) as u32;
         } else {
             // The scale carries the negative exponent (canonical truncates
@@ -535,9 +540,40 @@ impl Float {
     /// session `prec == 0` the operand max is used.
     pub fn add(&self, o: &Float, prec: u32) -> Float {
         use std::cmp::Ordering;
+        let out_prec = if prec > 0 { prec } else { self.prec.max(o.prec) };
+        // Computation guard: keep max(session, operand) digits internally so
+        // low digits are not lost; the guard digits stay in storage and are
+        // cut only when printing.
+        let guard = out_prec.max(self.prec).max(o.prec);
+        // Keep ordinary arithmetic exact within its historical alignment
+        // range. Beyond the bounded work limit, a term wholly below the
+        // retained precision cannot affect the rendered numeric result.
+        const MAX_ALIGNMENT_DIGITS: u64 = 100_000;
+        if guard > 0 && !self.digits.is_zero() && !o.digits.is_zero() {
+            let self_lead = self
+                .tens_exp
+                .saturating_sub(self.scale as i64)
+                .saturating_add(self.digits.to_decimal().len() as i64 - 1);
+            let other_lead = o
+                .tens_exp
+                .saturating_sub(o.scale as i64)
+                .saturating_add(o.digits.to_decimal().len() as i64 - 1);
+            let gap = self_lead.abs_diff(other_lead);
+            if gap > MAX_ALIGNMENT_DIGITS && gap > guard as u64 + 2 {
+                let dominant = if self_lead > other_lead { self } else { o };
+                return Float {
+                    digits: dominant.digits.clone(),
+                    scale: dominant.scale,
+                    tens_exp: dominant.tens_exp,
+                    prec: out_prec,
+                    neg: dominant.neg,
+                    text: None,
+                };
+            }
+        }
         let common = self.tens_exp.max(o.tens_exp);
-        let s1 = self.scale as i64 + (common - self.tens_exp) as i64;
-        let s2 = o.scale as i64 + (common - o.tens_exp) as i64;
+        let s1 = self.scale as i64 + (common - self.tens_exp);
+        let s2 = o.scale as i64 + (common - o.tens_exp);
         let sm = s1.max(s2);
         let d1 = self.digits.mul_pow10((sm - s1) as u32);
         let d2 = o.digits.mul_pow10((sm - s2) as u32);
@@ -553,11 +589,6 @@ impl Float {
                 _ => (d1.sub(&d2).unwrap_or_else(Nat::zero), true),
             },
         };
-        let out_prec = if prec > 0 { prec } else { self.prec.max(o.prec) };
-        // Computation guard: keep max(session, operand) digits internally so
-        // low digits are not lost; the guard digits stay in storage and are
-        // cut only when printing.
-        let guard = out_prec.max(self.prec).max(o.prec);
         // Zero normalizes to (0, 0, 0).
         if digits.is_zero() {
             return Float {
@@ -665,10 +696,8 @@ fn div_scaled(num: &Nat, den: &Nat, scale: u32) -> Nat {
 /// Compare after exponent alignment: both values convert to the common
 /// minimum exponent, then the predicate applies to the mantissas.
 fn e_align(a: &Float, b: &Float, cmp: impl Fn(&Nat, &Nat) -> bool) -> bool {
-    // value = digs × 10^E with E = te − scale; align to min(E) so both
-    // multipliers stay non-negative.
-    let ea = a.tens_exp - a.scale as i32;
-    let eb = b.tens_exp - b.scale as i32;
+    let ea = a.tens_exp - a.scale as i64;
+    let eb = b.tens_exp - b.scale as i64;
     let emin = ea.min(eb);
     let da = a.digits.mul_pow10((ea - emin) as u32);
     let db = b.digits.mul_pow10((eb - emin) as u32);
@@ -695,9 +724,9 @@ fn truncate_down(digits: Nat, scale: u32, cap: u32) -> (Nat, u32) {
 fn truncate_significant(
     digits: Nat,
     scale: u32,
-    tens_exp: i32,
+    tens_exp: i64,
     cap: u32,
-) -> (Nat, u32, i32) {
+) -> (Nat, u32, i64) {
     if cap == 0 {
         return (digits, scale, tens_exp);
     }
@@ -713,7 +742,7 @@ fn truncate_significant(
         (
             kept,
             0,
-            tens_exp.saturating_add((drop - scale) as i32),
+            tens_exp.saturating_add((drop - scale) as i64),
         )
     }
 }
@@ -729,7 +758,7 @@ impl Float {
         self.scale
     }
     /// Tens exponent.
-    pub fn tens_exp_of(&self) -> i32 {
+    pub fn tens_exp_of(&self) -> i64 {
         self.tens_exp
     }
     /// Sign flag.
@@ -738,7 +767,7 @@ impl Float {
     }
     /// Construct with fraction-side trailing zeros trimmed (used by FromBase:
     /// `FromBase(10, "0.2222222222222222222")` stores 19 digits, not 34).
-    pub fn from_parts_trimmed(digits: Nat, scale: u32, tens_exp: i32, prec: u32, neg: bool) -> Self {
+    pub fn from_parts_trimmed(digits: Nat, scale: u32, tens_exp: i64, prec: u32, neg: bool) -> Self {
         let mut f = Float::from_parts(digits, scale, tens_exp, prec, neg);
         if f.tens_exp == 0 {
             let mut d = f.digits.clone();
@@ -828,6 +857,21 @@ mod tests {
     }
 
     #[test]
+    fn extreme_scientific_exponents_do_not_overflow_or_expand_alignment() {
+        let sum = f("1e2147483647").add(&f("1e-2147483648"), DEFAULT_PREC);
+        assert_eq!(sum.format(), "0.1e2147483648");
+        assert_eq!(sum.digits.to_decimal().len(), 1);
+
+        let product = f("1e2147483647").mul(&f("1e2147483647"), DEFAULT_PREC);
+        assert_eq!(product.format(), "0.1e4294967295");
+
+        let million = f("1e1000000").add(&f("1"), DEFAULT_PREC);
+        assert_eq!(million.format(), "0.1e1000001");
+        assert_eq!(million.digits.to_decimal().len(), 1);
+
+    }
+
+    #[test]
     fn sub_golden() {
         assert_eq!(f("6.25").sub(&f("6.25"), DEFAULT_PREC).format(), "0");
     }
@@ -895,7 +939,7 @@ mod tests {
 
     #[test]
     fn scientific_results_keep_significant_digits() {
-        let shifted = f("1e100").mul2exp(-332);
+        let shifted = f("1e100").mul2exp(-332).expect("bounded shift");
         assert!(
             shifted.format().starts_with("0.1142987391")
                 && shifted.format().ends_with("e1"),
