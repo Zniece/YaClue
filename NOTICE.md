@@ -7,16 +7,16 @@
   for its script-library lineage (see `yacas/COPYING` and `yacas/AUTHORS`).
   YaClue itself is an application built on top of this engine.
 - `yacas/scripts/` and `yacas/tests/` are derived from the upstream library
-  and remain LGPL-2.1+. The single semantic modification is documented in the
-  root README ("Relationship to upstream").
+  and remain LGPL-2.1+. Maintenance changes are tracked in this repository; see
+  `yacas/README.md` for the maintained script areas.
 - `yacas/yacas-rs/` is an independent Rust implementation, licensed MIT. It
   is not a derivative of the upstream C++ code; it pins upstream *behavior*
   through a black-box conformance suite.
 
 ## Reference sources
 
-Behavioral questions about the script library's original semantics are
-settled against the upstream Yacas sources
+For questions about the script library's original semantics, the upstream
+Yacas sources can be consulted
 (<https://github.com/grzegorzmazur/yacas>), which are not distributed
 with this repository.
 

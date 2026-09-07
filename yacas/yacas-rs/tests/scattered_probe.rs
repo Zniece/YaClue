@@ -69,7 +69,7 @@ fn scattered_probe() {
         ("ToBase(2,-0.5)", "\"-0.1\""),
     ];
     // 已知偏差(浮点算术保真位数:我 10 位 vs cyacas ~30 位;显示层一致,
-    // ToBase 读原始尾数分叉,记 COVERAGE §31):ToBase(2,1.0/3.0)、ToBase(3,1.0/3.0)
+    // ToBase 读原始尾数分叉,记 historical porting notes):ToBase(2,1.0/3.0)、ToBase(3,1.0/3.0)
     for (src, want) in probes {
         let got = run(&mut env, src);
         assert_eq!(got, want, "探针 {src}");

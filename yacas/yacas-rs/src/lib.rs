@@ -1,12 +1,11 @@
 //! Rust implementation of the yacas engine.
 //!
-//! Semantics are aligned with the upstream C++ engine (frozen snapshot under
-//! `oracle/yacas`); the upstream sources serve as the reference for any
-//! behavioral question. Contract docs live in PORTING-CONTRACT.md:
-//! - Contract §1 value semantics: copies are exclusive; objects are owned
-//!   values, not shared mutable cells.
-//! - Contract §2 numeric layer: decimal mantissa+exponent representation
-//!   (semantics-first; not a BigDecimal-style scale model).
+//! The Rust test suite defines supported behavior. Upstream Yacas can be
+//! consulted for compatibility questions; intentional improvements are
+//! documented and tested in this implementation.
+//!
+//! Value nodes are copied independently with shared immutable substructure.
+//! The numeric layer uses a decimal mantissa/exponent representation.
 
 pub mod commands;
 pub mod containers;

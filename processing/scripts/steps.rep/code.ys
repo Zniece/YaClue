@@ -15,7 +15,7 @@
    - Rule ordering: the generic fallback rule must be defined FIRST (later
      rules win in 1.9.2).
 
-   NOTES (all verified empirically against 1.9.2, see ../RESEARCH.md §7):
+   NOTES (compatibility behavior verified against Yacas 1.9.2):
    - pattern rules (10 #) must NOT be wrapped in LocalSymbols blocks;
    - pattern variable names must avoid "expr"/"var";
    - Subst is a bodied operator in 1.9.2, call via ApplyPure("Subst", ...);
@@ -699,7 +699,7 @@ SI'TrigSub(integrand, v, d) :=
 /* ============================================================
    解释文案(声明式):数据表 + 查询。
    风格约定:陈述规则本身(公式/操作),不做教学解说
-   ("为什么"留白给使用者)—— 与 PLAN §6 的"数据驱动"一致。
+   ("为什么"留白给使用者)，文案随规则维护。
    记法:撇号 = 对积分/求导变量求导;积分公式中 x 泛指积分变量。
    侧感知:同一规则键在求导/积分两侧语义不同(power-rule 在两侧
    是两条公式),积分侧用 "i:" 前缀键覆盖,由 Steps'ExplainFor

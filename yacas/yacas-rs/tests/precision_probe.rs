@@ -46,7 +46,7 @@ fn precision_probe() {
         ("MathSqrt1(9+0.)", "3."),
     ];
     let mut fails = 0;
-    // 已知实现差异(C++ 二进制 limb 量化噪声,末位;COVERAGE §32):
+    // 已知实现差异(C++ 二进制 limb 量化噪声,末位;historical porting notes):
     // MathSqrt float 直调(链式 Halley)个别末位
     let known = ["MathSqrt(2.)", "MathSqrt(3.)", "MathSqrt(123456.789)"];
     for (p, exp) in probes {

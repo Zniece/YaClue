@@ -32,7 +32,7 @@ fn e2e_payload2() {
     }
     let mut checked = 0usize;
     let mut fails: Vec<(usize, String)> = Vec::new();
-    // 已知实现差异(C++ 二进制 limb 量化噪声,末 1-2 位;位数一致——COVERAGE §32):
+    // 已知实现差异(C++ 二进制 limb 量化噪声,末 1-2 位;位数一致——historical porting notes):
     // 级数链数值函数 Sin/Cos/Tan/Exp(Trig/MathExpTaylor0 循环体)
     let known_diff = |e: &str| {
         e.starts_with("N(Sin(") || e.starts_with("N(Cos(")

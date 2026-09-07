@@ -1,4 +1,4 @@
-//! 别名/共享链语义锁步(Step 4;oracle 锚点逐条钉死,COVERAGE §32):
+//! 别名/共享链语义锁步(Step 4;oracle 锚点逐条钉死,historical porting notes):
 //! cyacas LispObject 为可变链表,Copy 只复制 SubList 盒子、内容链共享 ——
 //! 破坏性命令就地改链 → 所有共享槽同时可见。Rust 重建模型经 propagate_alias
 //! 三层广播模拟(根层/容器层/深度包含),不做被替换元素级广播(会污染交换)。

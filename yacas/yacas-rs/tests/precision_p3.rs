@@ -1,4 +1,4 @@
-//! N() 精度尾 + Rem/Div 验收电池(Step 3 定稿):18 条精确对齐 + 8 条已知差异容差锁步(COVERAGE §32)。
+//! N() 精度尾 + Rem/Div 验收电池(Step 3 定稿):18 条精确对齐 + 8 条已知差异容差锁步(historical porting notes)。
 use yacas_rs::env::Environment;
 use yacas_rs::evaluator::eval;
 use yacas_rs::parser::parse_expression;
@@ -41,7 +41,7 @@ fn step3_battery() {
         "1", "-1", "0",
     ];
     // 已知实现差异(C++ 二进制 limb 量化噪声;语言标准层我们的十进制结果更准,
-    // 位数与 oracle 一致、仅末 1-2 位值不同)—— 见 COVERAGE §32:
+    // 位数与 oracle 一致、仅末 1-2 位值不同)—— 见 historical porting notes:
     const KNOWN: &[&str] = &[
         "N(Sin(1),10)", "N(Sin(1),12)", "N(Sin(1),15)", "N(Sin(1),20)",
         "N(Cos(1),10)", "N(Tan(1),10)", "N(Exp(1),10)", "N(Exp(1),20)",

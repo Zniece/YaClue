@@ -6,8 +6,7 @@ inspect *why* each step applies. Every step names the rule that produced it.
 
 Under the hood, YaClue is powered by **yacas-rs**, a general-purpose computer
 algebra engine written in Rust — a dialect fork of
-[Yacas](https://github.com/grzegorzmazur/yacas) (1.9.x): library semantics
-are kept aligned with the upstream engine while the engine itself is a fresh
+[Yacas](https://github.com/grzegorzmazur/yacas) (1.9.x): the script library is maintained locally while the engine itself is a fresh
 implementation. The step-generation layer and the desktop GUI live outside
 the kernel and are what make YaClue a product.
 
@@ -52,8 +51,8 @@ Red lines kept by design:
   engine is not part of this repository.
 - The script library receives ongoing maintenance fixes as part of
   yacas-rs.
-- The Rust engine is an independent implementation whose behavior is pinned
-  to Yacas semantics by a conformance suite
+- The Rust engine is an independent implementation whose supported behavior
+  is covered by a conformance suite
   (`yacas/yacas-rs/tests/` — 100+ tests incl. golden files).
 
 ## Build & run
@@ -81,3 +80,14 @@ standard library.
 Work in progress. The engine conformance suite is fully green; the step layer
 currently covers derivatives (`StepsD`) and a growing family of integrals
 (`StepsI`).
+
+## Optional upstream comparison
+
+Normal builds and tests use Rust. For a specific compatibility question,
+set `YACAS_BIN` to a separately built Yacas executable to enable the optional
+C++ adapter checks. Intentional behavior improvements are governed by this
+project's tests; C++ output is not an automatic replacement for a golden
+baseline.
+
+This workspace uses the root `Cargo.lock`; member crates do not maintain
+separate lockfiles.

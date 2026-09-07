@@ -1,4 +1,4 @@
-//! 程序块 `;` 终止符语义锁步(oracle 探针钉死 10 形态;修正 COVERAGE §30 误诊:
+//! 程序块 `;` 终止符语义锁步(oracle 探针钉死 10 形态;修正 historical porting notes 误诊:
 //! cyacas 块内 `;` = 语句终止符,`]` 前必带,`[1; 2]`/`f(_x)<--[x+1]` 均报错 ——
 //! 本引擎逐形态一致;顶层 EOF 无 `;` 两引擎均合法)。
 use yacas_rs::env::Environment;
