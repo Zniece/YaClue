@@ -3188,6 +3188,17 @@ impl SignedNat {
     }
 }
 
+fn divrem_with_deadline(
+    env: &Environment,
+    numerator: &crate::number::nat::Nat,
+    denominator: &crate::number::nat::Nat,
+) -> Result<(crate::number::nat::Nat, crate::number::nat::Nat), YacasError> {
+    numerator
+        .divrem_interruptible(denominator, || env.check_eval_deadline().is_err())
+        .map_err(|_| YacasError::UserInterrupt)?
+        .ok_or(YacasError::InvalidArg)
+}
+
 fn integer_text(node: &Rc<LispObject>) -> Result<String, YacasError> {
     node.number_string()
         .or_else(|| node.atom_string().map(|s| s.to_string()))
@@ -3231,7 +3242,7 @@ pub fn cmd_mod(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
     if y.negative {
         return crate::standard::return_un_evaluated(env, inner);
     }
-    let (_, mut remainder) = x.magnitude.divrem(&y.magnitude).ok_or(YacasError::InvalidArg)?;
+    let (_, mut remainder) = divrem_with_deadline(env, &x.magnitude, &y.magnitude)?;
     if x.negative && !remainder.is_zero() {
         remainder = y.magnitude.sub(&remainder).ok_or(YacasError::InvalidArg)?;
     }
@@ -3494,7 +3505,7 @@ pub fn cmd_math_div(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
     if y.is_zero() {
         return Err(YacasError::InvalidArg);
     }
-    let (q, _) = x.divrem(&y).ok_or(YacasError::InvalidArg)?;
+    let (q, _) = divrem_with_deadline(env, &x, &y)?;
     let text = q.to_decimal();
     let text = if neg && !q.is_zero() {
         format!("-{text}")
@@ -3533,7 +3544,7 @@ pub fn cmd_math_gcd(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
     let mut x = crate::number::nat::Nat::from_decimal(at.trim_start_matches('-')).ok_or(YacasError::InvalidArg)?;
     let mut y = crate::number::nat::Nat::from_decimal(bt.trim_start_matches('-')).ok_or(YacasError::InvalidArg)?;
     while !y.is_zero() {
-        let (_, r) = x.divrem(&y).ok_or(YacasError::InvalidArg)?;
+        let (_, r) = divrem_with_deadline(env, &x, &y)?;
         x = y;
         y = r;
     }
@@ -4401,32 +4412,47 @@ fn base_digit(c: char, base: i64) -> Option<i64> {
 }
 
 /// Nat -> base-b digit string (lowercase 0-9a-z; like ZZ::to_string(base); zero -> "0").
-fn nat_to_base(n: &crate::number::nat::Nat, base: u32) -> String {
+fn nat_to_base(
+    env: &Environment,
+    n: &crate::number::nat::Nat,
+    base: u32,
+) -> Result<String, YacasError> {
     if n.is_zero() {
-        return "0".into();
+        return Ok("0".into());
     }
     let b = crate::number::nat::Nat::from_decimal(&base.to_string()).expect("base");
     let mut ds: Vec<u8> = Vec::new();
     let mut cur = n.clone();
     while !cur.is_zero() {
+        if ds.len() & 0xff == 0 {
+            env.check_eval_deadline()?;
+        }
         let (q, r) = cur.divrem(&b).expect("div by nonzero");
         let d: u32 = r.to_decimal().parse().expect("r < base");
         ds.push(if d < 10 { b'0' + d as u8 } else { b'a' + (d - 10) as u8 });
         cur = q;
     }
     ds.reverse();
-    String::from_utf8(ds).expect("base digits")
+    Ok(String::from_utf8(ds).expect("base digits"))
 }
 
 /// Base-b digit string -> Nat (FromBase mantissa parsing; out-of-base digit -> None).
-fn nat_from_base(s: &str, base: i64) -> Option<crate::number::nat::Nat> {
-    let b = crate::number::nat::Nat::from_decimal(&base.to_string())?;
+fn nat_from_base(
+    env: &Environment,
+    s: &str,
+    base: i64,
+) -> Result<crate::number::nat::Nat, YacasError> {
+    let b = crate::number::nat::Nat::from_decimal(&base.to_string()).ok_or(YacasError::InvalidArg)?;
     let mut acc = crate::number::nat::Nat::zero();
-    for c in s.chars() {
-        let d = base_digit(c, base)?;
-        acc = acc.mul(&b).add(&crate::number::nat::Nat::from_decimal(&d.to_string())?);
+    for (index, c) in s.chars().enumerate() {
+        if index & 0xff == 0 {
+            env.check_eval_deadline()?;
+        }
+        let d = base_digit(c, base).ok_or(YacasError::InvalidArg)?;
+        let digit = crate::number::nat::Nat::from_decimal(&d.to_string()).ok_or(YacasError::InvalidArg)?;
+        acc = acc.mul(&b).add(&digit);
     }
-    Some(acc)
+    Ok(acc)
 }
 
 /// FromBase (see upstream: cyacas/libyacas/src/mathcommands3.cpp LispFromBase
@@ -4521,7 +4547,7 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     };
     let is_float = dot.is_some() || emark.is_some();
     let mant_str = format!("{int_part}{frac_part}");
-    let m = nat_from_base(&mant_str, base).ok_or(YacasError::InvalidArg)?;
+    let m = nat_from_base(env, &mant_str, base)?;
     if !is_float {
         let mut txt = m.to_decimal();
         if txt == "0" {
@@ -4543,7 +4569,7 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     let bnat = crate::number::nat::Nat::from_decimal(&base.to_string()).expect("base");
     let denom = bnat.pow(frac_part.len() as u32);
     let scaled = m.mul_pow10(dec);
-    let (q, r) = scaled.divrem(&denom).ok_or(YacasError::InvalidArg)?;
+    let (q, r) = divrem_with_deadline(env, &scaled, &denom)?;
     let two = crate::number::nat::Nat::from_decimal("2").expect("two");
     let q = if r.mul(&two).cmp(&denom) != std::cmp::Ordering::Less {
         q.add(&crate::number::nat::Nat::from_decimal("1").expect("one"))
@@ -4597,7 +4623,7 @@ pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
             return Err(YacasError::NumericOverflow);
         }
         let m = crate::number::nat::Nat::from_decimal(mag).ok_or(YacasError::InvalidArg)?;
-        let mut s = nat_to_base(&m, b32);
+        let mut s = nat_to_base(env, &m, b32)?;
         if neg && s != "0" {
             s = format!("-{s}");
         }
@@ -4615,16 +4641,16 @@ pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
     let den = crate::number::nat::Nat::from_decimal("1")
         .expect("one")
         .mul_pow10(scale);
-    let (int_part, mut rem) = f
-        .digits_nat()
-        .divrem(&den)
-        .ok_or(YacasError::InvalidArg)?;
-    let mut int_s = nat_to_base(&int_part, b32);
+    let (int_part, mut rem) = divrem_with_deadline(env, f.digits_nat(), &den)?;
+    let mut int_s = nat_to_base(env, &int_part, b32)?;
     // Fraction: repeated multiplication by b, BinaryPrecision+1 digits (guard digit)
     let bits = ((env.precision() as f64) * 10f64.log2()).ceil() as u32;
     let bb = crate::number::nat::Nat::from_decimal(&base.to_string()).expect("base");
     let mut digs: Vec<u32> = Vec::new();
-    for _ in 0..(bits + 1) {
+    for index in 0..(bits + 1) {
+        if index & 0xff == 0 {
+            env.check_eval_deadline()?;
+        }
         rem = rem.mul(&bb);
         let (d, r2) = rem.divrem(&den).ok_or(YacasError::InvalidArg)?;
         digs.push(if d.is_zero() {

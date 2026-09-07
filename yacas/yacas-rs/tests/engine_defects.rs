@@ -132,6 +132,24 @@ fn explosive_exact_operations_are_bounded_and_interruptible() {
 }
 
 #[test]
+fn big_integer_division_commands_observe_deadline() {
+    let mut env = Environment::new();
+    boot(&mut env);
+    for source in [
+        "MathDiv(100000000000000000000, 3)",
+        "MathGcd(100000000000000000001, 100000000000000000000)",
+        "Mod(100000000000000000001, 100000000000000000000)",
+        "FromBase(2, \"101010101010101010101\")",
+        "ToBase(2, 100000000000000000001)",
+    ] {
+        env.set_eval_timeout(Some(std::time::Duration::ZERO));
+        assert!(matches!(run_error(&mut env, source), YacasError::UserInterrupt));
+        env.set_eval_timeout(None);
+        assert_eq!(run(&mut env, "2+2"), "4");
+    }
+}
+
+#[test]
 #[ignore = "D2: N() does not numerically evaluate a rational passed through a function parameter"]
 fn d2_n_through_parameter() {
     let mut env = Environment::new();

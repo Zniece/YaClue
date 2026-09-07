@@ -207,22 +207,35 @@ impl Nat {
     /// Normalized long division directly on base-10^9 limbs (Knuth D).
     /// Returns `(quotient, remainder)`, or `None` for a zero denominator.
     pub fn divrem(&self, den: &Nat) -> Option<(Nat, Nat)> {
+        self.divrem_interruptible(den, || false)
+            .expect("non-interruptible division")
+    }
+
+    /// Long division with a cancellation probe between quotient limbs.
+    pub(crate) fn divrem_interruptible(
+        &self,
+        den: &Nat,
+        mut interrupted: impl FnMut() -> bool,
+    ) -> Result<Option<(Nat, Nat)>, ()> {
+        if interrupted() {
+            return Err(());
+        }
         if den.is_zero() {
-            return None;
+            return Ok(None);
         }
         if self.cmp(den) == std::cmp::Ordering::Less {
-            return Some((Nat::zero(), self.clone()));
+            return Ok(Some((Nat::zero(), self.clone())));
         }
         if den.groups.len() == 1 {
             let (quotient, remainder) = self.div_small(den.groups[0]);
-            return Some((
+            return Ok(Some((
                 quotient,
                 if remainder == 0 {
                     Nat::zero()
                 } else {
                     Nat { groups: vec![remainder] }
                 },
-            ));
+            )));
         }
 
         let n = den.groups.len();
@@ -234,6 +247,9 @@ impl Nat {
         let mut quotient = vec![0u32; m + 1];
 
         for j in (0..=m).rev() {
+            if interrupted() {
+                return Err(());
+            }
             let top = dividend[j + n] as u64;
             let next = dividend[j + n - 1] as u64;
             let numerator = top * BASE + next;
@@ -288,7 +304,7 @@ impl Nat {
         }
         let normalized_remainder = Nat { groups: dividend[..n].to_vec() };
         let (remainder, _) = normalized_remainder.div_small(normalization);
-        Some((Nat { groups: quotient }, remainder))
+        Ok(Some((Nat { groups: quotient }, remainder)))
     }
 }
 
