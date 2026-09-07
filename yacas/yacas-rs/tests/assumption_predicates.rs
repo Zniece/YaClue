@@ -59,3 +59,23 @@ fn known_predicates_propagate_only_safe_symbolic_facts() {
     // Value predicates retain their historical meaning.
     assert_eq!(run(&mut env, "IsInteger(n)"), "False");
 }
+
+#[test]
+fn roots_and_absolute_values_respect_real_sign_assumptions() {
+    let mut env = boot();
+    assert_eq!(run(&mut env, "Simplify(Sqrt(x^2))"), "Sqrt(x^2)");
+    assert_eq!(run(&mut env, "Simplify(Abs(x))"), "Abs(x)");
+
+    assert_eq!(run(&mut env, "Assume(x,Real)"), "True");
+    assert_eq!(run(&mut env, "Simplify(Sqrt(x^2))"), "Abs(x)");
+
+    assert_eq!(run(&mut env, "ClearAssumptions()"), "True");
+    assert_eq!(run(&mut env, "Assume(x,Positive)"), "True");
+    assert_eq!(run(&mut env, "Simplify(Sqrt(x^2))"), "x");
+    assert_eq!(run(&mut env, "Simplify(Abs(x))"), "x");
+
+    assert_eq!(run(&mut env, "ClearAssumptions()"), "True");
+    assert_eq!(run(&mut env, "Assume(x,Negative)"), "True");
+    assert_eq!(run(&mut env, "Simplify(Sqrt(x^2))"), "-x");
+    assert_eq!(run(&mut env, "Simplify(Abs(x))"), "-x");
+}

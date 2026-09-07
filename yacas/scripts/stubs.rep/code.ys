@@ -83,6 +83,11 @@ n_IsInteger >> m_IsInteger <-- ShiftRight(n,m);
 2 # Sqrt(x_IsNegativeNumber) <-- Complex(0,Sqrt(-x));
 /* 3 # Sqrt(x_IsNumber/y_IsNumber) <-- Sqrt(x)/Sqrt(y); */
 3 # Sqrt(x_IsComplex)_InNumericMode() <-- x^(1/2);
+
+/* Principal real square root under explicit assumptions. */
+5 # Sqrt(_x ^ 2)_(IsKnownPositive(x)) <-- x;
+5 # Sqrt(_x ^ 2)_(IsKnownNegative(x)) <-- -x;
+6 # Sqrt(_x ^ 2)_(IsKnownReal(x)) <-- Abs(x);
 /* Threading  */
 Sqrt(xlist_IsList) <-- MapSingle("Sqrt",xlist);
 
@@ -309,6 +314,9 @@ Rule("Object",2,0,Apply(pred,{x})=True) x;
 10 # Abs(Undefined) <-- Undefined;
 20 # Abs(n_IsList) <-- MapSingle("Abs",n);
 
+30 # Abs(_x)_(IsKnownPositive(x)) <-- x;
+30 # Abs(_x)_(IsKnownNegative(x)) <-- -x;
+
 50 # Abs(c_IsConstant) <-- If (c > 0, c, -c);
 
 100 # Abs(_a^_n) <-- Abs(a)^n;
@@ -486,4 +494,3 @@ LnCombine(_a) <-- DoLnCombine(CanonicalAdd(a));
 
 // Finished
 6 # DoLnCombine(_a)                  <-- a;
-

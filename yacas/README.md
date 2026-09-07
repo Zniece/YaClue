@@ -64,3 +64,8 @@ The script library exposes proof-oriented predicates `IsKnownInteger`,
 They combine exact values and assumptions through safe rules for negation,
 sums, products, quotients, integer powers, `Exp`, `Ln`, `Sqrt`, and `Abs`.
 `False` means the property was not proved; it does not prove the opposite.
+
+`Sqrt(x^2)` and `Abs(x)` are the first simplification consumers. For real
+`x`, the root becomes `Abs(x)`; a positive or negative sign assumption reduces
+both forms to `x` or `-x` as appropriate. Without a sufficient real-domain
+fact, the original expression is retained.

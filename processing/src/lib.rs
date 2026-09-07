@@ -5,6 +5,7 @@
 //! runtime); everything in this crate is original work licensed MIT.
 
 pub mod algebra;
+pub mod assumptions;
 pub mod engine;
 pub mod equations;
 pub mod limits;
