@@ -53,6 +53,19 @@ SD'Merge(cur, sub, pending) :=
   {steps, cur};
 ];
 
+/* 递归规则只需要子链终值时,不重放并丢弃整条可见步骤链。
+   找到子链首个实际替换目标,直接以 sub[2] 推进当前表达式。 */
+SD'Advance(cur, sub, pending) :=
+[
+  Local(i, s);
+  i := 1;
+  While (sub[1][i][2] = "m") i++;
+  s := sub[1][i];
+  If (s[2] = "s",
+    ApplyPure("Subst", {s[3], sub[2], cur}),
+    ApplyPure("Subst", {Apply(pending, {s[3]}), sub[2], cur}));
+];
+
 /* ---------- 轻量化简 Tidy:仅采纳"局部清理"式的化简 ---------- */
 
 RuleBase("Tidy", {expr});
@@ -99,7 +112,7 @@ StepsD(expr, var) :=
   steps := {{"constant-multiple-rule", "p", -f, -DPrime(f)}};
   cur := -DPrime(f);
   sf := SD'Diff(f, v);
-  cur := SD'Merge(cur, sf, "DPrime")[2];
+  cur := SD'Advance(cur, sf, "DPrime");
   steps := Concat(steps, sf[1]);
   {steps, cur};
 ];
@@ -111,10 +124,10 @@ StepsD(expr, var) :=
   steps := {{"sum-rule", "p", a + b, DPrime(a) + DPrime(b)}};
   cur := DPrime(a) + DPrime(b);
   sa := SD'Diff(a, v);
-  cur := SD'Merge(cur, sa, "DPrime")[2];
+  cur := SD'Advance(cur, sa, "DPrime");
   steps := Concat(steps, sa[1]);
   sb := SD'Diff(b, v);
-  cur := SD'Merge(cur, sb, "DPrime")[2];
+  cur := SD'Advance(cur, sb, "DPrime");
   steps := Concat(steps, sb[1]);
   {steps, cur};
 ];
@@ -128,17 +141,17 @@ StepsD(expr, var) :=
       steps := {{"constant-multiple-rule", "p", a * b, a * DPrime(b)}};
       cur := a * DPrime(b);
       sb := SD'Diff(b, v);
-      cur := SD'Merge(cur, sb, "DPrime")[2];
+      cur := SD'Advance(cur, sb, "DPrime");
       steps := Concat(steps, sb[1]);
     ],
     [ /* 乘积法则:f'*g + f*g' */
       steps := {{"product-rule", "p", a * b, DPrime(a) * b + a * DPrime(b)}};
       cur := DPrime(a) * b + a * DPrime(b);
       sa := SD'Diff(a, v);
-      cur := SD'Merge(cur, sa, "DPrime")[2];
+      cur := SD'Advance(cur, sa, "DPrime");
       steps := Concat(steps, sa[1]);
       sb := SD'Diff(b, v);
-      cur := SD'Merge(cur, sb, "DPrime")[2];
+      cur := SD'Advance(cur, sb, "DPrime");
       steps := Concat(steps, sb[1]);
     ]);
   {steps, cur};
@@ -151,10 +164,10 @@ StepsD(expr, var) :=
   steps := {{"quotient-rule", "p", a / b, (DPrime(a) * b - a * DPrime(b)) / b ^ 2}};
   cur := (DPrime(a) * b - a * DPrime(b)) / b ^ 2;
   sa := SD'Diff(a, v);
-  cur := SD'Merge(cur, sa, "DPrime")[2];
+  cur := SD'Advance(cur, sa, "DPrime");
   steps := Concat(steps, sa[1]);
   sb := SD'Diff(b, v);
-  cur := SD'Merge(cur, sb, "DPrime")[2];
+  cur := SD'Advance(cur, sb, "DPrime");
   steps := Concat(steps, sb[1]);
   {steps, cur};
 ];
@@ -168,7 +181,7 @@ StepsD(expr, var) :=
       steps := {{If (a = v, "power-rule", "power-chain-rule"), "p", a ^ b, b * a ^ (b - 1) * DPrime(a)}};
       cur := b * a ^ (b - 1) * DPrime(a);
       sa := SD'Diff(a, v);
-      cur := SD'Merge(cur, sa, "DPrime")[2];
+      cur := SD'Advance(cur, sa, "DPrime");
       steps := Concat(steps, sa[1]);
     ],
     If (IsFreeOf(v, a),
@@ -176,7 +189,7 @@ StepsD(expr, var) :=
         steps := {{If (b = v, "exponential-rule", "exponential-chain-rule"), "p", a ^ b, a ^ b * Ln(a) * DPrime(b)}};
         cur := a ^ b * Ln(a) * DPrime(b);
         sb := SD'Diff(b, v);
-        cur := SD'Merge(cur, sb, "DPrime")[2];
+        cur := SD'Advance(cur, sb, "DPrime");
         steps := Concat(steps, sb[1]);
       ],
       [ /* 底和指数都依赖自变量:直接求导兜底 */
@@ -197,7 +210,7 @@ SD'FuncDiff(name, f, after, u, v) :=
   steps := {{If (u = v, ConcatStrings(name, "-rule"), ConcatStrings(name, "-chain-rule")), "p", f, after}};
   cur := after;
   su := SD'Diff(u, v);
-  cur := SD'Merge(cur, su, "DPrime")[2];
+  cur := SD'Advance(cur, su, "DPrime");
   steps := Concat(steps, su[1]);
   {steps, cur};
 ];
@@ -269,9 +282,9 @@ SI'USub(integrand, g, fam, rest, v) :=
       steps := {{"method-u-sub", "m", integrand, integrand},
                 {"u-sub-rule", "p", integrand, Int(fu)}};
       cur := Int(fu);
-      /* 原始步骤原样拼接;merge 只用于推进 cur(取其最终值) */
+      /* 原始步骤原样拼接;这里只以子链终值推进 cur */
       sub := SI'Diff(fu, u);
-      cur := SD'Merge(cur, sub, "Int")[2];
+      cur := SD'Advance(cur, sub, "Int");
       steps := Concat(steps, sub[1]);
       /* 回代 u → g */
       steps := Append(steps, {"back-sub-rule", "s", u, g});
@@ -327,7 +340,7 @@ SI'PartFrac(integrand, p, q, v) :=
                 {"partial-fraction-rule", "p", integrand, Int(decomp)}};
       cur := Int(decomp);
       sub := SI'Diff(decomp, v);
-      cur := SD'Merge(cur, sub, "Int")[2];
+      cur := SD'Advance(cur, sub, "Int");
       steps := Concat(steps, sub[1]);
       {steps, cur};
     ]);
@@ -346,10 +359,10 @@ SI'PartFrac(integrand, p, q, v) :=
   steps := {{"sum-rule", "p", a + b, Int(a) + Int(b)}};
   cur := Int(a) + Int(b);
   sa := SI'Diff(a, v);
-  cur := SD'Merge(cur, sa, "Int")[2];
+  cur := SD'Advance(cur, sa, "Int");
   steps := Concat(steps, sa[1]);
   sb := SI'Diff(b, v);
-  cur := SD'Merge(cur, sb, "Int")[2];
+  cur := SD'Advance(cur, sb, "Int");
   steps := Concat(steps, sb[1]);
   {steps, cur};
 ];
@@ -361,7 +374,7 @@ SI'PartFrac(integrand, p, q, v) :=
   steps := {{"constant-multiple-rule", "p", c * f, c * Int(f)}};
   cur := c * Int(f);
   sf := SI'Diff(f, v);
-  cur := SD'Merge(cur, sf, "Int")[2];
+  cur := SD'Advance(cur, sf, "Int");
   steps := Concat(steps, sf[1]);
   {steps, cur};
 ];
@@ -377,7 +390,7 @@ SI'PartFrac(integrand, p, q, v) :=
   steps := {{"constant-multiple-rule", "p", -f, -Int(f)}};
   cur := -Int(f);
   sf := SI'Diff(f, v);
-  cur := SD'Merge(cur, sf, "Int")[2];
+  cur := SD'Advance(cur, sf, "Int");
   steps := Concat(steps, sf[1]);
   {steps, cur};
 ];
@@ -425,7 +438,7 @@ SI'SinPow(n, u) :=
              -(Sin(u) ^ (n - 1) * Cos(u)) / n + ((n - 1) / n) * Int(Sin(u) ^ (n - 2))}};
   cur := -(Sin(u) ^ (n - 1) * Cos(u)) / n + ((n - 1) / n) * Int(Sin(u) ^ (n - 2));
   sf := SI'Diff(Sin(u) ^ (n - 2), u);
-  cur := SD'Merge(cur, sf, "Int")[2];
+  cur := SD'Advance(cur, sf, "Int");
   steps := Concat(steps, sf[1]);
   {steps, cur};
 ];
@@ -437,7 +450,7 @@ SI'CosPow(n, u) :=
              (Cos(u) ^ (n - 1) * Sin(u)) / n + ((n - 1) / n) * Int(Cos(u) ^ (n - 2))}};
   cur := (Cos(u) ^ (n - 1) * Sin(u)) / n + ((n - 1) / n) * Int(Cos(u) ^ (n - 2));
   sf := SI'Diff(Cos(u) ^ (n - 2), u);
-  cur := SD'Merge(cur, sf, "Int")[2];
+  cur := SD'Advance(cur, sf, "Int");
   steps := Concat(steps, sf[1]);
   {steps, cur};
 ];
@@ -461,7 +474,7 @@ SI'TanPow(n, u) :=
              Tan(u) ^ (n - 1) / (n - 1) - Int(Tan(u) ^ (n - 2))}};
   cur := Tan(u) ^ (n - 1) / (n - 1) - Int(Tan(u) ^ (n - 2));
   sf := SI'Diff(Tan(u) ^ (n - 2), u);
-  cur := SD'Merge(cur, sf, "Int")[2];
+  cur := SD'Advance(cur, sf, "Int");
   steps := Concat(steps, sf[1]);
   {steps, cur};
 ];
@@ -475,7 +488,7 @@ SI'SecPow(n, u) :=
   cur := (1 / Cos(u)) ^ (n - 2) * Tan(u) / (n - 1)
            + ((n - 2) / (n - 1)) * Int((1 / Cos(u)) ^ (n - 2));
   sf := SI'Diff((1 / Cos(u)) ^ (n - 2), u);
-  cur := SD'Merge(cur, sf, "Int")[2];
+  cur := SD'Advance(cur, sf, "Int");
   steps := Concat(steps, sf[1]);
   {steps, cur};
 ];
@@ -520,7 +533,7 @@ SI'Parts(integrand, u, dvf, vval, var) :=
   cur := u * vval - Int(vval * du);
   /* 残差先 Tidy,便于下一步规则匹配 */
   sub := SI'Diff(Tidy(vval * du), var);
-  cur := SD'Merge(cur, sub, "Int")[2];
+  cur := SD'Advance(cur, sub, "Int");
   steps := Concat(steps, sub[1]);
   {steps, cur};
 ];
@@ -642,7 +655,7 @@ SI'Parts(integrand, u, dvf, vval, var) :=
   steps := {{"constant-multiple-rule", "p", f / c, Int(f) / c}};
   cur := Int(f) / c;
   sf := SI'Diff(f, v);
-  cur := SD'Merge(cur, sf, "Int")[2];
+  cur := SD'Advance(cur, sf, "Int");
   steps := Concat(steps, sf[1]);
   {steps, cur};
 ];
