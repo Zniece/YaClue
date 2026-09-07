@@ -225,6 +225,15 @@ pub trait Engine {
     /// 执行一条 Yacas 命令,返回结构化结果 + TeXForm
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError>;
 
+    /// 在同一宿主请求中依次求值表达式并生成 TeX。实现可覆盖此方法，
+    /// 以复用解析器、Environment、截止时间和线程往返。
+    fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
+        expressions
+            .iter()
+            .map(|expression| self.eval(expression).map(|result| result.tex))
+            .collect()
+    }
+
     /// 追踪信息:命中的规则列表(供步骤层使用);未实现时返回空
     #[allow(dead_code)] // 步骤层接口,暂未消费
     fn trace(&mut self, _command: &str) -> Result<Vec<String>, EngineError> {
@@ -562,12 +571,7 @@ impl RustEngine {
             let tex_value = tex_form_value(&mut self.env, &result)
                 .map_err(|e| self.eval_error(e, "TeXForm 失败"))?;
             let printed = yacas_rs::printer::infix_print(&self.env, &tex_value);
-            let tex = printed.trim();
-            let tex = tex
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .unwrap_or(tex)
-                .to_string();
+            let tex = unquote_printed(&printed);
             Ok(EvalResult { expr, tex })
         })();
         // The evaluator samples its clock; also check short requests and time
@@ -576,6 +580,34 @@ impl RustEngine {
         self.env.set_eval_timeout(None);
         if response.is_ok() && expired {
             Err(EngineError::Timeout("求值或 TeX 生成超过时限".into()))
+        } else {
+            response
+        }
+    }
+
+    fn render_tex_batch_with_timeout(
+        &mut self,
+        expressions: &[String],
+        timeout: Duration,
+    ) -> Result<Vec<String>, EngineError> {
+        self.env.set_eval_timeout(Some(timeout));
+        let response: Result<Vec<String>, EngineError> = expressions
+            .iter()
+            .map(|expression| {
+                let result = eval_cmd(&mut self.env, expression)
+                    .map_err(|error| self.eval_error(error, "批量求值失败"))?;
+                let tex_value = tex_form_value(&mut self.env, &result)
+                    .map_err(|error| self.eval_error(error, "批量 TeXForm 失败"))?;
+                Ok(unquote_printed(&yacas_rs::printer::infix_print(
+                    &self.env,
+                    &tex_value,
+                )))
+            })
+            .collect();
+        let expired = self.deadline_expired();
+        self.env.set_eval_timeout(None);
+        if response.is_ok() && expired {
+            Err(EngineError::Timeout("批量求值或 TeX 生成超过时限".into()))
         } else {
             response
         }
@@ -596,6 +628,15 @@ impl RustEngine {
             EngineError::Eval(format!("{stage}: {error:?}"))
         }
     }
+}
+
+fn unquote_printed(printed: &str) -> String {
+    let printed = printed.trim();
+    printed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(printed)
+        .to_string()
 }
 
 fn tex_form_value(
@@ -621,15 +662,29 @@ impl Engine for RustEngine {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
         self.eval_with_timeout(command, RUST_EVAL_TIMEOUT)
     }
+
+    fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
+        self.render_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
+    }
 }
 
 /// RustEngine 的线程代理:`Environment` 内含 Rc/RefCell(非 Send),不能直接放进
-/// Tauri 的 State<Mutex<>>。专职引擎线程独占 Environment,对外只收发 String/
-/// EvalResult(均 Send),互斥由通道天然串行化 —— 架构与 ReplEngine 的子进程
+/// Tauri 的 State<Mutex<>>。专职引擎线程独占 Environment,对外只收发可 Send 的
+/// 请求/响应枚举,互斥由通道天然串行化 —— 架构与 ReplEngine 的子进程
 /// +通道模式对齐,GUI 侧零感知。
+enum EngineRequest {
+    Eval(String),
+    RenderTex(Vec<String>),
+}
+
+enum EngineResponse {
+    Eval(Result<EvalResult, EngineError>),
+    RenderTex(Result<Vec<String>, EngineError>),
+}
+
 pub struct RustEngineProxy {
-    tx: Option<mpsc::Sender<String>>,
-    rx: mpsc::Receiver<Result<EvalResult, EngineError>>,
+    tx: Option<mpsc::Sender<EngineRequest>>,
+    rx: mpsc::Receiver<EngineResponse>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
@@ -641,7 +696,7 @@ impl RustEngineProxy {
     fn spawn_with_initializer(
         initialize: impl FnOnce() -> Result<RustEngine, EngineError> + Send + 'static,
     ) -> Result<Self, EngineError> {
-        let (tx, cmd_rx) = mpsc::channel::<String>();
+        let (tx, cmd_rx) = mpsc::channel::<EngineRequest>();
         let (res_tx, rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
         let handle = thread::Builder::new()
@@ -657,8 +712,14 @@ impl RustEngineProxy {
                 if ready_tx.send(Ok(())).is_err() {
                     return;
                 }
-                for command in cmd_rx {
-                    if res_tx.send(engine.eval(&command)).is_err() {
+                for request in cmd_rx {
+                    let response = match request {
+                        EngineRequest::Eval(command) => EngineResponse::Eval(engine.eval(&command)),
+                        EngineRequest::RenderTex(expressions) => {
+                            EngineResponse::RenderTex(engine.render_tex_batch(&expressions))
+                        }
+                    };
+                    if res_tx.send(response).is_err() {
                         break;
                     }
                 }
@@ -693,11 +754,22 @@ impl Drop for RustEngineProxy {
 impl Engine for RustEngineProxy {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
         let tx = self.tx.as_ref().ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
-        tx.send(command.to_string())
+        tx.send(EngineRequest::Eval(command.to_string()))
             .map_err(|e| EngineError::Io(e.to_string()))?;
-        self.rx
-            .recv()
-            .map_err(|e| EngineError::Io(e.to_string()))?
+        match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
+            EngineResponse::Eval(result) => result,
+            EngineResponse::RenderTex(_) => Err(EngineError::Io("引擎响应类型不匹配".into())),
+        }
+    }
+
+    fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
+        let tx = self.tx.as_ref().ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
+        tx.send(EngineRequest::RenderTex(expressions.to_vec()))
+            .map_err(|e| EngineError::Io(e.to_string()))?;
+        match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
+            EngineResponse::RenderTex(result) => result,
+            EngineResponse::Eval(_) => Err(EngineError::Io("引擎响应类型不匹配".into())),
+        }
     }
 }
 
@@ -736,6 +808,26 @@ mod tests {
         assert!(held.tex.contains("reviewCounter"));
         assert_eq!(engine.eval("reviewCounter").unwrap().expr.to_string(), "1");
         assert!(engine.env.eval_deadline.is_none());
+    }
+
+    #[test]
+    fn rust_batch_tex_matches_individual_evaluation() {
+        let expressions = vec!["3*2*x".to_string(), "Sin(-4*x)".to_string()];
+        let mut individual = RustEngine::spawn().unwrap();
+        let expected: Vec<_> = expressions
+            .iter()
+            .map(|expression| individual.eval(expression).unwrap().tex)
+            .collect();
+
+        let mut batched = RustEngine::spawn().unwrap();
+        assert_eq!(batched.render_tex_batch(&expressions).unwrap(), expected);
+        assert!(batched.env.eval_deadline.is_none());
+        assert!(matches!(
+            batched.render_tex_batch(&["Sin(".into()]),
+            Err(EngineError::Eval(_))
+        ));
+        assert!(batched.env.eval_deadline.is_none());
+        assert_eq!(batched.eval("2+3").unwrap().tex, "$5$");
     }
 
     #[test]
@@ -805,6 +897,12 @@ mod tests {
             for command in ["1+1", "2"] {
                 assert_eq!(engine.eval(command).unwrap().tex, "$2$");
             }
+            assert_eq!(
+                engine
+                    .render_tex_batch(&["2+3".into(), "Sin(x)".into()])
+                    .unwrap(),
+                vec!["$5$", "$\\sin x$"]
+            );
             drop(engine);
         });
     }

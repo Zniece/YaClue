@@ -69,7 +69,7 @@ fn steps_from_command(
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
     let r = engine.eval(command)?;
-    let mut steps = Vec::new();
+    let mut candidates = Vec::new();
 
     if let Expr::Call { head, args } = &r.expr {
         if head == "List" {
@@ -102,28 +102,36 @@ fn steps_from_command(
                         if !keep {
                             continue;
                         }
-                        let tex = engine
-                            .eval(&expr_str)
-                            .map(|result| strip_dollars(&result.tex))
-                            .unwrap_or_else(|_| expr_str.clone());
-                        steps.push(Step {
-                            rule,
-                            expr: expr_str,
-                            why,
-                            tex,
-                            importance,
-                        });
+                        candidates.push((rule, expr_str, why, importance));
                     }
                 }
             }
         }
     }
-    if steps.is_empty() {
+    if candidates.is_empty() {
         return Err(EngineError::Eval(format!(
             "未能生成步骤(表达式可能不受支持): {command}"
         )));
     }
-    Ok(steps)
+    let expressions: Vec<_> = candidates
+        .iter()
+        .map(|(_, expression, _, _)| expression.clone())
+        .collect();
+    let tex = engine.render_tex_batch(&expressions)?;
+    if tex.len() != candidates.len() {
+        return Err(EngineError::Parse("批量 TeX 结果数量与步骤数量不一致".into()));
+    }
+    Ok(candidates
+        .into_iter()
+        .zip(tex)
+        .map(|((rule, expr, why, importance), tex)| Step {
+            rule,
+            expr,
+            why,
+            tex: strip_dollars(&tex),
+            importance,
+        })
+        .collect())
 }
 
 /// 对 `expr` 关于 `var` 生成分步求导过程
@@ -303,19 +311,29 @@ mod tests {
 
     struct CountingEngine {
         inner: RustEngine,
-        calls: usize,
+        eval_calls: usize,
+        batch_sizes: Vec<usize>,
     }
 
     impl Engine for CountingEngine {
         fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
-            self.calls += 1;
+            self.eval_calls += 1;
             self.inner.eval(command)
+        }
+
+        fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
+            self.batch_sizes.push(expressions.len());
+            self.inner.render_tex_batch(expressions)
         }
     }
 
     #[test]
     fn verbosity_filters_before_rendering_visible_steps() {
-        let mut engine = CountingEngine { inner: RustEngine::spawn().unwrap(), calls: 0 };
+        let mut engine = CountingEngine {
+            inner: RustEngine::spawn().unwrap(),
+            eval_calls: 0,
+            batch_sizes: Vec::new(),
+        };
         let detailed = derive_steps_with_verbosity(
             &mut engine,
             "x^2",
@@ -323,7 +341,6 @@ mod tests {
             StepVerbosity::Detailed,
         )
         .unwrap();
-        let detailed_calls = engine.calls;
         assert!(detailed.iter().all(|step| !step.tex.is_empty()));
 
         let standard = derive_steps_with_verbosity(
@@ -333,7 +350,6 @@ mod tests {
             StepVerbosity::Standard,
         )
         .unwrap();
-        let standard_calls = engine.calls - detailed_calls;
         let concise = derive_steps_with_verbosity(
             &mut engine,
             "x^2",
@@ -341,14 +357,14 @@ mod tests {
             StepVerbosity::Concise,
         )
         .unwrap();
-        let concise_calls = engine.calls - detailed_calls - standard_calls;
         assert!(
             detailed.len() > standard.len(),
             "detailed={} standard={} concise={}",
             detailed.len(), standard.len(), concise.len()
         );
         assert!(standard.len() > concise.len());
-        assert!(detailed_calls > standard_calls && standard_calls > concise_calls);
+        assert_eq!(engine.eval_calls, 3, "each derivation evaluates its step chain once");
+        assert_eq!(engine.batch_sizes, vec![detailed.len(), standard.len(), concise.len()]);
         assert_eq!(detailed.last().unwrap().expr, concise.last().unwrap().expr);
     }
 
