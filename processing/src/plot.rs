@@ -80,20 +80,11 @@ pub fn sample(
     let xs: Vec<f64> = (0..=n).map(|i| a + dx * i as f64).collect();
     let ys = eval_batched(engine, func, var, &xs, options.batch)?;
 
-    // Refine each base interval by curvature, depth-first.
-    let cfg = RefineCfg { func, var, eps: options.eps, batch: options.batch };
-    let mut pts: Vec<(f64, f64)> = xs.into_iter().zip(ys).collect();
-    for i in (0..n).rev() {
-        // `pts` grows as we splice; track the current segment end offset so
-        // indices stay valid while refining left-to-right... we refine in
-        // reverse insertion order to keep earlier indices stable.
-        let seg = refine_interval(engine, &cfg, pts[i], pts[i + 1], options.max_depth)?;
-        let middle = &seg[1..seg.len() - 1];
-        let at = i + 1;
-        for (k, p) in middle.iter().enumerate() {
-            pts.insert(at + k, *p);
-        }
-    }
+    // Refine all intervals at the same depth together. Midpoints are evaluated
+    // in batches, avoiding hundreds of interpreter round trips on wide ranges.
+    let base: Vec<(f64, f64)> = xs.into_iter().zip(ys).collect();
+    let intervals: Vec<_> = base.windows(2).map(|pair| (pair[0], pair[1])).collect();
+    let pts = refine_intervals(engine, func, var, intervals, options)?;
 
     // Breaks: a break after point i when i or i+1 is non-finite, or when the
     // x jump is not consistent with a continuous curve sample (defensive).
@@ -110,50 +101,54 @@ pub fn sample(
     Ok(SampledPlot { points, breaks })
 }
 
-/// Refinement parameters that stay invariant during recursion, packed to
-/// keep the recursive signature lean.
-struct RefineCfg<'a> {
-    func: &'a str,
-    var: &'a str,
-    eps: f64,
-    batch: usize,
-}
+type Interval = ((f64, f64), (f64, f64));
 
-/// Refine one interval recursively: split at the midpoint when the midpoint
-/// value deviates from the endpoint interpolation by more than
-/// `eps * local_scale` (scale = largest |y| among the three, floored at 1 to
-/// keep the criterion relative but stable near zero).
-fn refine_interval(
+fn refine_intervals(
     engine: &mut dyn Engine,
-    cfg: &RefineCfg,
-    left: (f64, f64),
-    right: (f64, f64),
-    depth: u32,
+    func: &str,
+    var: &str,
+    mut active: Vec<Interval>,
+    options: &SampleOptions,
 ) -> Result<Vec<(f64, f64)>, crate::engine::EngineError> {
-    if depth == 0 {
-        return Ok(vec![left, right]);
+    let mut leaves = Vec::new();
+    for _ in 0..options.max_depth {
+        if active.is_empty() {
+            break;
+        }
+        let midpoints: Vec<_> = active
+            .iter()
+            .map(|(left, right)| (left.0 + right.0) / 2.0)
+            .collect();
+        let values = eval_batched(engine, func, var, &midpoints, options.batch)?;
+        let mut next = Vec::new();
+        for (((left, right), x), y) in active
+            .into_iter()
+            .zip(midpoints)
+            .zip(values)
+        {
+            let middle = (x, y);
+            let interpolation = (left.1 + right.1) / 2.0;
+            let scale = left.1.abs().max(right.1.abs()).max(y.abs()).max(1.0);
+            if y.is_finite() && (y - interpolation).abs() > options.eps * scale {
+                next.push((left, middle));
+                next.push((middle, right));
+            } else if y.is_finite() {
+                leaves.push((left, right));
+            } else {
+                leaves.push((left, middle));
+                leaves.push((middle, right));
+            }
+        }
+        active = next;
     }
-    let xm = (left.0 + right.0) / 2.0;
-    let ym = eval_batched(engine, cfg.func, cfg.var, &[xm], cfg.batch)?
-        .into_iter()
-        .next()
-        .unwrap_or(f64::NAN);
-    if !ym.is_finite() {
-        // Non-finite midpoint: stop refining; the break logic handles it.
-        return Ok(vec![left, (xm, ym), right]);
-    }
-    let interp = (left.1 + right.1) / 2.0;
-    let scale = left.1.abs().max(right.1.abs()).max(ym.abs()).max(1.0);
-    if (ym - interp).abs() > cfg.eps * scale {
-        let l = refine_interval(engine, cfg, left, (xm, ym), depth - 1)?;
-        let r = refine_interval(engine, cfg, (xm, ym), right, depth - 1)?;
-        // l ends with (xm, ym), r starts with it — join without duplication.
-        let mut out = l;
-        out.extend(r.into_iter().skip(1));
-        Ok(out)
-    } else {
-        Ok(vec![left, right])
-    }
+    leaves.extend(active);
+    leaves.sort_by(|a, b| a.0.0.total_cmp(&b.0.0));
+    let Some(first) = leaves.first() else {
+        return Ok(Vec::new());
+    };
+    let mut points = vec![first.0];
+    points.extend(leaves.into_iter().map(|interval| interval.1));
+    Ok(points)
 }
 
 /// Evaluate `func(var = v)` for every v in `xs`, in chunks of `batch`:
@@ -231,6 +226,26 @@ mod tests {
         let mid = plot.points.iter().find(|p| (p.x - 1.5).abs() < 0.1).expect("mid point");
         assert!((mid.y - 1.5f64.sin()).abs() < 1e-2);
         assert!(plot.breaks.is_empty(), "Sin is finite everywhere");
+    }
+
+    #[test]
+    #[allow(clippy::approx_constant)]
+    fn samples_sine_over_playground_default_range() {
+        let plot = sample_default("Sin(x)", (-6.28, 6.28));
+        assert!(plot.points.len() >= 65);
+        assert!(plot.breaks.is_empty());
+        assert!(plot.points.windows(2).all(|pair| pair[0].x < pair[1].x));
+    }
+
+    #[test]
+    fn evaluates_negative_trigonometric_samples() {
+        let mut engine = RustEngine::spawn().expect("boot");
+        for function in ["Sin", "Cos", "Tan"] {
+            let value = engine
+                .eval(&format!("N({function}(-0.58875))"))
+                .expect("negative trigonometric sample");
+            assert!(value.expr.to_string().parse::<f64>().unwrap().is_finite());
+        }
     }
 
     #[test]

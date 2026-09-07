@@ -23,18 +23,33 @@ HoldArg("TruncRadian",r);
 
 SinNum(x) :=
 [
-  If(x<0 Or 113*x>710, x:=TruncRadian(x));	// 710/113 is close to 2*Pi
-  MathSin(x);
+  If(x<0,
+    -MathSin(-x),
+    [
+      If(113*x>710, x:=TruncRadian(x));	// 710/113 is close to 2*Pi
+      MathSin(x);
+    ]
+  );
 ];
 CosNum(x) :=
 [
-  If(x<0 Or 113*x>710, x:=TruncRadian(x));
-  MathCos(x);
+  If(x<0,
+    MathCos(-x),
+    [
+      If(113*x>710, x:=TruncRadian(x));
+      MathCos(x);
+    ]
+  );
 ];
 TanNum(x) :=
 [
-  If(x<0 Or 113*x>710, x:=TruncRadian(x));
-  MathTan(x);
+  If(x<0,
+    -MathTan(-x),
+    [
+      If(113*x>710, x:=TruncRadian(x));
+      MathTan(x);
+    ]
+  );
 ];
 
 ArcSinNum(x) :=
