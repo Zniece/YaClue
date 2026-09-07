@@ -14,6 +14,7 @@
 
 use std::rc::Rc;
 
+use crate::assumptions::Assumption;
 use crate::env::Environment;
 use crate::errors::YacasError;
 use crate::evaluator::eval;
@@ -1732,6 +1733,43 @@ pub fn cmd_is_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
         None => false,
     };
     Ok(crate::standard::internal_boolean(env, is_int))
+}
+
+/// Add/query/clear environment-local assumptions. Arguments are held atoms so
+/// assumptions do not depend on a symbol's current assigned value.
+pub fn cmd_assume(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+    if arity_of(inner) != 2 {
+        return Err(YacasError::WrongNumberOfArgs);
+    }
+    let symbol = arg(inner, 0)?.atom_string().ok_or(YacasError::InvalidArg)?;
+    let fact_name = arg(inner, 1)?.atom_string().ok_or(YacasError::InvalidArg)?;
+    let fact = Assumption::parse(fact_name).ok_or(YacasError::InvalidArg)?;
+    env.assume(symbol, fact).map_err(|_| YacasError::InvalidArg)?;
+    Ok(env.true_atom())
+}
+
+pub fn cmd_is_assumed(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+    if arity_of(inner) != 2 {
+        return Err(YacasError::WrongNumberOfArgs);
+    }
+    let symbol = arg(inner, 0)?.atom_string().ok_or(YacasError::InvalidArg)?;
+    let fact_name = arg(inner, 1)?.atom_string().ok_or(YacasError::InvalidArg)?;
+    let fact = Assumption::parse(fact_name).ok_or(YacasError::InvalidArg)?;
+    Ok(crate::standard::internal_boolean(
+        env,
+        env.is_assumed(symbol, fact),
+    ))
+}
+
+pub fn cmd_clear_assumptions(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
+    if arity_of(inner) != 0 {
+        return Err(YacasError::WrongNumberOfArgs);
+    }
+    env.clear_assumptions();
+    Ok(env.true_atom())
 }
 
 /// IsList — true when the value is a sublist whose head is List
@@ -3878,6 +3916,9 @@ pub fn register_core_commands(env: &mut Environment) {
     add(env, "IsPositiveInteger", cmd_is_positive_integer);
     add(env, "IsNonPositiveInteger", cmd_is_non_positive_integer);
     add(env, "IsNegativeInteger", cmd_is_negative_integer);
+    add(env, "Assume", cmd_assume);
+    add(env, "IsAssumed", cmd_is_assumed);
+    add(env, "ClearAssumptions", cmd_clear_assumptions);
     add(env, "IsList", cmd_is_list);
     add(env, "IsString", cmd_is_string);
     add(env, "Insert", cmd_insert);

@@ -7,6 +7,7 @@
 //! Value nodes are copied independently with shared immutable substructure.
 //! The numeric layer uses a decimal mantissa/exponent representation.
 
+pub mod assumptions;
 pub mod commands;
 pub mod containers;
 pub mod env;

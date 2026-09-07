@@ -48,6 +48,8 @@ pub struct LocalFrame {
 /// The evaluation environment.
 #[derive(Default)]
 pub struct Environment {
+    /// Facts about symbolic variables used by assumption-aware predicates.
+    pub(crate) assumptions: crate::assumptions::AssumptionContext,
     pub symtab: SymbolTable,
     pub prefix: OperatorTable,
     pub infix: OperatorTable,
@@ -210,6 +212,22 @@ impl Environment {
     pub fn set_eval_timeout(&mut self, dur: Option<std::time::Duration>) {
         self.eval_deadline = dur.map(|d| std::time::Instant::now() + d);
         self.eval_ops = 0;
+    }
+
+    pub fn assume(
+        &mut self,
+        symbol: &str,
+        fact: crate::assumptions::Assumption,
+    ) -> Result<(), crate::assumptions::AssumptionError> {
+        self.assumptions.assume(symbol, fact)
+    }
+
+    pub fn is_assumed(&self, symbol: &str, fact: crate::assumptions::Assumption) -> bool {
+        self.assumptions.is_assumed(symbol, fact)
+    }
+
+    pub fn clear_assumptions(&mut self) {
+        self.assumptions.clear();
     }
 
     pub fn precision(&self) -> u32 {
