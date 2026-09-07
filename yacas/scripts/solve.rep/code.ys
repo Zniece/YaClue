@@ -19,6 +19,24 @@
  * 110. Give up.
  */
 
+/* Assumption-aware scalar entry point. Keep Solve's historical return shape
+ * for existing script callers, and attach the non-zero coefficient actually
+ * used by a parameterized linear branch for structured API consumers. */
+LocalSymbols(coefficient) [
+  10 # SolveConditional(_lhs == _rhs, _var) <-- SolveConditional(lhs - rhs, var);
+  20 # SolveConditional(_expr, _var)_
+  (If(CanBeUni(var, expr),
+      If(Degree(expr, var) = 1, [
+          coefficient := Coef(expr, var, 1);
+          If(Not IsNumber(coefficient),
+             ApplyPure("IsKnownNonZero", {coefficient}),
+             False);
+        ], False),
+      False))
+  <-- ConditionalValue(Solve(expr, var), ConditionProperty(coefficient, NonZero));
+  100 # SolveConditional(_expr, _var) <-- Solve(expr, var);
+];
+
 LocalSymbols(res)
 [
    5  # Solve(expr_IsList, var_IsList)_(Length(expr) = 1 And Length(var) = 1 And IsAtom(Head(var))) <-- {Solve(Head(expr), Head(var))};
@@ -777,5 +795,3 @@ Function("Newton",{function,variable,initial,accuracy,min,max})
   if (result <= min Or result >= max) [result := Fail;];
   result;
 ];
-
-

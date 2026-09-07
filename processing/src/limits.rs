@@ -1,5 +1,9 @@
 //! Structured API for finite, infinite, and one-sided limits.
 
+use crate::conditions::unpack_conditional;
+#[cfg(test)]
+use crate::conditions::parse_condition;
+pub use crate::conditions::{Condition as LimitCondition, Relation};
 use crate::engine::{Engine, EngineError, Expr};
 use serde::Serialize;
 
@@ -19,34 +23,6 @@ pub enum LimitStatus {
     NegativeInfinity,
     DoesNotExist,
     Unresolved,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Relation {
-    Equal,
-    GreaterThan,
-    LessThan,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum LimitCondition {
-    Property {
-        expression: String,
-        fact: String,
-    },
-    Relation {
-        left: String,
-        relation: Relation,
-        right: String,
-    },
-    All {
-        conditions: Vec<LimitCondition>,
-    },
-    Any {
-        conditions: Vec<LimitCondition>,
-    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,67 +72,6 @@ pub fn limit(
         direction,
         conditions,
     })
-}
-
-fn unpack_conditional(expr: Expr) -> Result<(Expr, Vec<LimitCondition>), EngineError> {
-    let Expr::Call { head, mut args } = expr else {
-        return Ok((expr, vec![]));
-    };
-    if head != "ConditionalValue" || args.len() != 2 {
-        return Ok((Expr::Call { head, args }, vec![]));
-    }
-    let condition_expr = args.pop().unwrap();
-    let value = args.pop().unwrap();
-    let conditions = vec![parse_condition(&condition_expr)?];
-    Ok((value, conditions))
-}
-
-fn parse_condition(expr: &Expr) -> Result<LimitCondition, EngineError> {
-    match expr {
-        Expr::Call { head, args }
-            if [
-                "=",
-                "==",
-                ">",
-                "<",
-                "ConditionEqual",
-                "ConditionGreater",
-                "ConditionLess",
-            ]
-            .contains(&head.as_str())
-                && args.len() == 2 =>
-        {
-            let relation = match head.as_str() {
-                "=" | "==" | "ConditionEqual" => Relation::Equal,
-                ">" | "ConditionGreater" => Relation::GreaterThan,
-                "<" | "ConditionLess" => Relation::LessThan,
-                _ => unreachable!(),
-            };
-            Ok(LimitCondition::Relation {
-                left: args[0].to_string(),
-                relation,
-                right: args[1].to_string(),
-            })
-        }
-        Expr::Call { head, args } if head == "ConditionProperty" && args.len() == 2 => {
-            Ok(LimitCondition::Property {
-                expression: args[0].to_string(),
-                fact: args[1].to_string(),
-            })
-        }
-        Expr::Call { head, args } if (head == "ConditionAnd" || head == "ConditionOr") => {
-            let conditions = args
-                .iter()
-                .map(parse_condition)
-                .collect::<Result<Vec<_>, _>>()?;
-            if head == "ConditionAnd" {
-                Ok(LimitCondition::All { conditions })
-            } else {
-                Ok(LimitCondition::Any { conditions })
-            }
-        }
-        other => Err(EngineError::Parse(format!("无法识别的极限条件: {other}"))),
-    }
 }
 
 fn classify(expr: &Expr, value: &str) -> LimitStatus {
