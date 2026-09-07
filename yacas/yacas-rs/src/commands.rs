@@ -3248,6 +3248,9 @@ fn cmd_shift(env: &mut Environment, inner: &Rc<LispObject>, left: bool) -> Resul
     if k < 0 {
         return Err(YacasError::InvalidArg);
     }
+    if left && k as u64 > crate::number::limits::MAX_BINARY_WORK_BITS {
+        return Err(YacasError::NumericOverflow);
+    }
     let text = integer_text(&a)?;
     if let Ok(small) = text.trim().parse::<i64>() {
         if left {
@@ -3268,10 +3271,10 @@ fn cmd_shift(env: &mut Environment, inner: &Rc<LispObject>, left: bool) -> Resul
         }
     }
     let mut value = SignedNat::parse(&text)?;
-    let k = u32::try_from(k).map_err(|_| YacasError::InvalidArg)?;
-    if !left && u64::from(k) >= value.magnitude.bit_len() {
+    if !left && k as u64 >= value.magnitude.bit_len() {
         return Ok(num_text("0".to_string()));
     }
+    let k = u32::try_from(k).map_err(|_| YacasError::NumericOverflow)?;
     let factor = crate::number::nat::Nat::from_decimal("2").expect("2").pow(k);
     value.magnitude = if left {
         value.magnitude.mul(&factor)
@@ -3417,9 +3420,15 @@ pub fn cmd_math_fac(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
     if n < 0 {
         return Err(YacasError::InvalidArg);
     }
+    if n > crate::number::limits::MAX_FACTORIAL_ARGUMENT {
+        return Err(YacasError::NumericOverflow);
+    }
     let mut acc = crate::number::nat::Nat::from_decimal("1").expect("1");
     let mut k: i64 = 2;
     while k <= n {
+        if k & 0xff == 0 {
+            env.check_eval_deadline()?;
+        }
         let kk = crate::number::nat::Nat::from_decimal(&k.to_string()).expect("k");
         acc = acc.mul(&kk);
         k += 1;
@@ -3697,6 +3706,9 @@ fn cmd_fast_power(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
     }
     let (x, fl) = arg_float_flag(env, inner, 0)?;
     let n = int_text_of(&eval(env, arg(inner, 1)?)?)?;
+    if n.unsigned_abs() > crate::number::limits::MAX_BINARY_WORK_BITS {
+        return Err(YacasError::NumericOverflow);
+    }
     let one = crate::number::float::Float::from_decimal("1").expect("1");
     let zero = crate::number::float::Float::from_decimal("0").expect("0");
     // Negative exponent: like upstream MathIntPower = MathDivide(1,
@@ -3711,8 +3723,10 @@ fn cmd_fast_power(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
         if k & 1 == 1 {
             acc = acc.mul(&b, env.precision);
         }
-        b = b.mul(&b, env.precision);
         k >>= 1;
+        if k > 0 {
+            b = b.mul(&b, env.precision);
+        }
     }
     Ok(num_of_flag(acc, fl))
 }

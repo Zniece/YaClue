@@ -215,6 +215,15 @@ impl Environment {
         self.eval_ops = 0;
     }
 
+    /// Check the current evaluation deadline from long-running core loops.
+    pub(crate) fn check_eval_deadline(&self) -> Result<(), crate::errors::YacasError> {
+        if self.eval_deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            Err(crate::errors::YacasError::UserInterrupt)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn assume(
         &mut self,
         symbol: &str,

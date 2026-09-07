@@ -111,6 +111,27 @@ fn oversized_precision_is_rejected_without_wrapping_or_poisoning_engine() {
 }
 
 #[test]
+fn explosive_exact_operations_are_bounded_and_interruptible() {
+    let mut env = Environment::new();
+    boot(&mut env);
+    for source in [
+        "MathFac(25206)",
+        "ShiftLeft(1, 332194)",
+        "FastPower(2, 332194)",
+        "FastPower(2, -332194)",
+    ] {
+        assert!(matches!(run_error(&mut env, source), YacasError::NumericOverflow));
+        assert_eq!(run(&mut env, "2+2"), "4");
+    }
+    assert_eq!(run(&mut env, "ShiftRight(18446744073709551616, 4294967296)"), "0");
+
+    env.set_eval_timeout(Some(std::time::Duration::ZERO));
+    assert!(matches!(run_error(&mut env, "MathFac(25205)"), YacasError::UserInterrupt));
+    env.set_eval_timeout(None);
+    assert_eq!(run(&mut env, "2+2"), "4");
+}
+
+#[test]
 #[ignore = "D2: N() does not numerically evaluate a rational passed through a function parameter"]
 fn d2_n_through_parameter() {
     let mut env = Environment::new();

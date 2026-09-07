@@ -8,3 +8,7 @@ pub(crate) const MAX_BINARY_WORK_BITS: u64 = 332_193;
 
 /// Maximum exact binary shift materialized by `MathMul2Exp`.
 pub(crate) const MAX_EXACT_SHIFT_BITS: u64 = 1_000_000;
+
+/// Largest factorial whose decimal representation remains below the
+/// decimal materialization limit (`25205!` has 99,996 digits).
+pub(crate) const MAX_FACTORIAL_ARGUMENT: i64 = 25_205;
