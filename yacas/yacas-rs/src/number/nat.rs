@@ -35,7 +35,7 @@ impl Nat {
             groups.push(s[start..i].parse::<u32>().ok()?);
             i = start;
         }
-        while groups.len() > 1 && groups.last() == Some(&0) {
+        while groups.last() == Some(&0) {
             groups.pop();
         }
         Some(Nat { groups })
@@ -95,7 +95,7 @@ impl Nat {
                 k += 1;
             }
         }
-        while res.len() > 1 && res.last() == Some(&0) {
+        while res.last() == Some(&0) {
             res.pop();
         }
         Nat { groups: res }
@@ -167,16 +167,45 @@ impl Nat {
             }
             a[i] = cur as u32;
         }
-        while a.len() > 1 && a.last() == Some(&0) {
+        while a.last() == Some(&0) {
             a.pop();
         }
         Some(Nat { groups: a })
     }
 
-    /// Decimal long division: returns (quotient, remainder); `None` when the
-    /// denominator is zero. Digit-at-a-time schoolbook division
-    /// (quotient digit 0..9 with trial subtraction), O(n²) — sufficient for
-    /// this layer's scale.
+    fn mul_small(&self, factor: u32) -> Nat {
+        if factor == 0 || self.is_zero() {
+            return Nat::zero();
+        }
+        let mut groups = Vec::with_capacity(self.groups.len() + 1);
+        let mut carry = 0u64;
+        for &group in &self.groups {
+            let value = group as u64 * factor as u64 + carry;
+            groups.push((value % BASE) as u32);
+            carry = value / BASE;
+        }
+        if carry != 0 {
+            groups.push(carry as u32);
+        }
+        Nat { groups }
+    }
+
+    fn div_small(&self, divisor: u32) -> (Nat, u32) {
+        let mut quotient = vec![0u32; self.groups.len()];
+        let mut remainder = 0u64;
+        for i in (0..self.groups.len()).rev() {
+            let value = remainder * BASE + self.groups[i] as u64;
+            quotient[i] = (value / divisor as u64) as u32;
+            remainder = value % divisor as u64;
+        }
+        while quotient.last() == Some(&0) {
+            quotient.pop();
+        }
+        (Nat { groups: quotient }, remainder as u32)
+    }
+
+    /// Normalized long division directly on base-10^9 limbs (Knuth D).
+    /// Returns `(quotient, remainder)`, or `None` for a zero denominator.
     pub fn divrem(&self, den: &Nat) -> Option<(Nat, Nat)> {
         if den.is_zero() {
             return None;
@@ -184,22 +213,82 @@ impl Nat {
         if self.cmp(den) == std::cmp::Ordering::Less {
             return Some((Nat::zero(), self.clone()));
         }
-        let a = self.to_decimal();
-        let mut rem = Nat::zero();
-        let mut q = String::new();
-        for c in a.bytes() {
-            let digit = (c - b'0') as u32;
-            rem = rem.mul_pow10(1).add(&Nat::from_decimal(&digit.to_string()).unwrap());
-            let mut qd = 0u32;
-            while rem.cmp(den) != std::cmp::Ordering::Less {
-                rem = rem.sub(den).unwrap();
-                qd += 1;
-            }
-            q.push(char::from_digit(qd, 10).unwrap());
+        if den.groups.len() == 1 {
+            let (quotient, remainder) = self.div_small(den.groups[0]);
+            return Some((
+                quotient,
+                if remainder == 0 {
+                    Nat::zero()
+                } else {
+                    Nat { groups: vec![remainder] }
+                },
+            ));
         }
-        let qq = q.trim_start_matches('0');
-        let qq = if qq.is_empty() { "0" } else { qq };
-        Some((Nat::from_decimal(qq).unwrap(), rem))
+
+        let n = den.groups.len();
+        let normalization = (BASE / (den.groups[n - 1] as u64 + 1)) as u32;
+        let normalized_den = den.mul_small(normalization);
+        let mut dividend = self.mul_small(normalization).groups;
+        dividend.resize(self.groups.len() + 1, 0);
+        let m = dividend.len() - n - 1;
+        let mut quotient = vec![0u32; m + 1];
+
+        for j in (0..=m).rev() {
+            let top = dividend[j + n] as u64;
+            let next = dividend[j + n - 1] as u64;
+            let numerator = top * BASE + next;
+            let mut estimate = numerator / normalized_den.groups[n - 1] as u64;
+            let mut remainder = numerator % normalized_den.groups[n - 1] as u64;
+            while estimate == BASE
+                || estimate * normalized_den.groups[n - 2] as u64
+                    > BASE * remainder + dividend[j + n - 2] as u64
+            {
+                estimate -= 1;
+                remainder += normalized_den.groups[n - 1] as u64;
+                if remainder >= BASE {
+                    break;
+                }
+            }
+
+            let mut borrow = 0u64;
+            for i in 0..n {
+                let product = estimate * normalized_den.groups[i] as u64 + borrow;
+                let low = product % BASE;
+                borrow = product / BASE;
+                if dividend[j + i] as u64 >= low {
+                    dividend[j + i] = (dividend[j + i] as u64 - low) as u32;
+                } else {
+                    dividend[j + i] = (dividend[j + i] as u64 + BASE - low) as u32;
+                    borrow += 1;
+                }
+            }
+            let underflow = (dividend[j + n] as u64) < borrow;
+            dividend[j + n] = if underflow {
+                (dividend[j + n] as u64 + BASE - borrow) as u32
+            } else {
+                (dividend[j + n] as u64 - borrow) as u32
+            };
+            if underflow {
+                estimate -= 1;
+                let mut carry = 0u64;
+                for i in 0..n {
+                    let sum = dividend[j + i] as u64
+                        + normalized_den.groups[i] as u64
+                        + carry;
+                    dividend[j + i] = (sum % BASE) as u32;
+                    carry = sum / BASE;
+                }
+                dividend[j + n] = ((dividend[j + n] as u64 + carry) % BASE) as u32;
+            }
+            quotient[j] = estimate as u32;
+        }
+
+        while quotient.last() == Some(&0) {
+            quotient.pop();
+        }
+        let normalized_remainder = Nat { groups: dividend[..n].to_vec() };
+        let (remainder, _) = normalized_remainder.div_small(normalization);
+        Some((Nat { groups: quotient }, remainder))
     }
 }
 
@@ -210,26 +299,25 @@ impl fmt::Display for Nat {
 }
 
 impl Nat {
-    /// Exact binary bit length (0 → 0), computed by repeatedly dividing by
-    /// 2^30: `bits(q·2^30 + r) = bits(q) + 30` for `q > 0, r < 2^30`.
+    /// Exact binary bit length (0 → 0). Convert base-10^9 limbs to base-2^32
+    /// words once, then inspect the highest word.
     pub fn bit_len(&self) -> u64 {
-        const TWO_POW_30: u64 = 1 << 30;
-        let mut v = self.clone();
-        let mut bits = 0u64;
-        loop {
-            if v.is_zero() {
-                return bits;
+        let mut words: Vec<u32> = Vec::new();
+        for &group in self.groups.iter().rev() {
+            let mut carry = group as u64;
+            for word in &mut words {
+                let value = *word as u64 * BASE + carry;
+                *word = value as u32;
+                carry = value >> 32;
             }
-            let den = Nat::from_decimal(&TWO_POW_30.to_string()).unwrap();
-            let (q, r) = v.divrem(&den).expect("divisor is nonzero");
-            if q.is_zero() {
-                // Final chunk < 2^30: count its bits directly.
-                let n = r.to_decimal().parse::<u64>().unwrap_or(0);
-                return bits + (64 - n.leading_zeros()) as u64;
+            if carry != 0 {
+                words.push(carry as u32);
             }
-            bits += 30;
-            v = q;
         }
+        words
+            .last()
+            .map(|word| (words.len() as u64 - 1) * 32 + (32 - word.leading_zeros()) as u64)
+            .unwrap_or(0)
     }
 }
 
@@ -317,6 +405,30 @@ mod tests {
     }
 
     #[test]
+    fn divrem_matches_u128_and_large_identity() {
+        let mut state = 0x6a09_e667_f3bc_c908_bb67_ae85_84ca_a73bu128;
+        for _ in 0..5_000 {
+            state = state
+                .wrapping_mul(0x2360_ed05_1fc6_5da4_4385_df64_9fcc_f645u128)
+                .wrapping_add(0x9e37_79b9_7f4a_7c15u128);
+            let dividend = state;
+            state = state.rotate_left(47).wrapping_add(0xda94_2042_e4dd_58b5u128);
+            let divisor = state | 1;
+            let (quotient, remainder) = n(&dividend.to_string())
+                .divrem(&n(&divisor.to_string()))
+                .expect("nonzero divisor");
+            assert_eq!(quotient.to_decimal(), (dividend / divisor).to_string());
+            assert_eq!(remainder.to_decimal(), (dividend % divisor).to_string());
+        }
+
+        let dividend = n(&"1234567890".repeat(200));
+        let divisor = n(&"9876543210".repeat(100));
+        let (quotient, remainder) = dividend.divrem(&divisor).expect("nonzero divisor");
+        assert_eq!(quotient.mul(&divisor).add(&remainder), dividend);
+        assert_eq!(remainder.cmp(&divisor), std::cmp::Ordering::Less);
+    }
+
+    #[test]
     fn bit_len_exact() {
         // Reference computed in u128 (repeated halving).
         fn ref_bits(mut v: u128) -> u64 {
@@ -340,5 +452,6 @@ mod tests {
         assert_eq!(p100.bit_len(), 101);
         let p200 = n("2").pow(200);
         assert_eq!(p200.bit_len(), 201);
+        assert_eq!(Nat::zero(), n("0"));
     }
 }
