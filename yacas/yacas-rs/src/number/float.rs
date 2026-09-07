@@ -314,7 +314,11 @@ impl Float {
         if effective_exp >= 0 {
             return (self.digits.mul_pow10(effective_exp as u32), false);
         }
-        let p10 = Nat::from_decimal("1").unwrap().mul_pow10((-effective_exp) as u32);
+        let need = effective_exp.unsigned_abs();
+        if need >= self.digits.to_decimal().len() as u64 {
+            return (Nat::zero(), !self.digits.is_zero());
+        }
+        let p10 = Nat::from_decimal("1").unwrap().mul_pow10(need as u32);
         match self.digits.divrem(&p10) {
             Some((q, r)) => (q, !r.is_zero()),
             None => (Nat::zero(), !self.digits.is_zero()),
@@ -324,13 +328,29 @@ impl Float {
     /// Bit length of the absolute integer part. This uses the represented
     /// value, including its decimal exponent; inspecting the literal text
     /// before `e` would turn values such as `1e100` into the integer `1`.
-    pub fn integer_bit_len(&self) -> u64 {
-        self.int_frac().0.bit_len()
+    pub fn integer_bit_len(&self) -> Option<u64> {
+        const MAX_INTEGER_EXPANSION: i64 = 100_000;
+        let effective_exp = self.tens_exp - self.scale as i64;
+        if effective_exp > MAX_INTEGER_EXPANSION {
+            return None;
+        }
+        Some(self.int_frac().0.bit_len())
     }
 
     /// Floor (toward −∞): the integer part, minus one more when a negative
     /// value has a fraction.
     pub fn floor(&self) -> Float {
+        const MAX_INTEGER_EXPANSION: i64 = 100_000;
+        if self.tens_exp - self.scale as i64 > MAX_INTEGER_EXPANSION {
+            return Float {
+                neg: self.neg,
+                text: None,
+                digits: self.digits.clone(),
+                scale: self.scale,
+                tens_exp: self.tens_exp,
+                prec: self.prec,
+            };
+        }
         let (q, rnz) = self.int_frac();
         let val = if rnz && self.neg { q.add(&Nat::from_decimal("1").unwrap()) } else { q };
         Float {
@@ -346,6 +366,17 @@ impl Float {
     /// Ceil (toward +∞): the integer part, plus one more when a positive
     /// value has a fraction.
     pub fn ceil(&self) -> Float {
+        const MAX_INTEGER_EXPANSION: i64 = 100_000;
+        if self.tens_exp - self.scale as i64 > MAX_INTEGER_EXPANSION {
+            return Float {
+                neg: self.neg,
+                text: None,
+                digits: self.digits.clone(),
+                scale: self.scale,
+                tens_exp: self.tens_exp,
+                prec: self.prec,
+            };
+        }
         let (q, rnz) = self.int_frac();
         let val = if rnz && !self.neg { q.add(&Nat::from_decimal("1").unwrap()) } else { q };
         Float {
@@ -409,8 +440,9 @@ impl Float {
         let (dq, dr) = self.digits.divrem(&o.digits).expect("div: denominator is nonzero");
         if dr.is_zero() {
             // Quotient value = dq × 10^e, represented as digits × 10^(te−scale).
-            // e ≥ 0 goes into te; e < 0 borrows into scale (te must stay
-            // non-negative).
+            // e ≥ 0 goes into te; ordinary negative exponents borrow into
+            // scale to preserve plain formatting. Values beyond scale's
+            // range retain the negative exponent directly.
             if dq.is_zero() {
                 return Some(Float {
                     digits: dq,
@@ -429,10 +461,10 @@ impl Float {
                 neg: self.neg != o.neg,
                 text: None,
             };
-            if e >= 0 {
+            if e >= 0 || e.unsigned_abs() > u32::MAX as u64 {
                 f.tens_exp = e;
             } else {
-                f.scale = (-e) as u32;
+                f.scale = e.unsigned_abs() as u32;
             }
             f.normalize_down();
             return Some(f);
@@ -472,6 +504,9 @@ impl Float {
         };
         if e_adj >= 0 {
             f.tens_exp = e_adj;
+            f.scale = (k + 1) as u32;
+        } else if k as i64 + 1 - e > u32::MAX as i64 {
+            f.tens_exp = e;
             f.scale = (k + 1) as u32;
         } else {
             // The scale carries the negative exponent (canonical truncates
@@ -514,7 +549,7 @@ impl Float {
         if self.neg != o.neg && !(self.is_zero() && o.is_zero()) {
             return false;
         }
-        e_align(self, o, |a, b| a.cmp(b) == std::cmp::Ordering::Equal)
+        magnitude_cmp(self, o) == std::cmp::Ordering::Equal
     }
 
     /// Numeric less-than.
@@ -525,7 +560,7 @@ impl Float {
         if self.neg != o.neg {
             return self.neg; // the negative side is smaller
         }
-        let lt = e_align(self, o, |a, b| a.cmp(b) == std::cmp::Ordering::Less);
+        let lt = magnitude_cmp(self, o) == std::cmp::Ordering::Less;
         if self.neg {
             !lt && !self.equals(o)
         } else {
@@ -693,15 +728,42 @@ fn div_scaled(num: &Nat, den: &Nat, scale: u32) -> Nat {
     dividend.divrem(den).expect("div: denominator is nonzero").0
 }
 
-/// Compare after exponent alignment: both values convert to the common
-/// minimum exponent, then the predicate applies to the mantissas.
-fn e_align(a: &Float, b: &Float, cmp: impl Fn(&Nat, &Nat) -> bool) -> bool {
-    let ea = a.tens_exp - a.scale as i64;
-    let eb = b.tens_exp - b.scale as i64;
-    let emin = ea.min(eb);
-    let da = a.digits.mul_pow10((ea - emin) as u32);
-    let db = b.digits.mul_pow10((eb - emin) as u32);
-    cmp(&da, &db)
+/// Compare magnitudes from normalized decimal digits and their exponent,
+/// without expanding the exponent gap into stored zeros.
+fn magnitude_cmp(a: &Float, b: &Float) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    if a.digits.is_zero() || b.digits.is_zero() {
+        return match (a.digits.is_zero(), b.digits.is_zero()) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => unreachable!(),
+        };
+    }
+    let a_raw = a.digits.to_decimal();
+    let b_raw = b.digits.to_decimal();
+    let ad = a_raw.trim_end_matches('0');
+    let bd = b_raw.trim_end_matches('0');
+    let ae = a
+        .tens_exp
+        .saturating_sub(a.scale as i64)
+        .saturating_add((a_raw.len() - ad.len()) as i64);
+    let be = b
+        .tens_exp
+        .saturating_sub(b.scale as i64)
+        .saturating_add((b_raw.len() - bd.len()) as i64);
+    let a_lead = ae.saturating_add(ad.len() as i64);
+    let b_lead = be.saturating_add(bd.len() as i64);
+    match a_lead.cmp(&b_lead) {
+        Ordering::Equal => {
+            let width = ad.len().max(bd.len());
+            ad.bytes()
+                .chain(std::iter::repeat(b'0'))
+                .take(width)
+                .cmp(bd.bytes().chain(std::iter::repeat(b'0')).take(width))
+        }
+        ordering => ordering,
+    }
 }
 
 /// Truncating digit drop (no carry-in).
@@ -869,6 +931,19 @@ mod tests {
         assert_eq!(million.format(), "0.1e1000001");
         assert_eq!(million.digits.to_decimal().len(), 1);
 
+        let tiny = f("1.0e-2147483648");
+        assert!(tiny.less_than(&f("1e2147483647")));
+        assert!(!tiny.equals(&f("1e2147483647")));
+
+        let huge_integer = f("1e2147483647")
+            .mul(&f("1e2147483647"), DEFAULT_PREC)
+            .mul(&f("1e2"), DEFAULT_PREC);
+        assert_eq!(huge_integer.floor().format(), "0.1e4294967297");
+        assert_eq!(huge_integer.ceil().format(), "0.1e4294967297");
+        assert!(huge_integer.integer_bit_len().is_none());
+
+        let quotient = tiny.div(&f("1e2147483647"), DEFAULT_PREC).unwrap();
+        assert_eq!(quotient.format(), "0.1e-4294967294");
     }
 
     #[test]

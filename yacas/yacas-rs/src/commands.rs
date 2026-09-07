@@ -3565,7 +3565,7 @@ fn cmd_math_bit_count(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
     // Like upstream LispBitCount(x->BitCount()): bit length of the absolute
     // integer part (2.5 -> 2, 0.5 -> 0, 2^100 -> 101, -5 -> 3). Work from
     // Float's represented value so a decimal exponent is not discarded.
-    let bits = number.float_at(0).integer_bit_len();
+    let bits = number.float_at(0).integer_bit_len().ok_or(YacasError::NumericOverflow)?;
     Ok(int_number(bits as i64))
 }
 
