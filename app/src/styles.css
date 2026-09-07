@@ -11,7 +11,8 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 720px; min-height: 100vh; }
+html, body { max-width: 100%; overflow-x: hidden; }
+body { margin: 0; min-width: 0; min-height: 100vh; }
 button, input, select, textarea { font: inherit; }
 
 header {
@@ -40,7 +41,7 @@ main {
   padding: 0 22px;
 }
 
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 5px 18px rgba(28, 42, 72, .06); }
+.card { min-width: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 5px 18px rgba(28, 42, 72, .06); }
 .calculator { padding: 22px; }
 .assumptions { padding: 20px; }
 .output { grid-column: 1 / -1; min-height: 190px; padding: 22px; }
@@ -50,6 +51,7 @@ label { display: flex; flex-direction: column; gap: 5px; min-width: 105px; color
 label.wide { min-width: 175px; }
 label[hidden] { display: none; }
 input, select, textarea { color: #172033; background: #fbfcfe; border: 1px solid #cfd6e3; border-radius: 8px; outline: none; }
+input, select { max-width: 100%; }
 input, select { min-height: 38px; padding: 7px 10px; }
 input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(55, 103, 214, .1); }
 .expression-label { margin-top: 17px; font-size: 12px; }
@@ -72,7 +74,7 @@ button.quiet { padding: 6px 9px; color: var(--blue); background: var(--blue-soft
 .chip { padding: 5px 9px; color: #2853b1; background: var(--blue-soft); border-radius: 15px; font-size: 12px; }
 .empty { color: var(--muted); font-size: 12px; }
 
-.error { padding: 12px 14px; color: #a92828; background: #fff0f0; border: 1px solid #f2caca; border-radius: 9px; white-space: pre-wrap; }
+.error { padding: 12px 14px; overflow-wrap: anywhere; color: #a92828; background: #fff0f0; border: 1px solid #f2caca; border-radius: 9px; white-space: pre-wrap; }
 .empty-result { padding: 35px; color: var(--muted); text-align: center; }
 #summary { margin-bottom: 16px; padding: 15px 18px; background: #f7f9fd; border: 1px solid var(--border); border-radius: 10px; }
 #summary h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
@@ -97,4 +99,19 @@ pre { max-height: 300px; padding: 12px; overflow: auto; color: #283247; backgrou
   main { grid-template-columns: 1fr; }
   .output { grid-column: 1; }
   .step { grid-template-columns: 190px minmax(0, 1fr); }
+}
+
+@media (max-width: 600px) {
+  header { flex-wrap: wrap; gap: 14px; padding: 22px 18px; }
+  header h1 { font-size: 23px; }
+  header p:not(.eyebrow) { font-size: 13px; }
+  main { margin-top: 14px; padding: 0 12px; }
+  .calculator, .assumptions, .output { padding: 16px; }
+  .toolbar > label, .toolbar > label.wide { flex: 1 1 140px; min-width: 0; }
+  .toolbar input, .toolbar select { width: 100%; }
+  .assumption-form { grid-template-columns: 1fr; }
+  .assumption-form button { grid-column: 1; }
+  .step { grid-template-columns: 1fr; }
+  .step-heading { grid-template-columns: 25px minmax(0, 1fr); }
+  #plot { height: 300px; }
 }
