@@ -68,10 +68,10 @@ fn steps_from_command(
     command: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    let r = engine.eval(command)?;
+    let expr = engine.eval_expr(command)?;
     let mut candidates = Vec::new();
 
-    if let Expr::Call { head, args } = &r.expr {
+    if let Expr::Call { head, args } = &expr {
         if head == "List" {
             let step_count = args.len();
             for (index, step) in args.iter().enumerate() {
@@ -319,6 +319,11 @@ mod tests {
         fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
             self.eval_calls += 1;
             self.inner.eval(command)
+        }
+
+        fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
+            self.eval_calls += 1;
+            self.inner.eval_expr(command)
         }
 
         fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {

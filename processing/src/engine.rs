@@ -225,6 +225,11 @@ pub trait Engine {
     /// 执行一条 Yacas 命令,返回结构化结果 + TeXForm
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError>;
 
+    /// 只返回结构化结果。无需展示整个结果时，实现可跳过 TeXForm。
+    fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
+        self.eval(command).map(|result| result.expr)
+    }
+
     /// 在同一宿主请求中依次求值表达式并生成 TeX。实现可覆盖此方法，
     /// 以复用解析器、Environment、截止时间和线程往返。
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
@@ -585,6 +590,26 @@ impl RustEngine {
         }
     }
 
+    fn eval_expr_with_timeout(
+        &mut self,
+        command: &str,
+        timeout: Duration,
+    ) -> Result<Expr, EngineError> {
+        self.env.set_eval_timeout(Some(timeout));
+        let response = (|| {
+            let result = eval_cmd(&mut self.env, command)
+                .map_err(|error| self.eval_error(error, "求值失败"))?;
+            Expr::parse_fullform(&yacas_rs::printer::full_form(&result)).map_err(EngineError::Parse)
+        })();
+        let expired = self.deadline_expired();
+        self.env.set_eval_timeout(None);
+        if response.is_ok() && expired {
+            Err(EngineError::Timeout("求值或结构化输出超过时限".into()))
+        } else {
+            response
+        }
+    }
+
     fn render_tex_batch_with_timeout(
         &mut self,
         expressions: &[String],
@@ -663,6 +688,10 @@ impl Engine for RustEngine {
         self.eval_with_timeout(command, RUST_EVAL_TIMEOUT)
     }
 
+    fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
+        self.eval_expr_with_timeout(command, RUST_EVAL_TIMEOUT)
+    }
+
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
         self.render_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
     }
@@ -674,11 +703,13 @@ impl Engine for RustEngine {
 /// +通道模式对齐,GUI 侧零感知。
 enum EngineRequest {
     Eval(String),
+    EvalExpr(String),
     RenderTex(Vec<String>),
 }
 
 enum EngineResponse {
     Eval(Result<EvalResult, EngineError>),
+    EvalExpr(Result<Expr, EngineError>),
     RenderTex(Result<Vec<String>, EngineError>),
 }
 
@@ -715,6 +746,9 @@ impl RustEngineProxy {
                 for request in cmd_rx {
                     let response = match request {
                         EngineRequest::Eval(command) => EngineResponse::Eval(engine.eval(&command)),
+                        EngineRequest::EvalExpr(command) => {
+                            EngineResponse::EvalExpr(engine.eval_expr(&command))
+                        }
                         EngineRequest::RenderTex(expressions) => {
                             EngineResponse::RenderTex(engine.render_tex_batch(&expressions))
                         }
@@ -758,7 +792,17 @@ impl Engine for RustEngineProxy {
             .map_err(|e| EngineError::Io(e.to_string()))?;
         match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
             EngineResponse::Eval(result) => result,
-            EngineResponse::RenderTex(_) => Err(EngineError::Io("引擎响应类型不匹配".into())),
+            _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
+        }
+    }
+
+    fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
+        let tx = self.tx.as_ref().ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
+        tx.send(EngineRequest::EvalExpr(command.to_string()))
+            .map_err(|e| EngineError::Io(e.to_string()))?;
+        match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
+            EngineResponse::EvalExpr(result) => result,
+            _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
         }
     }
 
@@ -768,7 +812,7 @@ impl Engine for RustEngineProxy {
             .map_err(|e| EngineError::Io(e.to_string()))?;
         match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
             EngineResponse::RenderTex(result) => result,
-            EngineResponse::Eval(_) => Err(EngineError::Io("引擎响应类型不匹配".into())),
+            _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
         }
     }
 }
@@ -835,6 +879,10 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         eval_cmd(&mut engine.env, "1 # TeXForm(ReviewBrokenTex) <-- Check(False, \"broken TeX\")")
             .unwrap();
+        assert_eq!(
+            engine.eval_expr("ReviewBrokenTex").unwrap(),
+            Expr::Symbol("ReviewBrokenTex".into())
+        );
         for command in ["Sin(", "ReviewBrokenTex"] {
             let error = engine.eval(command).unwrap_err();
             assert!(matches!(error, EngineError::Eval(_)), "{error}");
@@ -897,6 +945,7 @@ mod tests {
             for command in ["1+1", "2"] {
                 assert_eq!(engine.eval(command).unwrap().tex, "$2$");
             }
+            assert_eq!(engine.eval_expr("2+3").unwrap(), Expr::Number("5".into()));
             assert_eq!(
                 engine
                     .render_tex_batch(&["2+3".into(), "Sin(x)".into()])
