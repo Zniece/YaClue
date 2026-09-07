@@ -112,7 +112,7 @@ const DEF_CASES: &[(&str, &str, &str, &str)] = &[
     ("x^3", "x", "-1", "1"), // 奇对称区间,FTC 得 0
     ("x^2/Sqrt(4 - x^2)", "x", "0", "2"), // θ 链 + 代限值 → Pi
     ("x*Sqrt(4 - x^2)", "x", "0", "2"),
-    ("Sin(x)/Sqrt(4 - x^2)", "x", "0", "1"), // 无解析原函数 → Hold 兜底
+    ("Sin(x)/Sqrt(4 - x^2)", "x", "0", "1"), // 无解析原函数 → 数值求积兜底
 ];
 
 /// code.ys 登记的全部规则键(普通键,含顶层追加的 simplify)。
@@ -140,6 +140,7 @@ const EXPECTED_RULES: &[&str] = &[
     "method-parts",
     "method-trig-sub",
     "method-u-sub",
+    "numeric-integration-rule",
     "partial-fraction-rule",
     "parts-rule",
     "power-reduction-rule",

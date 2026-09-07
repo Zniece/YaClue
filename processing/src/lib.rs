@@ -5,5 +5,6 @@
 //! runtime); everything in this crate is original work licensed MIT.
 
 pub mod engine;
+pub mod quadrature;
 pub mod plot;
 pub mod steps;

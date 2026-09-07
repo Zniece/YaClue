@@ -5,6 +5,7 @@
 //! 本模块将其转为 `Step { rule, expr, why, tex }`。
 
 use crate::engine::{Engine, EngineError, Expr};
+use crate::quadrature::{adaptive_simpson, QuadratureOptions};
 use serde::Serialize;
 
 /// 一步:规则名 + 表达式 + 文案(声明式)+ LaTeX(GUI 渲染用)
@@ -134,10 +135,61 @@ pub fn derive_definite(
     from: &str,
     to: &str,
 ) -> Result<Vec<Step>, EngineError> {
+    derive_definite_with_options(engine, expr, var, from, to, &QuadratureOptions::default())
+}
+
+pub fn derive_definite_with_options(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    from: &str,
+    to: &str,
+    options: &QuadratureOptions,
+) -> Result<Vec<Step>, EngineError> {
     validate_expr(expr)?;
     validate_expr(from)?;
     validate_expr(to)?;
-    steps_from_command(engine, &format!("StepsI'Def'Full({expr}, {var}, {from}, {to})"))
+    let mut steps = steps_from_command(
+        engine,
+        &format!("StepsI'Def'Full({expr}, {var}, {from}, {to})"),
+    )?;
+    if steps.last().is_some_and(|step| step.rule == "direct") {
+        let lower = numeric_scalar(engine, from, "下限")?;
+        let upper = numeric_scalar(engine, to, "上限")?;
+        let result = adaptive_simpson(engine, expr, var, (lower, upper), options)?;
+        let value = format_number(result.value);
+        let tex = engine
+            .eval(&value)
+            .map(|result| strip_dollars(&result.tex))
+            .unwrap_or_else(|_| value.clone());
+        steps.push(Step {
+            rule: "numeric-integration-rule".into(),
+            expr: value,
+            why: format!(
+                "自适应辛普森数值积分（估计误差 {:.2e}，{} 次采样）",
+                result.estimated_error, result.evaluations
+            ),
+            tex,
+        });
+    }
+    Ok(steps)
+}
+
+fn numeric_scalar(engine: &mut dyn Engine, expression: &str, label: &str) -> Result<f64, EngineError> {
+    let result = engine.eval(&format!("N({expression})"))?;
+    match result.expr {
+        Expr::Number(value) => value
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| EngineError::Eval(format!("定积分{label}不是有限实数: {expression}"))),
+        _ => Err(EngineError::Eval(format!("定积分{label}不是有限实数: {expression}"))),
+    }
+}
+
+fn format_number(value: f64) -> String {
+    let text = format!("{value:.15}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 /// 去掉 TeXForm 输出的首尾各一个 `$`(只剥一对,不用 trim_matches)
@@ -266,5 +318,17 @@ mod tests {
         }
         // order=0 拒绝
         assert!(derive_steps_order(&mut engine, "x^4", "x", 0).is_err());
+    }
+
+    #[test]
+    fn definite_integral_falls_back_to_bounded_quadrature() {
+        let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
+        let steps = derive_definite(&mut engine, "Sin(x)/Sqrt(4-x^2)", "x", "0", "1")
+            .expect("数值定积分失败");
+        let last = steps.last().unwrap();
+        assert_eq!(last.rule, "numeric-integration-rule");
+        let value: f64 = last.expr.parse().unwrap();
+        assert!((value - 0.2458433897).abs() < 1e-8, "{value}");
+        assert!(last.why.contains("估计误差"));
     }
 }

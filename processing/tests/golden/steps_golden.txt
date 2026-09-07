@@ -349,3 +349,4 @@ back-sub-rule	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \fr
 definite-eval-rule	(8 / 3)	\frac{8}{3} 	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
 ### ID Sin(x)/Sqrt(4 - x^2) @ x [0,1]
 direct	Integrate(x,0,1,(Sin(x) / Sqrt((4 - (x ^ 2)))))	\int _{0} ^{1 } \frac{\sin x}{\sqrt{4 - x ^{2}}}  dx	直接积分
+numeric-integration-rule	0.245843389690556	0.245843389690556	自适应辛普森数值积分（估计误差 3.40e-10，57 次采样）

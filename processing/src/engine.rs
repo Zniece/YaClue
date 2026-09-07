@@ -173,8 +173,8 @@ fn classify_atom(tok: &str) -> Expr {
     let is_number = {
         let t = tok.strip_prefix(['+', '-']).unwrap_or(tok);
         !t.is_empty()
-            && t.chars().all(|c| c.is_ascii_digit() || c == '.')
             && t.chars().any(|c| c.is_ascii_digit())
+            && t.parse::<f64>().is_ok()
     };
     if is_number {
         Expr::Number(tok.to_string())
@@ -853,6 +853,11 @@ mod tests {
     fn parse_fullform_leaf() {
         assert_eq!(Expr::parse_fullform("2.5").unwrap(), Expr::Number("2.5".into()));
         assert_eq!(Expr::parse_fullform("x").unwrap(), Expr::Symbol("x".into()));
+    }
+
+    #[test]
+    fn parse_fullform_scientific_number() {
+        assert_eq!(Expr::parse_fullform("0.6245947718e-1").unwrap(), Expr::Number("0.6245947718e-1".into()));
     }
 
     #[test]

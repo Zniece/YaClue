@@ -9,8 +9,7 @@
 //!   local function scale). This is a standard generic technique and
 //!   unrelated to the upstream sign-change criterion.
 //! - Evaluation: points are evaluated in *batches* — one engine call per
-//!   chunk builds a single expression `N({Apply({{x}, f}, {v1}), ...})`
-//!   (lambda application, same semantics the upstream library relies on),
+//!   chunk builds a single expression containing numeric substitutions,
 //!   so interpreter dispatch overhead disappears from the per-point cost.
 //! - Non-finite values (`Infinity`, `Undefined`, ...) become gaps: they are
 //!   reported via `breaks` so a renderer knows where NOT to connect.
@@ -159,9 +158,9 @@ fn refine_interval(
 
 /// Evaluate `func(var = v)` for every v in `xs`, in chunks of `batch`:
 /// one engine call per chunk, evaluating
-/// `N({Apply({{var}, func}, {v1}), Apply(...), ...})`.
+/// `N({Subst(var,v1,func), Subst(var,v2,func), ...})`.
 /// Non-finite / unevaluated results map to NaN.
-fn eval_batched(
+pub(crate) fn eval_batched(
     engine: &mut dyn Engine,
     func: &str,
     var: &str,
@@ -172,7 +171,11 @@ fn eval_batched(
     for chunk in xs.chunks(batch.max(1)) {
         let items: Vec<String> = chunk
             .iter()
-            .map(|v| format!("Apply({{{{{var}}}, {func}}}, {{{v}}})"))
+            .map(|v| {
+                format!(
+                    "N(Eval(ApplyPure(\"Subst\", {{{var},{v},{func}}})))"
+                )
+            })
             .collect();
         let cmd = format!("N({{{}}})", items.join(", "));
         let result: EvalResult = engine.eval(&cmd)?;
