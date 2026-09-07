@@ -6,7 +6,15 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::quadrature::{adaptive_simpson, QuadratureOptions};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepImportance {
+    Routine,
+    Normal,
+    Key,
+}
 
 /// 一步:规则名 + 表达式 + 文案(声明式)+ LaTeX(GUI 渲染用)
 #[derive(Debug, Clone, Serialize)]
@@ -19,6 +27,16 @@ pub struct Step {
     pub why: String,
     /// LaTeX(已去 $...$ 包裹,直接喂 KaTeX)
     pub tex: String,
+    /// 全局粒度筛选使用的语义重要度。
+    pub importance: StepImportance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepVerbosity {
+    Concise,
+    Standard,
+    Detailed,
 }
 
 /// 校验用户表达式输入:必须是单个表达式,拒绝可注入引擎的字符。
@@ -48,13 +66,15 @@ fn validate_expr(expr: &str) -> Result<(), EngineError> {
 fn steps_from_command(
     engine: &mut dyn Engine,
     command: &str,
+    verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
     let r = engine.eval(command)?;
     let mut steps = Vec::new();
 
     if let Expr::Call { head, args } = &r.expr {
         if head == "List" {
-            for step in args {
+            let step_count = args.len();
+            for (index, step) in args.iter().enumerate() {
                 if let Expr::Call { args: pair, .. } = step {
                     if pair.len() >= 2 {
                         let rule = match &pair[0] {
@@ -62,23 +82,36 @@ fn steps_from_command(
                             other => other.to_string(),
                         };
                         let expr_str = pair[1].to_string();
-                        // 三元组 {规则, 表达式, 文案};旧二元组兼容(why="")
+                        // 四元组 {规则,表达式,文案,重要度}。
                         let why = match pair.get(2) {
                             Some(Expr::Symbol(s)) => s.trim_matches('"').to_string(),
                             Some(other) => other.to_string(),
                             None => String::new(),
                         };
-                        // 逐步 TeX:求值该步表达式并取其 TeXForm;
-                        // tex 获取失败时回退为表达式原文(至少可见可调试)
+                        let importance = match pair.get(3) {
+                            Some(Expr::Number(value)) if value == "0" => StepImportance::Routine,
+                            Some(Expr::Number(value)) if value == "2" => StepImportance::Key,
+                            _ => StepImportance::Normal,
+                        };
+                        let keep = index + 1 == step_count
+                            || match verbosity {
+                                StepVerbosity::Detailed => true,
+                                StepVerbosity::Standard => importance != StepImportance::Routine,
+                                StepVerbosity::Concise => importance == StepImportance::Key,
+                            };
+                        if !keep {
+                            continue;
+                        }
                         let tex = engine
                             .eval(&expr_str)
-                            .map(|r| strip_dollars(&r.tex))
+                            .map(|result| strip_dollars(&result.tex))
                             .unwrap_or_else(|_| expr_str.clone());
                         steps.push(Step {
                             rule,
                             expr: expr_str,
                             why,
                             tex,
+                            importance,
                         });
                     }
                 }
@@ -99,8 +132,17 @@ pub fn derive_steps(
     expr: &str,
     var: &str,
 ) -> Result<Vec<Step>, EngineError> {
+    derive_steps_with_verbosity(engine, expr, var, StepVerbosity::Detailed)
+}
+
+pub fn derive_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
     validate_expr(expr)?;
-    steps_from_command(engine, &format!("StepsD'Full({expr}, {var})"))
+    steps_from_command(engine, &format!("StepsD'Full({expr}, {var})"), verbosity)
 }
 
 /// 对 `expr` 关于 `var` 生成 `order` 阶分步求导过程(步骤按求导轮次拼接)
@@ -110,11 +152,21 @@ pub fn derive_steps_order(
     var: &str,
     order: u32,
 ) -> Result<Vec<Step>, EngineError> {
+    derive_steps_order_with_verbosity(engine, expr, var, order, StepVerbosity::Detailed)
+}
+
+pub fn derive_steps_order_with_verbosity(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    order: u32,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
     validate_expr(expr)?;
     if order == 0 {
         return Err(EngineError::Eval("求导阶数必须 >= 1".into()));
     }
-    steps_from_command(engine, &format!("StepsD'Full({expr}, {var}, {order})"))
+    steps_from_command(engine, &format!("StepsD'Full({expr}, {var}, {order})"), verbosity)
 }
 
 /// 对 `expr` 关于 `var` 生成分步积分过程
@@ -123,8 +175,17 @@ pub fn derive_integrals(
     expr: &str,
     var: &str,
 ) -> Result<Vec<Step>, EngineError> {
+    derive_integrals_with_verbosity(engine, expr, var, StepVerbosity::Detailed)
+}
+
+pub fn derive_integrals_with_verbosity(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
     validate_expr(expr)?;
-    steps_from_command(engine, &format!("StepsI'Full({expr}, {var})"))
+    steps_from_command(engine, &format!("StepsI'Full({expr}, {var})"), verbosity)
 }
 
 /// 定积分:不定积分步骤链 + 牛顿-莱布尼茨求值(上下限可为任意表达式,如 `Pi`)
@@ -138,6 +199,25 @@ pub fn derive_definite(
     derive_definite_with_options(engine, expr, var, from, to, &QuadratureOptions::default())
 }
 
+pub fn derive_definite_with_verbosity(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    from: &str,
+    to: &str,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    derive_definite_configured(
+        engine,
+        expr,
+        var,
+        from,
+        to,
+        &QuadratureOptions::default(),
+        verbosity,
+    )
+}
+
 pub fn derive_definite_with_options(
     engine: &mut dyn Engine,
     expr: &str,
@@ -146,12 +226,25 @@ pub fn derive_definite_with_options(
     to: &str,
     options: &QuadratureOptions,
 ) -> Result<Vec<Step>, EngineError> {
+    derive_definite_configured(engine, expr, var, from, to, options, StepVerbosity::Detailed)
+}
+
+fn derive_definite_configured(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    from: &str,
+    to: &str,
+    options: &QuadratureOptions,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
     validate_expr(expr)?;
     validate_expr(from)?;
     validate_expr(to)?;
     let mut steps = steps_from_command(
         engine,
         &format!("StepsI'Def'Full({expr}, {var}, {from}, {to})"),
+        verbosity,
     )?;
     if steps.last().is_some_and(|step| step.rule == "direct") {
         let lower = numeric_scalar(engine, from, "下限")?;
@@ -170,6 +263,7 @@ pub fn derive_definite_with_options(
                 result.estimated_error, result.evaluations
             ),
             tex,
+            importance: StepImportance::Key,
         });
     }
     Ok(steps)
@@ -205,7 +299,58 @@ fn strip_dollars(tex: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{ReplEngine, RustEngine};
+    use crate::engine::{EvalResult, ReplEngine, RustEngine};
+
+    struct CountingEngine {
+        inner: RustEngine,
+        calls: usize,
+    }
+
+    impl Engine for CountingEngine {
+        fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
+            self.calls += 1;
+            self.inner.eval(command)
+        }
+    }
+
+    #[test]
+    fn verbosity_filters_before_rendering_visible_steps() {
+        let mut engine = CountingEngine { inner: RustEngine::spawn().unwrap(), calls: 0 };
+        let detailed = derive_steps_with_verbosity(
+            &mut engine,
+            "x^2",
+            "x",
+            StepVerbosity::Detailed,
+        )
+        .unwrap();
+        let detailed_calls = engine.calls;
+        assert!(detailed.iter().all(|step| !step.tex.is_empty()));
+
+        let standard = derive_steps_with_verbosity(
+            &mut engine,
+            "x^2",
+            "x",
+            StepVerbosity::Standard,
+        )
+        .unwrap();
+        let standard_calls = engine.calls - detailed_calls;
+        let concise = derive_steps_with_verbosity(
+            &mut engine,
+            "x^2",
+            "x",
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        let concise_calls = engine.calls - detailed_calls - standard_calls;
+        assert!(
+            detailed.len() > standard.len(),
+            "detailed={} standard={} concise={}",
+            detailed.len(), standard.len(), concise.len()
+        );
+        assert!(standard.len() > concise.len());
+        assert!(detailed_calls > standard_calls && standard_calls > concise_calls);
+        assert_eq!(detailed.last().unwrap().expr, concise.last().unwrap().expr);
+    }
 
     #[test]
     fn derive_steps_returns_rules_and_tex() {
