@@ -58,6 +58,11 @@ fn main() {
         let dividend = Nat::from_decimal(&decimal(digits * 2, 5)).expect("dividend");
 
         let (repetitions, elapsed) = measure(|| {
+            black_box(left.mul(&right));
+        });
+        report("mul_n_by_n", digits, repetitions, elapsed);
+
+        let (repetitions, elapsed) = measure(|| {
             black_box(left.mul_pow10(digits as u32));
         });
         report("mul_pow10", digits, repetitions, elapsed);

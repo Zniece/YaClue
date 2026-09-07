@@ -12,3 +12,9 @@ pub(crate) const MAX_EXACT_SHIFT_BITS: u64 = 1_000_000;
 /// Largest factorial whose decimal representation remains below the
 /// decimal materialization limit (`25205!` has 99,996 digits).
 pub(crate) const MAX_FACTORIAL_ARGUMENT: i64 = 25_205;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NumericWorkError {
+    Interrupted,
+    Overflow,
+}

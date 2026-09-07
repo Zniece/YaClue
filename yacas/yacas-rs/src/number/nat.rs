@@ -75,11 +75,27 @@ impl Nat {
     }
 
     pub fn mul(&self, o: &Nat) -> Nat {
+        self.mul_interruptible(o, || false)
+            .expect("non-interruptible multiplication")
+    }
+
+    /// Schoolbook multiplication with a cancellation probe between limbs.
+    pub(crate) fn mul_interruptible(
+        &self,
+        o: &Nat,
+        mut interrupted: impl FnMut() -> bool,
+    ) -> Result<Nat, ()> {
+        if interrupted() {
+            return Err(());
+        }
         if self.is_zero() || o.is_zero() {
-            return Nat::zero();
+            return Ok(Nat::zero());
         }
         let mut res = vec![0u32; self.groups.len() + o.groups.len() + 1];
         for (i, &ai) in self.groups.iter().enumerate() {
+            if interrupted() {
+                return Err(());
+            }
             let mut carry: u64 = 0;
             for (j, &bj) in o.groups.iter().enumerate() {
                 let k = i + j;
@@ -98,7 +114,7 @@ impl Nat {
         while res.last() == Some(&0) {
             res.pop();
         }
-        Nat { groups: res }
+        Ok(Nat { groups: res })
     }
 
     /// Binary exponentiation: `base^exp` (exp ≥ 0).

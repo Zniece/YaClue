@@ -427,8 +427,28 @@ impl Float {
     /// mantissa first would lose magnitude information and turn decimal
     /// divisions into spurious e-forms.
     pub fn div(&self, o: &Float, prec: u32) -> Option<Float> {
+        self.div_impl(o, prec, false, || false)
+            .expect("unbounded division")
+    }
+
+    pub(crate) fn div_with_limits(
+        &self,
+        o: &Float,
+        prec: u32,
+        interrupted: impl FnMut() -> bool,
+    ) -> Result<Option<Float>, super::limits::NumericWorkError> {
+        self.div_impl(o, prec, true, interrupted)
+    }
+
+    fn div_impl(
+        &self,
+        o: &Float,
+        prec: u32,
+        enforce_limit: bool,
+        mut interrupted: impl FnMut() -> bool,
+    ) -> Result<Option<Float>, super::limits::NumericWorkError> {
         if o.digits.is_zero() {
-            return None;
+            return Ok(None);
         }
         let e_s = self.tens_exp - self.scale as i64;
         let e_o = o.tens_exp - o.scale as i64;
@@ -436,21 +456,25 @@ impl Float {
         // Exact division: quotient digits = self.digits/o.digits with
         // exponent e, keeping the dividend's full digit count (storage form,
         // not truncated to `prec`).
-        let (dq, dr) = self.digits.divrem(&o.digits).expect("div: denominator is nonzero");
+        let (dq, dr) = self
+            .digits
+            .divrem_interruptible(&o.digits, &mut interrupted)
+            .map_err(|_| super::limits::NumericWorkError::Interrupted)?
+            .expect("div: denominator is nonzero");
         if dr.is_zero() {
             // Quotient value = dq × 10^e, represented as digits × 10^(te−scale).
             // e ≥ 0 goes into te; ordinary negative exponents borrow into
             // scale to preserve plain formatting. Values beyond scale's
             // range retain the negative exponent directly.
             if dq.is_zero() {
-                return Some(Float {
+                return Ok(Some(Float {
                     digits: dq,
                     scale: 0,
                     tens_exp: 0,
                     prec: 0, // exact division = storage form
                     neg: self.neg != o.neg,
                     text: None,
-                });
+                }));
             }
             let mut f = Float {
                 digits: dq,
@@ -466,7 +490,7 @@ impl Float {
                 f.scale = e.unsigned_abs() as u32;
             }
             f.normalize_down();
-            return Some(f);
+            return Ok(Some(f));
         }
         // Inexact division: the quotient's significant digits = requested
         // precision (long division continues with zero-padding to `prec`
@@ -479,17 +503,24 @@ impl Float {
         let k = prec as i32 + shift;
         // One extra digit as the rounding basis (half-carry); the final
         // quotient mantissa is cut back to `prec` significant digits.
-        let q10 = div_scaled(&self.digits, &o.digits, (k + 1) as u32);
+        let shift = (k + 1) as u32;
+        if enforce_limit
+            && self.digits.to_decimal().len() + shift as usize
+            > super::limits::MAX_DECIMAL_WORK_DIGITS as usize
+        {
+            return Err(super::limits::NumericWorkError::Overflow);
+        }
+        let q10 = div_scaled_with_limits(&self.digits, &o.digits, shift, &mut interrupted)?;
         // Zero quotient normalizes like the exact branch.
         if q10.is_zero() {
-            return Some(Float {
+            return Ok(Some(Float {
                 digits: q10,
                 scale: 0,
                 tens_exp: 0,
                 prec,
                 neg: self.neg != o.neg,
                 text: None,
-            });
+            }));
         }
         // Value = q10 × 10^(e − k − 1) (one extra digit was divided out).
         let e_adj = e - k as i64 - 1;
@@ -540,7 +571,7 @@ impl Float {
             }
         }
         f.prec = 0;
-        Some(f)
+        Ok(Some(f))
     }
 
     /// Numeric equality: signs and aligned mantissas.
@@ -665,17 +696,44 @@ impl Float {
     /// precision follows the same session/guard model as `add`. A product
     /// below 0.1 stays in plain form.
     pub fn mul(&self, o: &Float, prec: u32) -> Float {
+        self.mul_impl(o, prec, false, || false)
+            .expect("unbounded multiplication")
+    }
+
+    pub(crate) fn mul_with_limits(
+        &self,
+        o: &Float,
+        prec: u32,
+        interrupted: impl FnMut() -> bool,
+    ) -> Result<Float, super::limits::NumericWorkError> {
+        self.mul_impl(o, prec, true, interrupted)
+    }
+
+    fn mul_impl(
+        &self,
+        o: &Float,
+        prec: u32,
+        enforce_limit: bool,
+        interrupted: impl FnMut() -> bool,
+    ) -> Result<Float, super::limits::NumericWorkError> {
         let out_prec = if prec > 0 { prec } else { self.prec.max(o.prec) };
-        let digits = self.digits.mul(&o.digits);
+        let result_digits = self.digits.to_decimal().len() + o.digits.to_decimal().len();
+        if enforce_limit && result_digits > super::limits::MAX_DECIMAL_WORK_DIGITS as usize + 1 {
+            return Err(super::limits::NumericWorkError::Overflow);
+        }
+        let digits = self
+            .digits
+            .mul_interruptible(&o.digits, interrupted)
+            .map_err(|_| super::limits::NumericWorkError::Interrupted)?;
         if digits.is_zero() {
-            return Float {
+            return Ok(Float {
                 digits,
                 scale: 0,
                 tens_exp: 0,
                 prec: out_prec,
                 neg: self.neg != o.neg,
                 text: None,
-            };
+            });
         }
         let mut scale = self.scale + o.scale;
         let mut te = self.tens_exp + o.tens_exp;
@@ -693,14 +751,14 @@ impl Float {
         } else {
             digits
         };
-        Float {
+        Ok(Float {
             digits,
             scale,
             tens_exp: te,
             prec: out_prec,
             neg: self.neg != o.neg,
             text: None,
-        }
+        })
     }
 }
 
@@ -722,9 +780,21 @@ fn trim(digits: &mut Nat, scale: &mut u32) {
 }
 
 /// Mantissa division: `floor(num / den × 10^scale)`.
-fn div_scaled(num: &Nat, den: &Nat, scale: u32) -> Nat {
+fn div_scaled_with_limits(
+    num: &Nat,
+    den: &Nat,
+    scale: u32,
+    mut interrupted: impl FnMut() -> bool,
+) -> Result<Nat, super::limits::NumericWorkError> {
+    if interrupted() {
+        return Err(super::limits::NumericWorkError::Interrupted);
+    }
     let dividend = num.mul_pow10(scale);
-    dividend.divrem(den).expect("div: denominator is nonzero").0
+    Ok(dividend
+        .divrem_interruptible(den, interrupted)
+        .map_err(|_| super::limits::NumericWorkError::Interrupted)?
+        .expect("div: denominator is nonzero")
+        .0)
 }
 
 /// Compare magnitudes from normalized decimal digits and their exponent,

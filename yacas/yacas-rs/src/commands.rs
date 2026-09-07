@@ -719,7 +719,11 @@ pub fn cmd_mul(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
         match &v.kind {
             ObjectKind::Number(num) => {
                 any_float |= num.is_float();
-                acc = acc.mul(&num.float_at(env.precision()), env.precision())
+                acc = acc
+                    .mul_with_limits(&num.float_at(env.precision()), env.precision(), || {
+                        env.check_eval_deadline().is_err()
+                    })
+                    .map_err(map_numeric_work_error)?
             }
             _ => symbolic = true,
         }
@@ -787,7 +791,12 @@ pub fn cmd_div(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
         match (&acc.kind, &v.kind) {
             (ObjectKind::Number(a), ObjectKind::Number(b)) => {
                 any_float |= b.is_float();
-                let f = a.float_at(env.precision()).div(&b.float_at(env.precision()), env.precision())
+                let f = a
+                    .float_at(env.precision())
+                    .div_with_limits(&b.float_at(env.precision()), env.precision(), || {
+                        env.check_eval_deadline().is_err()
+                    })
+                    .map_err(map_numeric_work_error)?
                     .ok_or(YacasError::DivideByZero)?;
                 acc = Rc::new(LispObject { next: None, kind: ObjectKind::Number(crate::value::LispNumber::from_float_flag(f, any_float)) });
             }
@@ -3325,6 +3334,13 @@ fn num_of_flag(f: crate::number::float::Float, is_float: bool) -> Rc<LispObject>
     })
 }
 
+fn map_numeric_work_error(error: crate::number::limits::NumericWorkError) -> YacasError {
+    match error {
+        crate::number::limits::NumericWorkError::Interrupted => YacasError::UserInterrupt,
+        crate::number::limits::NumericWorkError::Overflow => YacasError::NumericOverflow,
+    }
+}
+
 /// Math core family (like upstream corefunctions.h; stubs/base.rep rule bodies
 /// depend on these).
 pub fn cmd_math_negate(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
@@ -3726,17 +3742,27 @@ fn cmd_fast_power(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
     // PositiveIntPower(x,-n)) — i.e. the base becomes the reciprocal 1/x.
     // (Using x/1 instead of 1/x would not invert and would break negative
     // exponents and the downstream IsZero/GreaterThan predicates.)
-    let base = if n < 0 { one.div(&x, env.precision).unwrap_or(zero.clone()) } else { x };
+    let base = if n < 0 {
+        one.div_with_limits(&x, env.precision, || env.check_eval_deadline().is_err())
+            .map_err(map_numeric_work_error)?
+            .unwrap_or(zero.clone())
+    } else {
+        x
+    };
     let mut acc = one;
     let mut b = base;
     let mut k = n.unsigned_abs();
     while k > 0 {
         if k & 1 == 1 {
-            acc = acc.mul(&b, env.precision);
+            acc = acc
+                .mul_with_limits(&b, env.precision, || env.check_eval_deadline().is_err())
+                .map_err(map_numeric_work_error)?;
         }
         k >>= 1;
         if k > 0 {
-            b = b.mul(&b, env.precision);
+            b = b
+                .mul_with_limits(&b, env.precision, || env.check_eval_deadline().is_err())
+                .map_err(map_numeric_work_error)?;
         }
     }
     Ok(num_of_flag(acc, fl))

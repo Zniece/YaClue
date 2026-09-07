@@ -141,12 +141,24 @@ fn big_integer_division_commands_observe_deadline() {
         "Mod(100000000000000000001, 100000000000000000000)",
         "FromBase(2, \"101010101010101010101\")",
         "ToBase(2, 100000000000000000001)",
+        "MathMultiply(100000000000000000001, 100000000000000000001)",
+        "MathDivide(100000000000000000001., 300000000000000000001.)",
     ] {
         env.set_eval_timeout(Some(std::time::Duration::ZERO));
         assert!(matches!(run_error(&mut env, source), YacasError::UserInterrupt));
         env.set_eval_timeout(None);
         assert_eq!(run(&mut env, "2+2"), "4");
     }
+}
+
+#[test]
+fn oversized_numeric_product_is_rejected_before_multiplication() {
+    let mut env = Environment::new();
+    boot(&mut env);
+    let operand = "9".repeat(60_000);
+    let source = format!("MathMultiply({operand}, {operand})");
+    assert!(matches!(run_error(&mut env, &source), YacasError::NumericOverflow));
+    assert_eq!(run(&mut env, "2+2"), "4");
 }
 
 #[test]
