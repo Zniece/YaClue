@@ -119,19 +119,40 @@ impl Nat {
 
     /// Binary exponentiation: `base^exp` (exp ≥ 0).
     pub fn pow(&self, exp: u32) -> Nat {
+        self.pow_impl(exp, false, || false)
+            .expect("unbounded exponentiation")
+    }
+
+    pub(crate) fn pow_with_limits(
+        &self,
+        exp: u32,
+        interrupted: impl FnMut() -> bool,
+    ) -> Result<Nat, super::limits::NumericWorkError> {
+        self.pow_impl(exp, true, interrupted)
+    }
+
+    fn pow_impl(
+        &self,
+        exp: u32,
+        enforce_limit: bool,
+        mut interrupted: impl FnMut() -> bool,
+    ) -> Result<Nat, super::limits::NumericWorkError> {
         let mut e = exp;
         let mut base = self.clone();
         let mut acc = Nat::from_decimal("1").unwrap();
         while e > 0 {
+            if interrupted() {
+                return Err(super::limits::NumericWorkError::Interrupted);
+            }
             if e & 1 == 1 {
-                acc = acc.mul(&base);
+                acc = pow_multiply(&acc, &base, enforce_limit, &mut interrupted)?;
             }
             e >>= 1;
             if e > 0 {
-                base = base.mul(&base);
+                base = pow_multiply(&base, &base, enforce_limit, &mut interrupted)?;
             }
         }
-        acc
+        Ok(acc)
     }
 
     /// Multiply by 10^k (append k zeros; k ≥ 0).
@@ -322,6 +343,29 @@ impl Nat {
         let (remainder, _) = normalized_remainder.div_small(normalization);
         Ok(Some((Nat { groups: quotient }, remainder)))
     }
+}
+
+fn pow_multiply(
+    left: &Nat,
+    right: &Nat,
+    enforce_limit: bool,
+    interrupted: impl FnMut() -> bool,
+) -> Result<Nat, super::limits::NumericWorkError> {
+    if enforce_limit
+        && left.to_decimal().len() + right.to_decimal().len()
+            > super::limits::MAX_DECIMAL_WORK_DIGITS as usize + 1
+    {
+        return Err(super::limits::NumericWorkError::Overflow);
+    }
+    let product = left
+        .mul_interruptible(right, interrupted)
+        .map_err(|_| super::limits::NumericWorkError::Interrupted)?;
+    if enforce_limit
+        && product.to_decimal().len() > super::limits::MAX_DECIMAL_WORK_DIGITS as usize
+    {
+        return Err(super::limits::NumericWorkError::Overflow);
+    }
+    Ok(product)
 }
 
 impl fmt::Display for Nat {

@@ -85,7 +85,13 @@ fn malformed_exponent_is_rejected_without_poisoning_engine() {
 fn oversized_exact_binary_shifts_are_bounded_without_poisoning_engine() {
     let mut env = Environment::new();
     boot(&mut env);
-    for shift in ["1000001", "-1000001", "-9223372036854775808"] {
+    for shift in [
+        "332194",
+        "-150000",
+        "1000001",
+        "-1000001",
+        "-9223372036854775808",
+    ] {
         assert!(
             matches!(run_error(&mut env, &format!("MathMul2Exp(1., {shift})")), YacasError::NumericOverflow),
             "shift {shift} should return NumericOverflow"
@@ -125,10 +131,16 @@ fn explosive_exact_operations_are_bounded_and_interruptible() {
     }
     assert_eq!(run(&mut env, "ShiftRight(18446744073709551616, 4294967296)"), "0");
 
-    env.set_eval_timeout(Some(std::time::Duration::ZERO));
-    assert!(matches!(run_error(&mut env, "MathFac(25205)"), YacasError::UserInterrupt));
-    env.set_eval_timeout(None);
-    assert_eq!(run(&mut env, "2+2"), "4");
+    for source in [
+        "MathFac(25205)",
+        "MathMul2Exp(1., 10000)",
+        "ShiftLeft(1, 10000)",
+    ] {
+        env.set_eval_timeout(Some(std::time::Duration::ZERO));
+        assert!(matches!(run_error(&mut env, source), YacasError::UserInterrupt));
+        env.set_eval_timeout(None);
+        assert_eq!(run(&mut env, "2+2"), "4");
+    }
 }
 
 #[test]
@@ -140,6 +152,7 @@ fn big_integer_division_commands_observe_deadline() {
         "MathGcd(100000000000000000001, 100000000000000000000)",
         "Mod(100000000000000000001, 100000000000000000000)",
         "FromBase(2, \"101010101010101010101\")",
+        "FromBase(32, \"0.abcdefghijklmnop\")",
         "ToBase(2, 100000000000000000001)",
         "MathMultiply(100000000000000000001, 100000000000000000001)",
         "MathDivide(100000000000000000001., 300000000000000000001.)",

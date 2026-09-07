@@ -81,5 +81,11 @@ fn main() {
             black_box(left.bit_len());
         });
         report("bit_len", digits, repetitions, elapsed);
+
+        let two = Nat::from_decimal("2").expect("two");
+        let (repetitions, elapsed) = measure(|| {
+            black_box(two.pow(digits as u32));
+        });
+        report("pow_2", digits, repetitions, elapsed);
     }
 }

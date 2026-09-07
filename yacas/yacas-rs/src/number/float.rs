@@ -77,8 +77,25 @@ impl Float {
     /// n < 0 divides by 2^m = ×5^m/10^m, which terminates exactly in
     /// decimal.
     pub fn mul2exp(&self, n: i64) -> Option<Float> {
+        self.mul2exp_impl(n, false, || false).ok()
+    }
+
+    pub(crate) fn mul2exp_with_limits(
+        &self,
+        n: i64,
+        interrupted: impl FnMut() -> bool,
+    ) -> Result<Float, super::limits::NumericWorkError> {
+        self.mul2exp_impl(n, true, interrupted)
+    }
+
+    fn mul2exp_impl(
+        &self,
+        n: i64,
+        enforce_limit: bool,
+        mut interrupted: impl FnMut() -> bool,
+    ) -> Result<Float, super::limits::NumericWorkError> {
         if self.digits.is_zero() {
-            return Some(Float {
+            return Ok(Float {
                 digits: self.digits.clone(),
                 scale: 0,
                 tens_exp: 0,
@@ -89,30 +106,45 @@ impl Float {
         }
         let magnitude = n.unsigned_abs();
         if magnitude > super::limits::MAX_EXACT_SHIFT_BITS {
-            return None;
+            return Err(super::limits::NumericWorkError::Overflow);
         }
-        if n >= 0 {
-            let two_n = Nat::from_decimal("2").expect("2").pow(magnitude as u32);
-            Some(Float {
-                digits: self.digits.mul(&two_n),
-                scale: self.scale,
-                tens_exp: self.tens_exp,
-                prec: self.prec,
-                neg: self.neg,
-                text: None,
-            })
+        let (factor, added_scale) = if n >= 0 {
+            (Nat::from_decimal("2").expect("2"), 0)
         } else {
-            let m = magnitude as u32;
-            let five_m = Nat::from_decimal("5").expect("5").pow(m);
-            Some(Float {
-                digits: self.digits.mul(&five_m),
-                scale: self.scale.checked_add(m)?,
-                tens_exp: self.tens_exp,
-                prec: self.prec,
-                neg: self.neg,
-                text: None,
-            })
+            (
+                Nat::from_decimal("5").expect("5"),
+                u32::try_from(magnitude).map_err(|_| super::limits::NumericWorkError::Overflow)?,
+            )
+        };
+        let factor = if enforce_limit {
+            factor.pow_with_limits(magnitude as u32, &mut interrupted)?
+        } else {
+            factor.pow(magnitude as u32)
+        };
+        if enforce_limit
+            && self.digits.to_decimal().len() + factor.to_decimal().len()
+                > super::limits::MAX_DECIMAL_WORK_DIGITS as usize + 1
+        {
+            return Err(super::limits::NumericWorkError::Overflow);
         }
+        let digits = self
+            .digits
+            .mul_interruptible(&factor, &mut interrupted)
+            .map_err(|_| super::limits::NumericWorkError::Interrupted)?;
+        if enforce_limit
+            && digits.to_decimal().len() > super::limits::MAX_DECIMAL_WORK_DIGITS as usize
+        {
+            return Err(super::limits::NumericWorkError::Overflow);
+        }
+        Ok(Float {
+            digits,
+            scale: self.scale.checked_add(added_scale)
+                .ok_or(super::limits::NumericWorkError::Overflow)?,
+            tens_exp: self.tens_exp,
+            prec: self.prec,
+            neg: self.neg,
+            text: None,
+        })
     }
 
     pub fn is_zero(&self) -> bool {

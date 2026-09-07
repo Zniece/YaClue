@@ -3295,9 +3295,21 @@ fn cmd_shift(env: &mut Environment, inner: &Rc<LispObject>, left: bool) -> Resul
         return Ok(num_text("0".to_string()));
     }
     let k = u32::try_from(k).map_err(|_| YacasError::NumericOverflow)?;
-    let factor = crate::number::nat::Nat::from_decimal("2").expect("2").pow(k);
+    let factor = crate::number::nat::Nat::from_decimal("2")
+        .expect("2")
+        .pow_with_limits(k, || env.check_eval_deadline().is_err())
+        .map_err(map_numeric_work_error)?;
     value.magnitude = if left {
-        value.magnitude.mul(&factor)
+        let product = value
+            .magnitude
+            .mul_interruptible(&factor, || env.check_eval_deadline().is_err())
+            .map_err(|_| YacasError::UserInterrupt)?;
+        if product.to_decimal().len()
+            > crate::number::limits::MAX_DECIMAL_WORK_DIGITS as usize
+        {
+            return Err(YacasError::NumericOverflow);
+        }
+        product
     } else {
         value.magnitude.divrem(&factor).ok_or(YacasError::InvalidArg)?.0
     };
@@ -3689,7 +3701,8 @@ fn cmd_math_mul2_exp(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     let (x, fl) = arg_float_flag(env, inner, 0)?;
     let n = int_text_of(&eval(env, arg(inner, 1)?)?)?;
     Ok(num_of_flag(
-        x.mul2exp(n).ok_or(YacasError::NumericOverflow)?,
+        x.mul2exp_with_limits(n, || env.check_eval_deadline().is_err())
+            .map_err(map_numeric_work_error)?,
         fl,
     ))
 }
@@ -4593,7 +4606,9 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     let bits = ((bits_env.max(sig)) as f64 * (base as f64).log2()).ceil() as i64;
     let dec = (((bits as f64) * 2f64.log10()).floor().max(1.0)) as u32;
     let bnat = crate::number::nat::Nat::from_decimal(&base.to_string()).expect("base");
-    let denom = bnat.pow(frac_part.len() as u32);
+    let denom = bnat
+        .pow_with_limits(frac_part.len() as u32, || env.check_eval_deadline().is_err())
+        .map_err(map_numeric_work_error)?;
     let scaled = m.mul_pow10(dec);
     let (q, r) = divrem_with_deadline(env, &scaled, &denom)?;
     let two = crate::number::nat::Nat::from_decimal("2").expect("two");
