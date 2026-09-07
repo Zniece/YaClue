@@ -4,6 +4,7 @@
 //! The engine boots the standard script library (`yacas/scripts`, loaded at
 //! runtime); everything in this crate is original work licensed MIT.
 
+pub mod algebra;
 pub mod engine;
 pub mod quadrature;
 pub mod plot;
