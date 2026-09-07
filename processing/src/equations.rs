@@ -1,6 +1,5 @@
 //! Structured API for algebraic equations and systems.
 
-use crate::conditions::{unpack_conditional, Condition};
 use crate::engine::{Engine, EngineError, Expr};
 use serde::Serialize;
 
@@ -16,8 +15,6 @@ pub struct SolveResult {
     pub status: SolveStatus,
     /// Alternative solution sets. Each inner vector is one simultaneous solution.
     pub solutions: Vec<Vec<Assignment>>,
-    /// Facts used to justify the returned solution branch.
-    pub conditions: Vec<Condition>,
     pub raw: String,
     pub tex: String,
 }
@@ -40,7 +37,7 @@ pub fn solve(
 
     let scalar = equations.len() == 1 && variables.len() == 1;
     let solve_call = if scalar {
-        format!("SolveConditional({}, {})", equations[0], variables[0])
+        format!("Solve({}, {})", equations[0], variables[0])
     } else {
         format!("Solve({{{}}}, {{{}}})", equations.join(","), variables.join(","))
     };
@@ -54,19 +51,12 @@ pub fn solve(
     if type_error {
         return Err(EngineError::Eval("Solve 拒绝了求解变量或参数类型".into()));
     }
-    let (raw_expr, conditions) = unpack_conditional(raw_expr)?;
     let raw = raw_expr.to_string();
     let tex = engine.eval(&raw)
         .map(|result| strip_dollars(&result.tex))
         .unwrap_or_else(|_| raw.clone());
     if failed {
-        return Ok(SolveResult {
-            status: SolveStatus::Unresolved,
-            solutions: vec![],
-            conditions,
-            raw,
-            tex,
-        });
+        return Ok(SolveResult { status: SolveStatus::Unresolved, solutions: vec![], raw, tex });
     }
 
     let mut solutions = parse_solutions(&raw_expr, scalar)?;
@@ -82,13 +72,7 @@ pub fn solve(
     } else {
         SolveStatus::Solved
     };
-    Ok(SolveResult {
-        status,
-        solutions,
-        conditions,
-        raw,
-        tex,
-    })
+    Ok(SolveResult { status, solutions, raw, tex })
 }
 
 fn parse_wrapper(wrapper: Expr) -> Result<(Expr, bool, bool), EngineError> {
@@ -168,7 +152,6 @@ fn strip_dollars(tex: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assumptions::{assume, AssumptionFact};
     use crate::engine::RustEngine;
 
     #[test]
@@ -194,33 +177,6 @@ mod tests {
         assert_eq!(result.status, SolveStatus::Solved);
         assert_eq!(result.solutions.len(), 2);
         assert!(result.solutions.iter().all(|solution| solution.len() == 2));
-    }
-
-    #[test]
-    fn reports_nonzero_assumptions_used_by_linear_solutions() {
-        let mut engine = RustEngine::spawn().unwrap();
-        assume(&mut engine, "a", AssumptionFact::NonZero).unwrap();
-        let result = solve(&mut engine, &["a*x==b"], &["x"]).unwrap();
-        assert_eq!(result.status, SolveStatus::Solved);
-        assert_eq!(result.solutions[0][0].value, "(b / a)");
-        assert_eq!(
-            result.conditions,
-            vec![Condition::Property {
-                expression: "a".into(),
-                fact: "NonZero".into(),
-            }]
-        );
-
-        let mut engine = RustEngine::spawn().unwrap();
-        assume(&mut engine, "a", AssumptionFact::Positive).unwrap();
-        let compound = solve(&mut engine, &["(a+1)*x==b"], &["x"]).unwrap();
-        assert_eq!(
-            compound.conditions,
-            vec![Condition::Property {
-                expression: "(a + 1)".into(),
-                fact: "NonZero".into(),
-            }]
-        );
     }
 
     #[test]
