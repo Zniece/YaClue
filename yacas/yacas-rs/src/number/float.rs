@@ -226,16 +226,22 @@ impl Float {
     fn canonical(&self) -> String {
         let mut digits = self.digits.clone();
         let mut scale = self.scale;
+        let mut tens_exp = self.tens_exp;
         trim(&mut digits, &mut scale);
         if digits.is_zero() {
             return "0".into();
         }
         // Truncate to the requested precision (drop low digits, no
         // carry-in; arithmetic carries guard digits which are dropped here).
-        if self.prec > 0 && scale > self.prec {
-            let (d, s) = truncate_down(digits, scale, self.prec);
-            digits = d;
-            scale = s;
+        if self.prec > 0 {
+            if tens_exp == 0 && scale > self.prec {
+                let (d, s) = truncate_down(digits, scale, self.prec);
+                digits = d;
+                scale = s;
+            } else if tens_exp != 0 {
+                (digits, scale, tens_exp) =
+                    truncate_significant(digits, scale, tens_exp, self.prec);
+            }
         }
         trim(&mut digits, &mut scale);
         if digits.is_zero() {
@@ -243,7 +249,7 @@ impl Float {
         }
         let ds = digits.to_decimal();
         let sign = if self.neg { "-" } else { "" };
-        if self.tens_exp == 0 {
+        if tens_exp == 0 {
             // Verbatim form: integer part + decimal point.
             if scale == 0 {
                 return format!("{sign}{ds}");
@@ -258,7 +264,7 @@ impl Float {
         } else {
             // e-form: mantissa in [0.1, 1), exponent = te − scale + digits.
             let len = ds.len() as i32;
-            let e = self.tens_exp - scale as i32;
+            let e = tens_exp - scale as i32;
             format!("{sign}0.{ds}e{}", e + len)
         }
     }
@@ -308,6 +314,13 @@ impl Float {
             Some((q, r)) => (q, !r.is_zero()),
             None => (Nat::zero(), !self.digits.is_zero()),
         }
+    }
+
+    /// Bit length of the absolute integer part. This uses the represented
+    /// value, including its decimal exponent; inspecting the literal text
+    /// before `e` would turn values such as `1e100` into the integer `1`.
+    pub fn integer_bit_len(&self) -> u64 {
+        self.int_frac().0.bit_len()
     }
 
     /// Floor (toward −∞): the integer part, minus one more when a negative
@@ -556,15 +569,21 @@ impl Float {
                 text: None,
             };
         }
-        let (digits, scale) = if sm as u32 > guard {
+        let mut tens_exp = common;
+        let (digits, scale) = if common == 0 && sm as u32 > guard {
             truncate_down(digits, sm as u32, guard)
+        } else if common != 0 {
+            let (digits, scale, adjusted_exp) =
+                truncate_significant(digits, sm as u32, common, guard);
+            tens_exp = adjusted_exp;
+            (digits, scale)
         } else {
             (digits, sm as u32)
         };
         Float {
             digits,
             scale,
-            tens_exp: common,
+            tens_exp,
             prec: out_prec,
             neg,
             text: None,
@@ -593,13 +612,21 @@ impl Float {
                 text: None,
             };
         }
-        let scale = self.scale + o.scale;
-        let te = self.tens_exp + o.tens_exp;
+        let mut scale = self.scale + o.scale;
+        let mut te = self.tens_exp + o.tens_exp;
         let guard = out_prec.max(self.prec).max(o.prec);
-        let (digits, scale) = if scale > guard + 1 {
-            truncate_down(digits, scale, guard + 1)
+        let digits = if te == 0 && scale > guard + 1 {
+            let (digits, adjusted_scale) = truncate_down(digits, scale, guard + 1);
+            scale = adjusted_scale;
+            digits
+        } else if te != 0 {
+            let (digits, adjusted_scale, adjusted_exp) =
+                truncate_significant(digits, scale, te, guard + 1);
+            scale = adjusted_scale;
+            te = adjusted_exp;
+            digits
         } else {
-            (digits, scale)
+            digits
         };
         Float {
             digits,
@@ -660,6 +687,35 @@ fn truncate_down(digits: Nat, scale: u32, cap: u32) -> (Nat, u32) {
     }
     let keep = &ds[..ds.len() - drop as usize];
     (Nat::from_decimal(keep).unwrap(), cap)
+}
+
+/// Drop low significant digits while preserving the represented value.
+/// Removing a digit normally lowers `scale`; once scale reaches zero, the
+/// remaining decimal shift is transferred into `tens_exp`.
+fn truncate_significant(
+    digits: Nat,
+    scale: u32,
+    tens_exp: i32,
+    cap: u32,
+) -> (Nat, u32, i32) {
+    if cap == 0 {
+        return (digits, scale, tens_exp);
+    }
+    let text = digits.to_decimal();
+    if text.len() as u32 <= cap {
+        return (digits, scale, tens_exp);
+    }
+    let drop = text.len() as u32 - cap;
+    let kept = Nat::from_decimal(&text[..text.len() - drop as usize]).unwrap();
+    if scale >= drop {
+        (kept, scale - drop, tens_exp)
+    } else {
+        (
+            kept,
+            0,
+            tens_exp.saturating_add((drop - scale) as i32),
+        )
+    }
 }
 
 impl Float {
@@ -835,5 +891,16 @@ mod tests {
             assert_eq!(f(input).floor().format(), floor, "floor({input})");
             assert_eq!(f(input).ceil().format(), ceil, "ceil({input})");
         }
+    }
+
+    #[test]
+    fn scientific_results_keep_significant_digits() {
+        let shifted = f("1e100").mul2exp(-332);
+        assert!(
+            shifted.format().starts_with("0.1142987391")
+                && shifted.format().ends_with("e1"),
+            "1e100 * 2^-332 = {}",
+            shifted.format()
+        );
     }
 }

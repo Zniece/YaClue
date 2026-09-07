@@ -3558,28 +3558,14 @@ fn cmd_math_bit_count(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
         return Err(YacasError::WrongNumberOfArgs);
     }
     let v = eval(env, arg(inner, 0)?)?;
-    let t = match v.number_string() {
-        Some(n) => n,
-        None => v.atom_string().ok_or(YacasError::InvalidArg)?.to_string(),
+    let number = match &v.kind {
+        ObjectKind::Number(number) => number,
+        _ => return Err(YacasError::InvalidArg),
     };
-    // Like upstream LispBitCount(x->BitCount()): bit length of the *integer
-    // part* (2.5 -> 2, 0.5 -> 0, 2^100 -> 101, 0 -> 0, -5 -> 3; the sign is
-    // not counted).
-    let t = t.trim();
-    let neg = t.starts_with('-');
-    let body = if neg { &t[1..] } else { t };
-    // Truncate the fractional part (float text: before '.'/exponent)
-    let int_part = match body.find(['.', 'e', 'E']) {
-        Some(i) => &body[..i],
-        None => body,
-    };
-    let int_part = if int_part.is_empty() { "0" } else { int_part };
-    let big = crate::number::nat::Nat::from_decimal(int_part)
-        .ok_or(YacasError::InvalidArg)?;
-    if big.is_zero() {
-        return Ok(int_number(0));
-    }
-    let bits = nat_bit_len(&big);
+    // Like upstream LispBitCount(x->BitCount()): bit length of the absolute
+    // integer part (2.5 -> 2, 0.5 -> 0, 2^100 -> 101, -5 -> 3). Work from
+    // Float's represented value so a decimal exponent is not discarded.
+    let bits = number.float_at(0).integer_bit_len();
     Ok(int_number(bits as i64))
 }
 

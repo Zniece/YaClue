@@ -25,6 +25,8 @@ fn bit_cmds() {
         ("MathBitCount(0)", "0"),
         ("MathBitCount(-5)", "3"),
         ("MathBitCount(0.5)", "0"),
+        ("MathBitCount(1e100)", "333"),
+        ("MathBitCount(1e1000)", "3322"),
         ("MathGetExactBits(2)", "2"),
         ("MathGetExactBits(2.)", "34"),
         ("MathGetExactBits(2^64)", "65"),

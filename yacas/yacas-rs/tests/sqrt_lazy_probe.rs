@@ -76,4 +76,8 @@ fn math_sqrt_float_no_hang() {
     assert!(r.starts_with("1.41421"), "MathSqrtFloat(2.) = {r}");
     let r2 = run(&mut env, "MathSqrt(4)");
     assert_eq!(r2, "2");
+    let scaled = run(&mut env, "N(Sqrt(1e100)/1e50)");
+    assert!(scaled.starts_with("0.999999"), "scaled sqrt(1e100) = {scaled}");
+    let scaled = run(&mut env, "N(Sqrt(1e1000)/1e500)");
+    assert!(scaled.starts_with("0.999999"), "scaled sqrt(1e1000) = {scaled}");
 }
