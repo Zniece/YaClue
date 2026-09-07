@@ -37,13 +37,13 @@
 /* Parameterized power/log growth. Keep the condition in the result so callers
    can explain why the branch is valid; legacy value predicates deliberately
    do not treat an assumed integer as a concrete numeric node. */
-290 # Lim(_var, Infinity, _dir, _var ^ _n / Ln(_var))_
-(IsAtom(n) And IsAssumedValue(n, Positive))
-<-- ConditionalValue(Infinity, ConditionGreater(n, 0));
+290 # Lim(_var, Infinity, _dir, _var ^ _power / Ln(_var))_
+(ApplyPure("IsKnownPositive", {power}))
+<-- ConditionalValue(Infinity, ConditionGreater(power, 0));
 
-290 # Lim(_var, Infinity, _dir, _var ^ _n / Ln(_var))_
-(IsAtom(n) And IsAssumedValue(n, Negative))
-<-- ConditionalValue(0, ConditionLess(n, 0));
+290 # Lim(_var, Infinity, _dir, _var ^ _power / Ln(_var))_
+(ApplyPure("IsKnownNegative", {power}))
+<-- ConditionalValue(0, ConditionLess(power, 0));
 
 /*  Special limit #4:  0 / 0;  #5:  Infinity / Infinity  */
 300 # Lim(_var, _tar, _dir, _x / _y)_

@@ -79,3 +79,21 @@ fn roots_and_absolute_values_respect_real_sign_assumptions() {
     assert_eq!(run(&mut env, "Simplify(Sqrt(x^2))"), "-x");
     assert_eq!(run(&mut env, "Simplify(Abs(x))"), "-x");
 }
+
+#[test]
+fn compound_assumptions_drive_parameterized_limits() {
+    let mut env = boot();
+    assert_eq!(run(&mut env, "Assume(m,Positive)"), "True");
+    assert_eq!(run(&mut env, "IsAssumedValue(2*m,Positive)"), "False");
+    assert_eq!(
+        run(&mut env, "Limit(x,Infinity)x^(2*m)/Ln(x)"),
+        "ConditionalValue(Infinity,ConditionGreater(2*m,0))"
+    );
+
+    assert_eq!(run(&mut env, "ClearAssumptions()"), "True");
+    assert_eq!(run(&mut env, "Assume(m,Negative)"), "True");
+    assert_eq!(
+        run(&mut env, "Limit(x,Infinity)x^(2*m)/Ln(x)"),
+        "ConditionalValue(0,ConditionLess(2*m,0))"
+    );
+}

@@ -1737,7 +1737,8 @@ pub fn cmd_is_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
 
 /// Add/query/clear environment-local assumptions. `Assume` and `IsAssumed`
 /// hold the symbol name. `IsAssumedValue` evaluates its first argument once
-/// for use inside script rules whose pattern parameter is locally bound.
+/// for use inside script rules whose pattern parameter is locally bound; a
+/// resolved non-symbol is simply not an assumed atom.
 pub fn cmd_assume(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
@@ -1770,9 +1771,11 @@ pub fn cmd_is_assumed_value(
         return Err(YacasError::WrongNumberOfArgs);
     }
     let symbol_node = eval(env, arg(inner, 0)?)?;
-    let symbol = symbol_node.atom_string().ok_or(YacasError::InvalidArg)?;
     let fact_name = arg(inner, 1)?.atom_string().ok_or(YacasError::InvalidArg)?;
     let fact = Assumption::parse(fact_name).ok_or(YacasError::InvalidArg)?;
+    let Some(symbol) = symbol_node.atom_string() else {
+        return Ok(env.false_atom());
+    };
     Ok(crate::standard::internal_boolean(
         env,
         env.is_assumed(symbol, fact),

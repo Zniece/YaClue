@@ -303,6 +303,30 @@ mod tests {
     }
 
     #[test]
+    fn compound_parameter_limit_reports_the_derived_condition() {
+        let mut engine = RustEngine::spawn().unwrap();
+        engine.eval("Assume(m,Positive)").unwrap();
+        let result = limit(
+            &mut engine,
+            "x^(2*m)/Ln(x)",
+            "x",
+            "Infinity",
+            LimitDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(result.status, LimitStatus::PositiveInfinity);
+        assert_eq!(result.value, "Infinity");
+        assert_eq!(
+            result.conditions,
+            vec![LimitCondition::Relation {
+                left: "(2 * m)".into(),
+                relation: Relation::GreaterThan,
+                right: "0".into(),
+            }]
+        );
+    }
+
+    #[test]
     fn parses_nested_condition_trees() {
         let condition = Expr::Call {
             head: "ConditionAnd".into(),
