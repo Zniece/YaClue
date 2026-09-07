@@ -3160,6 +3160,39 @@ fn int_number(v: i64) -> Rc<LispObject> {
         kind: ObjectKind::Number(num),
     })
 }
+
+#[derive(Debug)]
+struct SignedNat {
+    negative: bool,
+    magnitude: crate::number::nat::Nat,
+}
+
+impl SignedNat {
+    fn parse(text: &str) -> Result<Self, YacasError> {
+        let text = text.trim();
+        let (negative, digits) = match text.strip_prefix('-') {
+            Some(digits) => (true, digits),
+            None => (false, text.strip_prefix('+').unwrap_or(text)),
+        };
+        let magnitude = crate::number::nat::Nat::from_decimal(digits)
+            .ok_or(YacasError::InvalidArg)?;
+        Ok(Self {
+            negative: negative && !magnitude.is_zero(),
+            magnitude,
+        })
+    }
+
+    fn into_text(self) -> String {
+        let magnitude = self.magnitude.to_decimal();
+        if self.negative && magnitude != "0" { format!("-{magnitude}") } else { magnitude }
+    }
+}
+
+fn integer_text(node: &Rc<LispObject>) -> Result<String, YacasError> {
+    node.number_string()
+        .or_else(|| node.atom_string().map(|s| s.to_string()))
+        .ok_or(YacasError::InvalidArg)
+}
 pub fn cmd_bit_and(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
@@ -3180,42 +3213,73 @@ pub fn cmd_mod(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
     }
     let a = eval(env, arg(inner, 0)?)?;
     let b = eval(env, arg(inner, 1)?)?;
-    let at = a.number_string().or_else(|| a.atom_string().map(|s| s.to_string()))
-        .ok_or(YacasError::InvalidArg)?;
-    let bt = b.number_string().or_else(|| b.atom_string().map(|s| s.to_string()))
-        .ok_or(YacasError::InvalidArg)?;
+    let at = integer_text(&a)?;
+    let bt = integer_text(&b)?;
     // Fast path: i64; on overflow fall back to Nat big integers (PollardRho's
     // Mod(PollardRhoPolynomial(x),n) depends on big-int mod)
     if let (Ok(x), Ok(y)) = (at.trim().parse::<i64>(), bt.trim().parse::<i64>()) {
         if y == 0 {
             return Err(YacasError::InvalidArg);
         }
-        return Ok(int_number(x % y));
+        if y < 0 {
+            return crate::standard::return_un_evaluated(env, inner);
+        }
+        return Ok(int_number(x.rem_euclid(y)));
     }
-    let x = crate::number::nat::Nat::from_decimal(at.trim_start_matches('-')).ok_or(YacasError::InvalidArg)?;
-    let y = crate::number::nat::Nat::from_decimal(bt.trim_start_matches('-')).ok_or(YacasError::InvalidArg)?;
-    let (_, r) = x.divrem(&y).ok_or(YacasError::InvalidArg)?;
-    Ok(num_text(r.to_decimal()))
+    let x = SignedNat::parse(&at)?;
+    let y = SignedNat::parse(&bt)?;
+    if y.negative {
+        return crate::standard::return_un_evaluated(env, inner);
+    }
+    let (_, mut remainder) = x.magnitude.divrem(&y.magnitude).ok_or(YacasError::InvalidArg)?;
+    if x.negative && !remainder.is_zero() {
+        remainder = y.magnitude.sub(&remainder).ok_or(YacasError::InvalidArg)?;
+    }
+    Ok(num_text(remainder.to_decimal()))
 }
-/// Shift (like upstream LispShiftLeft/LispShiftRight). Positive-integer domain
-/// semantics (yacas BigNumber): left shift = *2^k, right shift = /2^k (floor).
-/// Overflow (shift amount >= 64) yields 0 under the engine's finite-precision
-/// model (positive values shift to 0; unrepresentably large results are not
-/// modeled). PositiveIntPower's `n <-- ShiftRight(n,1)` depends on this.
+/// Shift (like upstream LispShiftLeft/LispShiftRight): left shift multiplies
+/// by 2^k; right shift divides the magnitude by 2^k and truncates toward zero.
 fn cmd_shift(env: &mut Environment, inner: &Rc<LispObject>, left: bool) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let (a, k) = two_ints(env, inner)?;
+    let a = eval(env, arg(inner, 0)?)?;
+    let k = int_text_of(&eval(env, arg(inner, 1)?)?)?;
     if k < 0 {
         return Err(YacasError::InvalidArg);
     }
-    let v = if left {
-        if k >= 64 { 0 } else { a << k }
+    let text = integer_text(&a)?;
+    if let Ok(small) = text.trim().parse::<i64>() {
+        if left {
+            if let Ok(k32) = u32::try_from(k) {
+                if let Some(wide) = (small as i128).checked_shl(k32) {
+                    if let Ok(shifted) = i64::try_from(wide) {
+                        return Ok(int_number(shifted));
+                    }
+                }
+            }
+        } else {
+            let shifted = if k >= 64 {
+                0
+            } else {
+                ((small as i128) / (1i128 << k)) as i64
+            };
+            return Ok(int_number(shifted));
+        }
+    }
+    let mut value = SignedNat::parse(&text)?;
+    let k = u32::try_from(k).map_err(|_| YacasError::InvalidArg)?;
+    if !left && u64::from(k) >= value.magnitude.bit_len() {
+        return Ok(num_text("0".to_string()));
+    }
+    let factor = crate::number::nat::Nat::from_decimal("2").expect("2").pow(k);
+    value.magnitude = if left {
+        value.magnitude.mul(&factor)
     } else {
-        if k >= 64 { 0 } else { a >> k }
+        value.magnitude.divrem(&factor).ok_or(YacasError::InvalidArg)?.0
     };
-    Ok(int_number(v))
+    value.negative &= !value.magnitude.is_zero();
+    Ok(num_text(value.into_text()))
 }
 pub fn cmd_shift_left(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
     cmd_shift(env, inner, true)
@@ -3448,14 +3512,14 @@ pub fn cmd_math_gcd(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
     // overflow fall back to Nat big-integer Euclid (FactorizeInt's
     // Gcd(ProductPrimesTo257(),n) needs a ~128-bit product).
     if let (Ok(x), Ok(y)) = (at.trim().parse::<i64>(), bt.trim().parse::<i64>()) {
-        let mut x: i64 = x.unsigned_abs() as i64;
-        let mut y: i64 = y.unsigned_abs() as i64;
+        let mut x = x.unsigned_abs();
+        let mut y = y.unsigned_abs();
         while y != 0 {
             let r = x % y;
             x = y;
             y = r;
         }
-        return Ok(int_number(x));
+        return Ok(num_text(x.to_string()));
     }
     let mut x = crate::number::nat::Nat::from_decimal(at.trim_start_matches('-')).ok_or(YacasError::InvalidArg)?;
     let mut y = crate::number::nat::Nat::from_decimal(bt.trim_start_matches('-')).ok_or(YacasError::InvalidArg)?;
