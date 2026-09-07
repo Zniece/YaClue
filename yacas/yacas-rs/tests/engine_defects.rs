@@ -1,13 +1,11 @@
-//! 引擎缺陷专项:最小复现基线(每缺陷一个断言;修一个绿一个)。
+//! Regression coverage for fixed defects and completed investigations.
 //!
-//! 缺陷清单(探查记录见 processing 侧会话):
-//! - D1 IsNumber(1/2) = False(有理式以未求值 MathDiv 存在)
-//! - D2 N() 经函数参数传入不求值(顶层 N(1/2)=0.5,参数路径原样)
-//! - D3 IsFreeOf(函数头, 含该头的表达式) = True(误判"自由")
-//! - D4 IsOddFunction(x^3, x) = False((−x)^n 未展开/规范化缺失)
-//! - D5 Simplify 对非规范存储树产出代数不等结果(零 → 非零)
-//! - D6 求值快路径:已规范化树每次求值仍全量重扫规则表(性能)
-//! - D7 引擎求值无超时机制(病态输入挂死)
+//! D3: function-head freedom checks; D4: odd-power parity; D7: eval timeout.
+//! D5: closed without reproducing the historical report; reconstructed
+//! expression trees and derivative grouping remain covered below.
+//! D2: reproducible inherited behavior: N evaluates a direct rational but
+//! loses numeric evaluation when the same expression arrives via a function
+//! parameter. It remains ignored until fixed.
 
 use yacas_rs::env::Environment;
 use yacas_rs::evaluator::eval;
@@ -59,26 +57,14 @@ fn d7_eval_timeout() {
     env.set_eval_timeout(None);
 }
 
-/// D1/D2 的共同根因:fork 用未求值 `/` 树表示有理数(上游 BigNumber 原生
-/// QQ,Rational 是 Number 节点)。修复 = 数值层加有理数表示(独立里程碑),
-/// 此前两断言保持失败挂账。
 #[test]
-#[ignore = "D1:等有理数表示(数值层里程碑)"]
-fn d1_is_number_rational() {
-    let mut env = Environment::new();
-    boot(&mut env);
-    assert_eq!(run(&mut env, "IsNumber(4)"), "True");
-    assert_eq!(run(&mut env, "IsNumber(1/2)"), "True");
-}
-
-#[test]
-#[ignore = "D2:与 D1 同根(有理数表示);上游变量取值同样不重求值"]
+#[ignore = "D2: N() does not numerically evaluate a rational passed through a function parameter"]
 fn d2_n_through_parameter() {
     let mut env = Environment::new();
     boot(&mut env);
     assert_eq!(run(&mut env, "N(1/2)"), "0.5");
-    assert_eq!(run(&mut env, "scrap(y) := N(y)"), "True");
-    assert_eq!(run(&mut env, "scrap(1/2)"), "0.5");
+    assert_eq!(run(&mut env, "d2numeric(y) := N(y)"), "True");
+    assert_eq!(run(&mut env, "d2numeric(1/2)"), "0.5");
 }
 
 #[test]
@@ -96,4 +82,82 @@ fn d4_is_odd_function_power() {
     // 注:Sin(x) 的奇偶判定还依赖完整应用链的三角规范化规则,不在最小 boot 内
     assert_eq!(run(&mut env, "IsOddFunction(x^3, x)"), "True");
     assert_eq!(run(&mut env, "IsOddFunction(x^2, x)"), "False");
+}
+
+/// D5 was reported without the original F4 construction. These are guards
+/// for reconstructed cases, not a claim that the original defect is fixed.
+/// The frozen C++ oracle agrees on their mathematical values; Simplify may
+/// leave trigonometric identities unevaluated, so compare numeric values
+/// against independent analytic expectations instead of requiring literal 0.
+fn boot_d5(env: &mut Environment) {
+    env.set_eval_timeout(Some(std::time::Duration::from_secs(20)));
+    let scripts = concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/");
+    assert_eq!(run(env, &format!("DefaultDirectory(\"{scripts}\")")), "True");
+    assert_eq!(run(env, "Load(\"yacasinit.ys\")"), "True");
+    assert_eq!(run(env, "Builtin'Precision'Set(20)"), "True");
+}
+
+fn d5_value_at(env: &mut Environment, expression: &str, point: &str) -> f64 {
+    let command = format!("N(Eval(ApplyPure(\"Subst\",{{x,{point},{expression}}})))");
+    let result = run(env, &command);
+    result.parse().unwrap_or_else(|e| panic!("{command}: non-numeric {result:?}: {e}"))
+}
+
+fn d5_assert_close(actual: f64, expected: f64, context: &str) {
+    assert!(
+        actual.is_finite() && (actual - expected).abs() < 1e-12,
+        "{context}: expected {expected}, got {actual}"
+    );
+}
+
+#[test]
+fn d5_simplify_preserves_reconstructed_antiderivatives() {
+    let mut env = Environment::new();
+    boot_d5(&mut env);
+    for (setup, noncanonical) in [
+        ("F4:=x/2-Sin(x)*Cos(x)/2", false),
+        ("F4:=Hold((x+(-2*Sin(x)*Cos(x))/2)/2)", true),
+        ("F4:=Subst(theta,x)Hold((theta+(-2*Sin(theta)*Cos(theta))/2)/2)", true),
+        ("F4:=ApplyPure(\"Subst\",{theta,x,Hold(theta/2-Sin(2*theta)/4)})", false),
+    ] {
+        run(&mut env, setup);
+        let stored = run(&mut env, "F4");
+        if noncanonical {
+            assert_ne!(stored, run(&mut env, "Eval(F4)"), "{setup}: must exercise a raw stored tree");
+        }
+        run(&mut env, "d5Residual:=(Deriv(x) F4)-Sin(x)^2");
+        run(&mut env, "d5SimplifiedResidual:=Simplify(d5Residual)");
+        run(&mut env, "d5SimplifiedPrimitive:=Simplify(F4)");
+        for (point, x) in [
+            ("0", 0.0_f64),
+            ("1/4", 0.25),
+            ("Pi/4", std::f64::consts::FRAC_PI_4),
+            ("1", 1.0),
+        ] {
+            // Analytic primitive of sin(x)^2, evaluated independently in Rust.
+            let expected = x / 2.0 - (2.0 * x).sin() / 4.0;
+            for expression in ["F4", "d5SimplifiedPrimitive"] {
+                let actual = d5_value_at(&mut env, expression, point);
+                d5_assert_close(actual, expected, &format!("{setup}: {expression} at {point}"));
+            }
+            for expression in ["d5Residual", "d5SimplifiedResidual"] {
+                let actual = d5_value_at(&mut env, expression, point);
+                d5_assert_close(actual, 0.0, &format!("{setup}: {expression} at {point}"));
+            }
+        }
+        assert_eq!(run(&mut env, "F4"), stored, "Simplify must not mutate the stored input");
+    }
+}
+
+#[test]
+fn d5_derivative_residual_requires_explicit_grouping() {
+    let mut env = Environment::new();
+    boot_d5(&mut env);
+    run(&mut env, "F4:=Subst(theta,x)Hold((theta+(-2*Sin(theta)*Cos(theta))/2)/2)");
+    // Deriv is bodied: the subtraction belongs to its body unless the
+    // derivative call itself is parenthesized. This also holds in cyacas.
+    run(&mut env, "d5Correct:=Simplify((Deriv(x) F4)-Sin(x)^2)");
+    run(&mut env, "d5Ungrouped:=Simplify(Deriv(x) F4-Sin(x)^2)");
+    d5_assert_close(d5_value_at(&mut env, "d5Correct", "Pi/4"), 0.0, "grouped residual");
+    d5_assert_close(d5_value_at(&mut env, "d5Ungrouped", "Pi/4"), -0.5, "derivative of the whole difference");
 }
