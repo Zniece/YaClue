@@ -21,6 +21,12 @@ pub enum LimitStatus {
     Unresolved,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LimitCondition {
+    pub symbol: String,
+    pub fact: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LimitResult {
     pub status: LimitStatus,
@@ -30,6 +36,7 @@ pub struct LimitResult {
     pub value: String,
     pub tex: String,
     pub direction: LimitDirection,
+    pub conditions: Vec<LimitCondition>,
 }
 
 pub fn limit(
@@ -49,17 +56,58 @@ pub fn limit(
         LimitDirection::Right => format!("{variable},{at},Right"),
     };
     let result = engine.eval(&format!("Limit({args})({expression})"))?;
-    let value = result.expr.to_string();
-    let status = classify(&result.expr, &value);
+    let (value_expr, conditions) = unpack_conditional(result.expr)?;
+    let value = value_expr.to_string();
+    let status = classify(&value_expr, &value);
+    let tex = if conditions.is_empty() {
+        strip_dollars(&result.tex)
+    } else {
+        strip_dollars(&engine.eval(&value)?.tex)
+    };
     Ok(LimitResult {
         status,
         expression: expression.trim().into(),
         variable: variable.into(),
         at: at.trim().into(),
         value,
-        tex: strip_dollars(&result.tex),
+        tex,
         direction,
+        conditions,
     })
+}
+
+fn unpack_conditional(expr: Expr) -> Result<(Expr, Vec<LimitCondition>), EngineError> {
+    let Expr::Call { head, mut args } = expr else {
+        return Ok((expr, vec![]));
+    };
+    if head != "ConditionalValue" || args.len() != 2 {
+        return Ok((Expr::Call { head, args }, vec![]));
+    }
+    let condition_expr = args.pop().unwrap();
+    let value = args.pop().unwrap();
+    let conditions = list_items(&condition_expr)?
+        .iter()
+        .map(|condition| {
+            let pair = list_items(condition)?;
+            if pair.len() != 2 {
+                return Err(EngineError::Parse(format!(
+                    "极限条件不是二元组: {condition}"
+                )));
+            }
+            Ok(LimitCondition {
+                symbol: pair[0].to_string(),
+                fact: pair[1].to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((value, conditions))
+}
+
+fn list_items(expr: &Expr) -> Result<&[Expr], EngineError> {
+    match expr {
+        Expr::Call { head, args } if head == "List" => Ok(args),
+        other => Err(EngineError::Parse(format!("极限条件不是列表: {other}"))),
+    }
 }
 
 fn classify(expr: &Expr, value: &str) -> LimitStatus {
@@ -158,6 +206,43 @@ mod tests {
             args: vec![],
         };
         assert_eq!(classify(&held, "Limit(x,0)f(x)"), LimitStatus::Unresolved);
+    }
+
+    #[test]
+    fn parameter_limit_reports_the_assumption_it_used() {
+        let mut engine = RustEngine::spawn().unwrap();
+        engine.eval("Assume(n,Positive)").unwrap();
+        let result = limit(
+            &mut engine,
+            "x^n/Ln(x)",
+            "x",
+            "Infinity",
+            LimitDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(result.status, LimitStatus::PositiveInfinity);
+        assert_eq!(result.value, "Infinity");
+        assert_eq!(
+            result.conditions,
+            vec![LimitCondition {
+                symbol: "n".into(),
+                fact: "Positive".into(),
+            }]
+        );
+
+        engine.eval("ClearAssumptions()").unwrap();
+        engine.eval("Assume(n,Negative)").unwrap();
+        let negative = limit(
+            &mut engine,
+            "x^n/Ln(x)",
+            "x",
+            "Infinity",
+            LimitDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(negative.status, LimitStatus::Converged);
+        assert_eq!(negative.value, "0");
+        assert_eq!(negative.conditions[0].fact, "Negative");
     }
 
     #[test]

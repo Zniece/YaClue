@@ -47,3 +47,9 @@ These facts are queried explicitly. Legacy value predicates such as
 do not consume assumptions. Mathematical rules must opt in through
 `IsAssumed` so they cannot accidentally perform numeric operations on a
 symbolic value.
+
+Assumption-aware rules keep their dependency in the expression as
+`ConditionalValue(value, {{symbol, fact}, ...})`. Product adapters may unwrap
+this internal carrier for display while retaining the condition metadata. The
+first consumer is the positive/negative parameter branch of
+`Limit(x, Infinity) x^n/Ln(x)`.

@@ -34,6 +34,15 @@
 
 /*  Division rules  */
 
+/* Parameterized power/log growth. Keep the condition in the result so callers
+   can explain why the branch is valid; legacy value predicates deliberately
+   do not treat an assumed integer as a concrete numeric node. */
+290 # Lim(_var, Infinity, _dir, _var ^ _n / Ln(_var))_(IsAssumed(n, Positive))
+<-- ConditionalValue(Infinity, {{n, Positive}});
+
+290 # Lim(_var, Infinity, _dir, _var ^ _n / Ln(_var))_(IsAssumed(n, Negative))
+<-- ConditionalValue(0, {{n, Negative}});
+
 /*  Special limit #4:  0 / 0;  #5:  Infinity / Infinity  */
 300 # Lim(_var, _tar, _dir, _x / _y)_
 ( [
