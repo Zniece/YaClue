@@ -3548,7 +3548,11 @@ pub fn cmd_precision_set(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
     if n < 1 {
         return Err(YacasError::InvalidArg);
     }
-    env.precision = n as u32;
+    let precision = u32::try_from(n).map_err(|_| YacasError::NumericOverflow)?;
+    if precision > crate::number::limits::MAX_DECIMAL_WORK_DIGITS {
+        return Err(YacasError::NumericOverflow);
+    }
+    env.precision = precision;
     Ok(env.true_atom())
 }
 
@@ -3618,6 +3622,9 @@ fn cmd_math_set_exact_bits(env: &mut Environment, inner: &Rc<LispObject>) -> Res
     let v = eval(env, arg(inner, 0)?)?;
     match &v.kind {
         ObjectKind::Number(n) if n.is_float() => {
+            if bits > crate::number::limits::MAX_BINARY_WORK_BITS as i64 {
+                return Err(YacasError::NumericOverflow);
+            }
             let frac = ((bits.max(0) as f64) * std::f64::consts::LOG10_2).floor();
             let frac = if frac < 0.0 { 0u32 } else { frac as u32 };
             // float_at(0): unpadded stored form (padding would count trailing
@@ -4424,6 +4431,9 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
+    if env.precision() > crate::number::limits::MAX_DECIMAL_WORK_DIGITS {
+        return Err(YacasError::NumericOverflow);
+    }
     let bv = eval(env, arg(inner, 0)?)?;
     let base = match &bv.kind {
         ObjectKind::Number(n) if !n.is_float() => n
@@ -4438,6 +4448,9 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     let sv = eval(env, arg(inner, 1)?)?;
     let st = sv.atom_string().ok_or(YacasError::InvalidArg)?;
     let s = crate::standard::internal_unstringify(st).unwrap_or(st);
+    if s.len() > crate::number::limits::MAX_DECIMAL_WORK_DIGITS as usize + 32 {
+        return Err(YacasError::NumericOverflow);
+    }
 
     let (neg, rest) = match s.strip_prefix('-') {
         Some(r) => (true, r),
@@ -4468,6 +4481,9 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     let mut sig = (mant_end - digit1) as i64;
     if chars[digit1..mant_end].contains(&'.') {
         sig -= 1;
+    }
+    if sig > crate::number::limits::MAX_DECIMAL_WORK_DIGITS as i64 {
+        return Err(YacasError::NumericOverflow);
     }
     let (int_part, frac_part) = match dot {
         Some(d) if d < mant_end => {
@@ -4548,6 +4564,9 @@ pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
     if !(2..=32).contains(&base) {
         return Err(YacasError::InvalidArg);
     }
+    if env.precision() > crate::number::limits::MAX_DECIMAL_WORK_DIGITS {
+        return Err(YacasError::NumericOverflow);
+    }
     let nv = eval(env, arg(inner, 1)?)?;
     let n = match &nv.kind {
         ObjectKind::Number(n) => n,
@@ -4560,6 +4579,9 @@ pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
             Some(r) => (true, r),
             None => (false, t.as_str()),
         };
+        if mag.len() > crate::number::limits::MAX_DECIMAL_WORK_DIGITS as usize {
+            return Err(YacasError::NumericOverflow);
+        }
         let m = crate::number::nat::Nat::from_decimal(mag).ok_or(YacasError::InvalidArg)?;
         let mut s = nat_to_base(&m, b32);
         if neg && s != "0" {
@@ -4571,6 +4593,11 @@ pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
     // as the e suffix)
     let f = n.float();
     let scale = f.frac_scale();
+    if scale > crate::number::limits::MAX_DECIMAL_WORK_DIGITS
+        || f.digit_count() > crate::number::limits::MAX_DECIMAL_WORK_DIGITS
+    {
+        return Err(YacasError::NumericOverflow);
+    }
     let den = crate::number::nat::Nat::from_decimal("1")
         .expect("one")
         .mul_pow10(scale);

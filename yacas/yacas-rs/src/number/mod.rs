@@ -7,4 +7,5 @@
 //! `tens_exp != 0` prints in e-form (mantissa in [0.1, 1)).
 
 pub mod float;
+pub(crate) mod limits;
 pub mod nat;

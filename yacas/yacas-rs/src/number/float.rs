@@ -77,7 +77,6 @@ impl Float {
     /// n < 0 divides by 2^m = ×5^m/10^m, which terminates exactly in
     /// decimal.
     pub fn mul2exp(&self, n: i64) -> Option<Float> {
-        const MAX_EXACT_SHIFT_BITS: u64 = 1_000_000;
         if self.digits.is_zero() {
             return Some(Float {
                 digits: self.digits.clone(),
@@ -89,7 +88,7 @@ impl Float {
             });
         }
         let magnitude = n.unsigned_abs();
-        if magnitude > MAX_EXACT_SHIFT_BITS {
+        if magnitude > super::limits::MAX_EXACT_SHIFT_BITS {
             return None;
         }
         if n >= 0 {
@@ -329,7 +328,7 @@ impl Float {
     /// value, including its decimal exponent; inspecting the literal text
     /// before `e` would turn values such as `1e100` into the integer `1`.
     pub fn integer_bit_len(&self) -> Option<u64> {
-        const MAX_INTEGER_EXPANSION: i64 = 100_000;
+        const MAX_INTEGER_EXPANSION: i64 = super::limits::MAX_DECIMAL_WORK_DIGITS as i64;
         let effective_exp = self.tens_exp - self.scale as i64;
         if effective_exp > MAX_INTEGER_EXPANSION {
             return None;
@@ -340,7 +339,7 @@ impl Float {
     /// Floor (toward −∞): the integer part, minus one more when a negative
     /// value has a fraction.
     pub fn floor(&self) -> Float {
-        const MAX_INTEGER_EXPANSION: i64 = 100_000;
+        const MAX_INTEGER_EXPANSION: i64 = super::limits::MAX_DECIMAL_WORK_DIGITS as i64;
         if self.tens_exp - self.scale as i64 > MAX_INTEGER_EXPANSION {
             return Float {
                 neg: self.neg,
@@ -366,7 +365,7 @@ impl Float {
     /// Ceil (toward +∞): the integer part, plus one more when a positive
     /// value has a fraction.
     pub fn ceil(&self) -> Float {
-        const MAX_INTEGER_EXPANSION: i64 = 100_000;
+        const MAX_INTEGER_EXPANSION: i64 = super::limits::MAX_DECIMAL_WORK_DIGITS as i64;
         if self.tens_exp - self.scale as i64 > MAX_INTEGER_EXPANSION {
             return Float {
                 neg: self.neg,
@@ -583,7 +582,7 @@ impl Float {
         // Keep ordinary arithmetic exact within its historical alignment
         // range. Beyond the bounded work limit, a term wholly below the
         // retained precision cannot affect the rendered numeric result.
-        const MAX_ALIGNMENT_DIGITS: u64 = 100_000;
+        const MAX_ALIGNMENT_DIGITS: u64 = super::limits::MAX_DECIMAL_WORK_DIGITS as u64;
         if guard > 0 && !self.digits.is_zero() && !o.digits.is_zero() {
             let self_lead = self
                 .tens_exp

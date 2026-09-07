@@ -95,6 +95,22 @@ fn oversized_exact_binary_shifts_are_bounded_without_poisoning_engine() {
 }
 
 #[test]
+fn oversized_precision_is_rejected_without_wrapping_or_poisoning_engine() {
+    let mut env = Environment::new();
+    boot(&mut env);
+    assert_eq!(run(&mut env, "Builtin'Precision'Get()"), "10");
+    for source in [
+        "Builtin'Precision'Set(100001)",
+        "Builtin'Precision'Set(4294967296)",
+        "MathSetExactBits(1., 332194)",
+    ] {
+        assert!(matches!(run_error(&mut env, source), YacasError::NumericOverflow));
+        assert_eq!(run(&mut env, "Builtin'Precision'Get()"), "10");
+        assert_eq!(run(&mut env, "2+2"), "4");
+    }
+}
+
+#[test]
 #[ignore = "D2: N() does not numerically evaluate a rational passed through a function parameter"]
 fn d2_n_through_parameter() {
     let mut env = Environment::new();
