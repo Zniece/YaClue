@@ -3,32 +3,108 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>分步 CAS 计算器</title>
+    <title>YaClue 后端体验台</title>
     <link rel="stylesheet" href="vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main>
-      <h1>分步 CAS 计算器</h1>
-      <p class="hint">输入表达式,对 <code>x</code> 分步求导,例如 <code>Sin(x)^2</code> 或 <code>x*Sin(x)</code></p>
-
-      <div class="row">
-        <select id="mode" title="运算类型">
-          <option value="d">求导</option>
-          <option value="i">积分</option>
-        </select>
-        <input id="expr" type="text" placeholder="Sin(x)^2" autofocus />
-        <button id="go">计算</button>
+    <header>
+      <div>
+        <p class="eyebrow">BACKEND PLAYGROUND</p>
+        <h1>YaClue 计算体验台</h1>
+        <p>阶段性原型：集中试用当前已经完成的计算、步骤和绘图能力。</p>
       </div>
+      <span id="engine-state" class="state">引擎就绪</span>
+    </header>
 
-      <section id="steps">
-        <h2>解题步骤</h2>
-        <div id="steps-list"></div>
+    <main>
+      <section class="card calculator">
+        <div class="toolbar">
+          <label class="wide">功能
+            <select id="mode">
+              <option value="derivative">分步求导</option>
+              <option value="integral">分步不定积分</option>
+              <option value="definite">分步定积分</option>
+              <option value="transform">代数变换</option>
+              <option value="equation">方程 / 方程组</option>
+              <option value="limit">极限</option>
+              <option value="plot">函数绘图</option>
+              <option value="evaluate">直接求值</option>
+            </select>
+          </label>
+          <label>变量<input id="variable" value="x" /></label>
+          <label data-for="steps">步骤粒度
+            <select id="verbosity">
+              <option value="standard">标准</option>
+              <option value="concise">简洁</option>
+              <option value="detailed">详细</option>
+            </select>
+          </label>
+          <label data-for="derivative">阶数<input id="order" type="number" min="1" value="1" /></label>
+          <label data-for="transform">变换
+            <select id="operation">
+              <option value="simplify">Simplify</option>
+              <option value="tidy">Tidy</option>
+              <option value="expand">Expand</option>
+              <option value="factor">Factor</option>
+              <option value="apart">Apart</option>
+            </select>
+          </label>
+          <label data-for="definite">下限<input id="from" value="0" /></label>
+          <label data-for="definite">上限<input id="to" value="Pi" /></label>
+          <label data-for="limit">趋近值<input id="at" value="0" /></label>
+          <label data-for="limit">方向
+            <select id="direction">
+              <option value="both">双侧</option>
+              <option value="left">左侧</option>
+              <option value="right">右侧</option>
+            </select>
+          </label>
+          <label data-for="plot">横轴最小值<input id="plot-min" type="number" value="-6.28" step="any" /></label>
+          <label data-for="plot">横轴最大值<input id="plot-max" type="number" value="6.28" step="any" /></label>
+        </div>
+
+        <label class="expression-label"><span id="expression-title">表达式</span>
+          <textarea id="expr" rows="3" spellcheck="false">Sin(x)^2</textarea>
+        </label>
+        <p id="input-help" class="help">输入 Yacas 表达式，例如 <code>Sin(x)^2</code>。</p>
+        <div class="actions">
+          <button id="go">计算</button>
+          <span id="timing"></span>
+        </div>
       </section>
 
-      <p id="error" class="error"></p>
+      <aside class="card assumptions">
+        <div class="section-title">
+          <div><p class="eyebrow">SESSION</p><h2>当前假设</h2></div>
+          <button id="clear-assumptions" class="quiet">全部清除</button>
+        </div>
+        <div class="assumption-form">
+          <input id="assumption-symbol" value="n" aria-label="假设符号" />
+          <select id="assumption-fact" aria-label="假设性质">
+            <option value="real">实数</option>
+            <option value="integer">整数</option>
+            <option value="positive">正数</option>
+            <option value="negative">负数</option>
+            <option value="non_zero">非零</option>
+          </select>
+          <button id="add-assumption">添加</button>
+        </div>
+        <div id="assumption-list" class="chips"><span class="empty">暂无假设</span></div>
+      </aside>
+
+      <section class="card output">
+        <div class="section-title"><div><p class="eyebrow">RESULT</p><h2>计算结果</h2></div></div>
+        <p id="error" class="error" hidden></p>
+        <div id="summary" hidden></div>
+        <div id="steps-list"></div>
+        <canvas id="plot" hidden></canvas>
+        <details id="raw-box" hidden><summary>结构化结果</summary><pre id="raw"></pre></details>
+        <div id="empty-result" class="empty-result">选择功能并开始计算。</div>
+      </section>
     </main>
+
     <script src="vendor/katex/katex.min.js"></script>
-    <script src="main.js"></script>
+    <script type="module" src="main.js"></script>
   </body>
 </html>

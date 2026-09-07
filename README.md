@@ -61,7 +61,13 @@ The product path is pure Rust — no C++ toolchain needed.
 
 ```bash
 # run the desktop app
-cd app && npm install && npm run tauri dev
+cd app
+npm install          # installs the project-local CLI in app/node_modules
+npm run tauri dev
+
+# compile the desktop binary without the Node CLI
+cd ..
+cargo build -p app
 
 # run the engine conformance suite
 cargo test -p yacas-rs
@@ -77,9 +83,11 @@ standard library.
 
 ## Status
 
-Work in progress. The engine conformance suite is fully green; the step layer
-currently covers derivatives (`StepsD`) and a growing family of integrals
-(`StepsI`).
+Work in progress. The desktop experience playground exposes the current
+processing APIs for step-by-step derivatives, indefinite and definite
+integrals, algebraic transformations, equations and systems, limits,
+function plotting, assumptions, and direct engine evaluation. It is an
+integration prototype rather than the final GUI design.
 
 ## Optional upstream comparison
 
