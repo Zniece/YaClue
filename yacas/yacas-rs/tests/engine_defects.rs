@@ -58,6 +58,19 @@ fn d7_eval_timeout() {
 }
 
 #[test]
+fn malformed_exponent_is_rejected_without_poisoning_engine() {
+    let mut env = Environment::new();
+    boot(&mut env);
+    for source in ["1e*2;", "1E+*2;", "1e-*2;"] {
+        assert!(
+            yacas_rs::parser::parse_expression(&mut env, source).is_err(),
+            "malformed exponent should be rejected: {source}"
+        );
+    }
+    assert_eq!(run(&mut env, "2+2"), "4");
+}
+
+#[test]
 #[ignore = "D2: N() does not numerically evaluate a rational passed through a function parameter"]
 fn d2_n_through_parameter() {
     let mut env = Environment::new();

@@ -208,6 +208,9 @@ impl Tokenizer {
                 if self.peek() == '-' || self.peek() == '+' {
                     n.push(self.next());
                 }
+                if !self.peek().is_ascii_digit() {
+                    return Err(TokenError::ParsingInput);
+                }
                 while self.peek().is_ascii_digit() {
                     n.push(self.next());
                 }
@@ -328,6 +331,17 @@ mod tests {
         assert_eq!(tokens("12345.678"), vec!["12345.678"]);
         // `+-` lexes as a single token (upstream syntax).
         assert_eq!(tokens("aa+-bb"), vec!["aa", "+-", "bb"]);
+    }
+
+    #[test]
+    fn exponent_requires_digits() {
+        for source in ["1e", "1E", "1e+", "1e-", "1.e+"] {
+            let mut tokenizer = Tokenizer::new(source);
+            assert!(matches!(
+                tokenizer.next_token(),
+                Err(TokenError::ParsingInput)
+            ));
+        }
     }
 
     #[test]
