@@ -36,7 +36,13 @@ fn boot(env: &mut Environment) {
     let d = format!("{}/", scripts_root());
     run(env, &format!("DefaultDirectory(\"{d}\")"));
     // T5-b:stdarith(cyacas console 序 standard 之后)—— 脚本算术规则链完整。
-    for f in ["stdopers.ys", "patterns.rep/code.ys", "deffunc.rep/code.ys", "standard.ys", "stdarith.ys"] {
+    for f in [
+        "stdopers.ys",
+        "patterns.rep/code.ys",
+        "deffunc.rep/code.ys",
+        "standard.ys",
+        "stdarith.ys",
+    ] {
         run(env, &format!("Use(\"{f}\")"));
     }
 }
@@ -57,7 +63,10 @@ fn internal_use_marks_loaded_before_load_failure_no_retry() {
         .map
         .get("no_such_file.ys")
         .expect("Use 已 get-or-create def 表项");
-    assert!(def.is_loaded, "失败也置位(照 cyacas SetLoaded 在 InternalLoad 前)");
+    assert!(
+        def.is_loaded,
+        "失败也置位(照 cyacas SetLoaded 在 InternalLoad 前)"
+    );
     // 二次 Use:已置位 → 跳过装载、不再报错(返回 True)
     assert_eq!(run(&mut env, "Use(\"no_such_file.ys\")"), "True");
 }
@@ -72,15 +81,30 @@ fn use_then_def_load_does_not_reload() {
     let mut env = Environment::new();
     boot(&mut env);
     assert!(
-        env.def_files.map.get("standard.ys").expect("Use 已建表项").is_loaded,
+        env.def_files
+            .map
+            .get("standard.ys")
+            .expect("Use 已建表项")
+            .is_loaded,
         "Use 装载后 def 表项已置 loaded"
     );
-    assert_eq!(run(&mut env, "DefLoad(\"standard.ys\")"), "True", "Use 后 DefLoad 可登记(首登记)");
-    assert!(matches!(
-        run_err(&mut env, "DefLoad(\"standard.ys\")"),
-        YacasError::DefFileAlreadyChosen
-    ), "二次 DefLoad 同文件 → 首符号已登记即错(照 cyacas)");
-    assert_eq!(run(&mut env, "Nth({a,b,c},2)"), "b", "Nth 探针正常=未重载(重载会 ArityAlreadyDefined)");
+    assert_eq!(
+        run(&mut env, "DefLoad(\"standard.ys\")"),
+        "True",
+        "Use 后 DefLoad 可登记(首登记)"
+    );
+    assert!(
+        matches!(
+            run_err(&mut env, "DefLoad(\"standard.ys\")"),
+            YacasError::DefFileAlreadyChosen
+        ),
+        "二次 DefLoad 同文件 → 首符号已登记即错(照 cyacas)"
+    );
+    assert_eq!(
+        run(&mut env, "Nth({a,b,c},2)"),
+        "b",
+        "Nth 探针正常=未重载(重载会 ArityAlreadyDefined)"
+    );
 }
 
 #[test]
@@ -94,8 +118,15 @@ fn parser_tolerates_eof_without_final_semicolon() {
     std::fs::write(&file, "x:=1;\ny").expect("write probe"); // 末语句 `y` 无分号
     let mut env = Environment::new();
     boot(&mut env);
-    run(&mut env, &format!("DefaultDirectory(\"{}/\")", dir.display()));
-    assert_eq!(run(&mut env, "Use(\"r4probe.ys\")"), "True", "末语句无分号仍装载(照 cyacas)");
+    run(
+        &mut env,
+        &format!("DefaultDirectory(\"{}/\")", dir.display()),
+    );
+    assert_eq!(
+        run(&mut env, "Use(\"r4probe.ys\")"),
+        "True",
+        "末语句无分号仍装载(照 cyacas)"
+    );
     assert_eq!(run(&mut env, "x"), "1", "装载内容生效");
     std::fs::remove_dir_all(&dir).ok();
 }

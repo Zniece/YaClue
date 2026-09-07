@@ -48,7 +48,13 @@ fn boot(env: &mut Environment) {
     let f = format!("{}/", fixtures_dir());
     run(env, &format!("DefaultDirectory(\"{f}\")"));
     // T5-b:stdarith(cyacas console 序 standard 之后)—— Probe1 体 `2*x` 脚本 * 规则。
-    for f in ["stdopers.ys", "patterns.rep/code.ys", "deffunc.rep/code.ys", "standard.ys", "stdarith.ys"] {
+    for f in [
+        "stdopers.ys",
+        "patterns.rep/code.ys",
+        "deffunc.rep/code.ys",
+        "standard.ys",
+        "stdarith.ys",
+    ] {
         run(env, &format!("Use(\"{f}\")"));
     }
 }
@@ -74,12 +80,22 @@ fn def_load_claims_symbols_then_first_call_triggers_load() {
     assert_eq!(run(&mut env, "DefLoad(\"pack1.ys\")"), "True");
     // 登记态:未装载、Probe1 挂点已设、符号已 Protect
     assert!(
-        !env.def_files.map.get("pack1.ys").expect("def 表项已建").is_loaded,
+        !env.def_files
+            .map
+            .get("pack1.ys")
+            .expect("def 表项已建")
+            .is_loaded,
         "DefLoad 只登记不装载(cyacas 实测)"
     );
     let name = yacas_rs::standard::symbol_name(&mut env, "Probe1");
-    assert!(env.is_protected(&name), "登记即 Protect(照 DoLoadDefFile:70)");
-    let entry = env.user_functions.get(&name).expect("Probe1 条目 get-or-create");
+    assert!(
+        env.is_protected(&name),
+        "登记即 Protect(照 DoLoadDefFile:70)"
+    );
+    let entry = env
+        .user_functions
+        .get(&name)
+        .expect("Probe1 条目 get-or-create");
     assert!(
         entry.inner.borrow().file_to_open.is_some(),
         "挂点已设(首调用懒触发用)"
@@ -90,7 +106,10 @@ fn def_load_claims_symbols_then_first_call_triggers_load() {
         env.def_files.map.get("pack1.ys").unwrap().is_loaded,
         "首调用已触发装载"
     );
-    assert!(env.is_protected(&name), "装载后重 Protect(照 InternalUse,standard.cpp:434-435)");
+    assert!(
+        env.is_protected(&name),
+        "装载后重 Protect(照 InternalUse,standard.cpp:434-435)"
+    );
 }
 
 #[test]

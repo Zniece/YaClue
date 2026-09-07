@@ -12,15 +12,34 @@ use ys::evaluator::eval;
 use ys::parser::parse_expression;
 use ys::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap().expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap()
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn fast_is_prime_and_mathfac() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
-    for p in ["IsPrime(7)", "IsPrime(97)", "IsPrime(100)", "5!", "10!", "100!", "MathFac(5)"] {
+    for p in [
+        "IsPrime(7)",
+        "IsPrime(97)",
+        "IsPrime(100)",
+        "5!",
+        "10!",
+        "100!",
+        "MathFac(5)",
+    ] {
         println!("P| {p} => {}", run(&mut e, p));
     }
 }

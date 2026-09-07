@@ -15,16 +15,23 @@ fn boot() -> Environment {
     let mut e = Environment::new();
     let scripts = concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts");
     let t = parse_expression(&mut e, &format!("DefaultDirectory(\"{scripts}/\");"))
-        .unwrap().expect("ok");
+        .unwrap()
+        .expect("ok");
     eval(&mut e, &t).unwrap();
-    let t = parse_expression(&mut e, "Load(\"yacasinit.ys\");").unwrap().expect("ok");
-    assert_eq!(eval(&mut e, &t).map(|r| infix_print(&e, &r)).unwrap(), "True");
+    let t = parse_expression(&mut e, "Load(\"yacasinit.ys\");")
+        .unwrap()
+        .expect("ok");
+    assert_eq!(
+        eval(&mut e, &t).map(|r| infix_print(&e, &r)).unwrap(),
+        "True"
+    );
     e
 }
 
 fn run1(e: &mut Environment, src: &str) -> String {
     let t = parse_expression(e, &format!("{src};"))
-        .unwrap_or_else(|er| panic!("parse {src}: {er:?}")).expect("ok");
+        .unwrap_or_else(|er| panic!("parse {src}: {er:?}"))
+        .expect("ok");
     match eval(e, &t) {
         Ok(r) => infix_print(e, &r),
         Err(er) => format!("ERR({er:?})"),
@@ -35,8 +42,14 @@ fn run1(e: &mut Environment, src: &str) -> String {
 fn echo_multiarg_listed_fix() {
     let mut e = boot();
     // cyacas oracle: Echo 多参全打 + 换行(ToString 捕获含 \n)
-    assert_eq!(run1(&mut e, r#"ToString()[Echo("a","b","c");]"#), "\"abc\n\"");
-    assert_eq!(run1(&mut e, r#"ToString()[Echo("single");]"#), "\"single\n\"");
+    assert_eq!(
+        run1(&mut e, r#"ToString()[Echo("a","b","c");]"#),
+        "\"abc\n\""
+    );
+    assert_eq!(
+        run1(&mut e, r#"ToString()[Echo("single");]"#),
+        "\"single\n\""
+    );
     assert_eq!(run1(&mut e, r#"ToString()[Echo({1,2});]"#), "\"1 2 \n\"");
     assert_eq!(run1(&mut e, r#"ToString()[Echo("x=",1+1);]"#), "\"x=2 \n\"");
 }

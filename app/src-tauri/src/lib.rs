@@ -169,9 +169,7 @@ fn set_assumption(
 }
 
 #[tauri::command]
-fn clear_assumptions(
-    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<(), String> {
+fn clear_assumptions(engine: tauri::State<'_, Mutex<RustEngineProxy>>) -> Result<(), String> {
     let mut engine = lock_engine(&engine)?;
     processing::assumptions::clear_assumptions(&mut *engine).map_err(message)
 }

@@ -25,7 +25,12 @@ pub struct CoreCommand {
 }
 
 /// Evaluate an owned expression.
-pub fn eval_owned(env: &mut Environment, expr: Rc<LispObject>) -> Result<Rc<LispObject>, crate::errors::YacasError> { eval(env, &expr) }
+pub fn eval_owned(
+    env: &mut Environment,
+    expr: Rc<LispObject>,
+) -> Result<Rc<LispObject>, crate::errors::YacasError> {
+    eval(env, &expr)
+}
 
 pub fn eval(env: &mut Environment, expr: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
     env.eval_depth += 1;
@@ -55,12 +60,20 @@ pub fn eval(env: &mut Environment, expr: &Rc<LispObject>) -> Result<Rc<LispObjec
     // temporarily set `in_callback` so the hooks do not re-trigger.
     let debug_active = {
         let d = env.debugger.borrow();
-        d.as_ref().map(|d| !d.in_callback && !d.stopped).unwrap_or(false)
+        d.as_ref()
+            .map(|d| !d.in_callback && !d.stopped)
+            .unwrap_or(false)
     };
     let mut err_after_leave: Option<YacasError> = None;
     if debug_active {
         // Enter: record top_expr, then evaluate the enter callback.
-        let enter_cb = env.debugger.borrow().as_ref().expect("dbg").enter_cb.clone();
+        let enter_cb = env
+            .debugger
+            .borrow()
+            .as_ref()
+            .expect("dbg")
+            .enter_cb
+            .clone();
         {
             let mut d = env.debugger.borrow_mut();
             d.as_mut().expect("dbg").top_expr = Some(copy_node(expr));
@@ -84,7 +97,13 @@ pub fn eval(env: &mut Environment, expr: &Rc<LispObject>) -> Result<Rc<LispObjec
     };
     if debug_active {
         // Leave: record top_expr/top_result, then evaluate the leave callback.
-        let leave_cb = env.debugger.borrow().as_ref().expect("dbg").leave_cb.clone();
+        let leave_cb = env
+            .debugger
+            .borrow()
+            .as_ref()
+            .expect("dbg")
+            .leave_cb
+            .clone();
         {
             let mut d = env.debugger.borrow_mut();
             d.as_mut().expect("dbg").top_expr = Some(copy_node(expr));
@@ -153,14 +172,21 @@ fn eval_inner(env: &mut Environment, expr: &Rc<LispObject>) -> Result<Rc<LispObj
                 let nargs = {
                     let mut n = 0usize;
                     let mut c = sub_list.next.as_ref();
-                    while let Some(x) = c { n += 1; c = x.next.as_ref(); }
+                    while let Some(x) = c {
+                        n += 1;
+                        c = x.next.as_ref();
+                    }
                     n
                 };
                 if nargs == 2 {
                     let left = sub_list.next.as_ref().expect(":= left");
                     let right = sub_list
-                        .next.as_ref().expect(":= right1")
-                        .next.as_ref().expect(":= right2");
+                        .next
+                        .as_ref()
+                        .expect(":= right1")
+                        .next
+                        .as_ref()
+                        .expect(":= right2");
                     if let Some(r) = crate::commands::try_nth_assign(env, left, right)? {
                         return Ok(r);
                     }
@@ -217,7 +243,9 @@ fn user_func_lookup(
     name: &Rc<str>,
     arity: usize,
 ) -> Option<Rc<dyn crate::userfunc::UserFunction>> {
-    env.user_functions.get(name).and_then(|m| m.user_func(arity))
+    env.user_functions
+        .get(name)
+        .and_then(|m| m.user_func(arity))
 }
 
 /// Lambda application: `(({x,y} body) args...)` binds x,y to args and
@@ -227,7 +255,11 @@ fn apply_pure(env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObj
     let oper = inner;
     let oper_subl = match oper.sublist() {
         Some(s) => s,
-        None => return Err(YacasError::Generic("apply_pure: head is not a sublist".into())),
+        None => {
+            return Err(YacasError::Generic(
+                "apply_pure: head is not a sublist".into(),
+            ))
+        }
     };
     let oper2 = oper_subl.next.as_ref().ok_or_else(|| {
         let s = crate::printer::infix_print(env, call);
@@ -236,13 +268,23 @@ fn apply_pure(env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObj
     // oper2 is the parameter-list sublist; the body follows it.
     let body = oper2.next.as_ref().ok_or_else(|| {
         let s = crate::printer::infix_print(env, call);
-        YacasError::Generic(format!("apply_pure(missing body) on {s} | ff={}", crate::printer::full_form(call)))
+        YacasError::Generic(format!(
+            "apply_pure(missing body) on {s} | ff={}",
+            crate::printer::full_form(call)
+        ))
     })?;
     let params = match oper2.sublist() {
         Some(p) => p,
-        None => return Err(YacasError::Generic("apply_pure: params is not a sublist".into())),
+        None => {
+            return Err(YacasError::Generic(
+                "apply_pure: params is not a sublist".into(),
+            ))
+        }
     };
-    let args_cur = inner.next.as_ref().ok_or_else(|| YacasError::Generic("apply_pure: missing arguments".into()))?;
+    let args_cur = inner
+        .next
+        .as_ref()
+        .ok_or_else(|| YacasError::Generic("apply_pure: missing arguments".into()))?;
     let s = crate::printer::infix_print(env, call);
     env.push_local_frame(false);
     let result = (|| {
@@ -259,7 +301,9 @@ fn apply_pure(env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObj
             a = av.next.as_ref();
         }
         if a.is_some() {
-            return Err(YacasError::Generic("apply_pure: more arguments than parameters".into()));
+            return Err(YacasError::Generic(
+                "apply_pure: more arguments than parameters".into(),
+            ));
         }
         crate::evaluator::eval(env, body)
     })();

@@ -19,7 +19,11 @@ use std::process::Command;
 fn main() {
     let name = std::env::args().nth(1).unwrap_or_else(|| "l1".into());
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo = manifest.parent().and_then(|p| p.parent()).expect("repo root").to_path_buf();
+    let repo = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("repo root")
+        .to_path_buf();
     let probes = manifest.join(format!("tests/probes_{name}.txt"));
     // l1 keeps the historical name golden.txt; the rest are golden_<name>.txt.
     let golden_path = if name == "l1" {
@@ -42,8 +46,11 @@ fn main() {
         .filter(|s| !s.starts_with('>'))
         .collect();
 
-    let cyacas = std::env::var("YACAS_BIN")
-        .unwrap_or_else(|_| repo.join("build-ref/cyacas/yacas/yacas").to_string_lossy().into_owned());
+    let cyacas = std::env::var("YACAS_BIN").unwrap_or_else(|_| {
+        repo.join("build-ref/cyacas/yacas/yacas")
+            .to_string_lossy()
+            .into_owned()
+    });
     let scripts = std::env::var("YACAS_SCRIPTS")
         .unwrap_or_else(|_| repo.join("yacas/scripts").to_string_lossy().into_owned());
     let mut input: String = raw_lines

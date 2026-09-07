@@ -7,7 +7,8 @@ use yacas_rs::printer::infix_print;
 
 fn run(env: &mut Environment, src: &str) -> String {
     let t = parse_expression(env, &format!("{src};"))
-        .unwrap_or_else(|e| panic!("parse {src}: {e:?}")).expect("非空");
+        .unwrap_or_else(|e| panic!("parse {src}: {e:?}"))
+        .expect("非空");
     match eval(env, &t) {
         Ok(r) => infix_print(env, &r),
         Err(e) => format!("ERR({e:?})"),
@@ -35,13 +36,17 @@ fn e2e_payload2() {
     // 已知实现差异(C++ 二进制 limb 量化噪声,末 1-2 位;位数一致——historical porting notes):
     // 级数链数值函数 Sin/Cos/Tan/Exp(Trig/MathExpTaylor0 循环体)
     let known_diff = |e: &str| {
-        e.starts_with("N(Sin(") || e.starts_with("N(Cos(")
-            || e.starts_with("N(Tan(") || e.starts_with("N(Exp(")
+        e.starts_with("N(Sin(")
+            || e.starts_with("N(Cos(")
+            || e.starts_with("N(Tan(")
+            || e.starts_with("N(Exp(")
     };
     let digit_count = |s: &str| s.replace(['.', 'e', 'E', '-'], "").len();
     for line in probes.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if let Some(setup) = line.strip_prefix('>') {
             let _ = run(&mut env, setup);
             continue;
@@ -50,15 +55,35 @@ fn e2e_payload2() {
         let expected = golden_outs[checked];
         let known = known_diff(golden_exprs.get(checked).unwrap_or(&""));
         let ok = actual == expected
-            || (known && digit_count(&actual) == digit_count(expected)
+            || (known
+                && digit_count(&actual) == digit_count(expected)
                 && actual.starts_with(&expected[..expected.len().saturating_sub(2)]));
         if !ok {
             // 汇报模式:收集全量分歧,一次看全局再排优先级(不首遇即 panic)
-            eprintln!("[DIFF] #{} {} => {:?} (期望 {:?})", checked + 1, golden_exprs.get(checked).unwrap_or(&"? "), actual, expected);
-            fails.push((checked + 1, golden_exprs.get(checked).unwrap_or(&"? ").to_string()));
+            eprintln!(
+                "[DIFF] #{} {} => {:?} (期望 {:?})",
+                checked + 1,
+                golden_exprs.get(checked).unwrap_or(&"? "),
+                actual,
+                expected
+            );
+            fails.push((
+                checked + 1,
+                golden_exprs.get(checked).unwrap_or(&"? ").to_string(),
+            ));
         }
         checked += 1;
     }
-    assert_eq!(checked, golden_outs.len(), "应对拍全部 {} 条", golden_outs.len());
-    assert!(fails.is_empty(), "e2e 第 2 批 {} 条分歧: {:#?}", fails.len(), fails);
+    assert_eq!(
+        checked,
+        golden_outs.len(),
+        "应对拍全部 {} 条",
+        golden_outs.len()
+    );
+    assert!(
+        fails.is_empty(),
+        "e2e 第 2 批 {} 条分歧: {:#?}",
+        fails.len(),
+        fails
+    );
 }

@@ -6,7 +6,8 @@ use yacas_rs::parser::parse_expression;
 use yacas_rs::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
     let t = parse_expression(env, &format!("{src};"))
-        .unwrap_or_else(|e| panic!("parse {src}: {e:?}")).expect("非空");
+        .unwrap_or_else(|e| panic!("parse {src}: {e:?}"))
+        .expect("非空");
     match eval(env, &t) {
         Ok(r) => infix_print(env, &r),
         Err(e) => format!("ERR({e:?})"),
@@ -31,7 +32,10 @@ fn precision_probe() {
         ("MathGetExactBits(1.414213562373097945823)", "74"),
         ("MathGetExactBits(9+0.)", "34"),
         ("MathSqrt(0)", "0"), // 触发加载
-        ("MathSetExactBits(1.414213562373097945823, 37)", "1.41421356237"),
+        (
+            "MathSetExactBits(1.414213562373097945823, 37)",
+            "1.41421356237",
+        ),
         ("MathSetExactBits(2., 37)", "2."),
         ("MathSqrt(2.)", "1.41421356237"),
         ("MathSqrt(9)", "3"),
@@ -51,10 +55,16 @@ fn precision_probe() {
     let known = ["MathSqrt(2.)", "MathSqrt(3.)", "MathSqrt(123456.789)"];
     for (p, exp) in probes {
         let got = run(&mut env, p);
-        let ok = got == exp
-            || (known.contains(&p) && got.starts_with(&exp[..exp.len() - 1]));
-        if !ok { fails += 1; }
-        eprintln!("[{:4}] {:44} => {:30} (期望 {exp})", if ok {"OK"} else {"FAIL"}, p, got);
+        let ok = got == exp || (known.contains(&p) && got.starts_with(&exp[..exp.len() - 1]));
+        if !ok {
+            fails += 1;
+        }
+        eprintln!(
+            "[{:4}] {:44} => {:30} (期望 {exp})",
+            if ok { "OK" } else { "FAIL" },
+            p,
+            got
+        );
     }
     assert_eq!(fails, 0, "{fails} 条未对齐");
 }

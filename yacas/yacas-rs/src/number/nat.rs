@@ -270,7 +270,9 @@ impl Nat {
                 if remainder == 0 {
                     Nat::zero()
                 } else {
-                    Nat { groups: vec![remainder] }
+                    Nat {
+                        groups: vec![remainder],
+                    }
                 },
             )));
         }
@@ -325,9 +327,7 @@ impl Nat {
                 estimate -= 1;
                 let mut carry = 0u64;
                 for i in 0..n {
-                    let sum = dividend[j + i] as u64
-                        + normalized_den.groups[i] as u64
-                        + carry;
+                    let sum = dividend[j + i] as u64 + normalized_den.groups[i] as u64 + carry;
                     dividend[j + i] = (sum % BASE) as u32;
                     carry = sum / BASE;
                 }
@@ -339,7 +339,9 @@ impl Nat {
         while quotient.last() == Some(&0) {
             quotient.pop();
         }
-        let normalized_remainder = Nat { groups: dividend[..n].to_vec() };
+        let normalized_remainder = Nat {
+            groups: dividend[..n].to_vec(),
+        };
         let (remainder, _) = normalized_remainder.div_small(normalization);
         Ok(Some((Nat { groups: quotient }, remainder)))
     }
@@ -360,8 +362,7 @@ fn pow_multiply(
     let product = left
         .mul_interruptible(right, interrupted)
         .map_err(|_| super::limits::NumericWorkError::Interrupted)?;
-    if enforce_limit
-        && product.to_decimal().len() > super::limits::MAX_DECIMAL_WORK_DIGITS as usize
+    if enforce_limit && product.to_decimal().len() > super::limits::MAX_DECIMAL_WORK_DIGITS as usize
     {
         return Err(super::limits::NumericWorkError::Overflow);
     }
@@ -407,7 +408,15 @@ mod tests {
 
     #[test]
     fn decimal_roundtrip() {
-        for s in ["0", "1", "9", "10", "999999999", "1000000000", "123456789012345678901234567890"] {
+        for s in [
+            "0",
+            "1",
+            "9",
+            "10",
+            "999999999",
+            "1000000000",
+            "123456789012345678901234567890",
+        ] {
             assert_eq!(n(s).to_decimal(), s, "roundtrip {s}");
         }
     }
@@ -424,7 +433,9 @@ mod tests {
         assert_eq!(n("1").add(&n("1")).to_decimal(), "2");
         assert_eq!(n("999999999").add(&n("1")).to_decimal(), "1000000000");
         assert_eq!(
-            n("12345678901234567890").add(&n("98765432109876543210")).to_decimal(),
+            n("12345678901234567890")
+                .add(&n("98765432109876543210"))
+                .to_decimal(),
             "111111111011111111100"
         );
     }
@@ -433,7 +444,10 @@ mod tests {
     fn mul_basic() {
         assert_eq!(n("6").mul(&n("7")).to_decimal(), "42");
         assert_eq!(n("12").mul(&n("12")).to_decimal(), "144");
-        assert_eq!(n("999999999").mul(&n("999999999")).to_decimal(), "999999998000000001");
+        assert_eq!(
+            n("999999999").mul(&n("999999999")).to_decimal(),
+            "999999998000000001"
+        );
         assert_eq!(
             n("123456789").mul(&n("987654321")).to_decimal(),
             "121932631112635269"
@@ -442,7 +456,10 @@ mod tests {
 
     #[test]
     fn pow_golden_values() {
-        assert_eq!(n("2").pow(100).to_decimal(), "1267650600228229401496703205376");
+        assert_eq!(
+            n("2").pow(100).to_decimal(),
+            "1267650600228229401496703205376"
+        );
         assert_eq!(
             n("2").pow(200).to_decimal(),
             "1606938044258990275541962092341162602522202993782792835301376"
@@ -455,7 +472,10 @@ mod tests {
 
     #[test]
     fn sub_borrows() {
-        assert_eq!(n("1000000000").sub(&n("1")).unwrap().to_decimal(), "999999999");
+        assert_eq!(
+            n("1000000000").sub(&n("1")).unwrap().to_decimal(),
+            "999999999"
+        );
         assert_eq!(n("623").sub(&n("623")).unwrap().to_decimal(), "0");
         assert!(n("1").sub(&n("2")).is_none());
     }
@@ -488,7 +508,9 @@ mod tests {
                 .wrapping_mul(0x2360_ed05_1fc6_5da4_4385_df64_9fcc_f645u128)
                 .wrapping_add(0x9e37_79b9_7f4a_7c15u128);
             let dividend = state;
-            state = state.rotate_left(47).wrapping_add(0xda94_2042_e4dd_58b5u128);
+            state = state
+                .rotate_left(47)
+                .wrapping_add(0xda94_2042_e4dd_58b5u128);
             let divisor = state | 1;
             let (quotient, remainder) = n(&dividend.to_string())
                 .divrem(&n(&divisor.to_string()))
@@ -516,8 +538,17 @@ mod tests {
             b
         }
         for s in [
-            "0", "1", "2", "3", "1023", "1024", "999999999", "1000000000",
-            "1073741823", "1073741824", "123456789012345678901234567890",
+            "0",
+            "1",
+            "2",
+            "3",
+            "1023",
+            "1024",
+            "999999999",
+            "1000000000",
+            "1073741823",
+            "1073741824",
+            "123456789012345678901234567890",
             "99999999999999999999999999999999999999",
         ] {
             let v: u128 = s.parse().unwrap();

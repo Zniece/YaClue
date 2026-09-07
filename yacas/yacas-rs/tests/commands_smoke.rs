@@ -10,15 +10,20 @@ fn run(env: &mut Environment, src: &str) -> String {
     let tree = parse_expression(env, &format!("{src};"))
         .unwrap_or_else(|e| panic!("parse {src}: {e:?}"))
         .expect("非空");
-    let result = eval(env, &tree).unwrap_or_else(|e| {
-        panic!("eval {src}: {e:?} (tree={})", infix_print(env, &tree))
-    });
+    let result = eval(env, &tree)
+        .unwrap_or_else(|e| panic!("eval {src}: {e:?} (tree={})", infix_print(env, &tree)));
     infix_print(env, &result)
 }
 
 /// 统一装载序(照 yacasinit.ys:36-45:patterns → deffunc → standard → stdarith)。
 fn boot(env: &mut Environment) {
-    for f in ["patterns.rep/code.ys", "deffunc.rep/code.ys", "standard.ys", "stdarith.ys", "stubs.rep/code.ys"] {
+    for f in [
+        "patterns.rep/code.ys",
+        "deffunc.rep/code.ys",
+        "standard.ys",
+        "stdarith.ys",
+        "stubs.rep/code.ys",
+    ] {
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/");
         yacas_rs::standard::internal_load(env, &format!("{p}{f}")).unwrap();
     }
@@ -28,7 +33,10 @@ fn boot(env: &mut Environment) {
 fn set_and_variable() {
     let mut env = Environment::new();
     // T2:`:=` 由 scripts(deffunc.rep/code.ys)接管 —— 用前先装载(照 cyacas 装载序)。
-    let deffunc_ys = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/deffunc.rep/code.ys");
+    let deffunc_ys = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yacas/scripts/deffunc.rep/code.ys"
+    );
     yacas_rs::standard::internal_load(&mut env, deffunc_ys).unwrap();
     assert_eq!(run(&mut env, "aa := 5"), "5");
     assert_eq!(run(&mut env, "aa"), "5");
@@ -40,7 +48,10 @@ fn set_and_variable() {
 fn local_shadowing() {
     let mut env = Environment::new();
     // T2:`:=` 脚本化(deffunc.rep/code.ys)—— 用前先装载。
-    let deffunc_ys = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/deffunc.rep/code.ys");
+    let deffunc_ys = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yacas/scripts/deffunc.rep/code.ys"
+    );
     yacas_rs::standard::internal_load(&mut env, deffunc_ys).unwrap();
     assert_eq!(run(&mut env, "aa := 1"), "1");
     assert_eq!(run(&mut env, "[Local(aa); aa := 2; aa;]"), "2");
@@ -71,8 +82,8 @@ fn head_tail_length_listify_string_type() {
     assert_eq!(run(&mut env, "Listify({aa,bb})"), "{List,aa,bb}");
     assert_eq!(run(&mut env, "Type({aa,bb})"), "\"List\""); // cyacas 实测:调用树→带引号 head 串
     assert_eq!(run(&mut env, "Type(aa)"), "\"\""); // cyacas 实测:原子/数字→空串
-    // cyacas 实测:String("xx") → ""xx""(无条件包引号,实参文本已含引号再包一层;
-    // 6a 期断言 "\"xx\"" 是手写错用)。String(aa) → "aa"(单层)。
+                                                   // cyacas 实测:String("xx") → ""xx""(无条件包引号,实参文本已含引号再包一层;
+                                                   // 6a 期断言 "\"xx\"" 是手写错用)。String(aa) → "aa"(单层)。
     assert_eq!(run(&mut env, "String(\"xx\")"), "\"\"xx\"\"");
 }
 
@@ -92,11 +103,20 @@ fn nth_from_standard_ys() {
     // T3:Nth 规则 10 由 standard.ys 脚本装载(原 Rust 手写 bootstrap_nth 已退役)——
     // 同探针复测,验证脚本版 Nth 与旧手写版行为一致(照 cyacas 实测)。
     let mut env = Environment::new();
-    let code_ys = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/patterns.rep/code.ys");
+    let code_ys = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yacas/scripts/patterns.rep/code.ys"
+    );
     yacas_rs::standard::internal_load(&mut env, code_ys).unwrap();
-    let deffunc_ys = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/deffunc.rep/code.ys");
+    let deffunc_ys = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yacas/scripts/deffunc.rep/code.ys"
+    );
     yacas_rs::standard::internal_load(&mut env, deffunc_ys).unwrap();
-    let standard_ys = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/standard.ys");
+    let standard_ys = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yacas/scripts/standard.ys"
+    );
     yacas_rs::standard::internal_load(&mut env, standard_ys).unwrap();
     // 探针(cyacas 实测):Nth({a,b,c},1) → a;Nth({a,b,c},2) → b —— 1 起。
     assert_eq!(run(&mut env, "Nth({aa,bb,cc},1)"), "aa");
@@ -154,13 +174,22 @@ fn macro_hold_arg_math_command_reeval() {
     // `10#f(_x)<--2*x; 10#G(_x,_y)<--x+y; G(f(aa),bb);` → 2*aa+bb
     // (保持形态 = 原 head `+` + 二次 eval 后实参;非 List 头装载、非原实参重包)。
     let mut env = Environment::new();
-    let code_ys = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/patterns.rep/code.ys");
+    let code_ys = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yacas/scripts/patterns.rep/code.ys"
+    );
     yacas_rs::standard::internal_load(&mut env, code_ys).unwrap();
     // T2:`:=` 脚本化 —— 统一装载 deffunc(与 rule_chain_code_ys_load 一致;# 探针同环境)。
     // T3:Nth 由 standard.ys 接管(bootstrap_nth 退役)。
-    let deffunc_ys = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/deffunc.rep/code.ys");
+    let deffunc_ys = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yacas/scripts/deffunc.rep/code.ys"
+    );
     yacas_rs::standard::internal_load(&mut env, deffunc_ys).unwrap();
-    let standard_ys = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/standard.ys");
+    let standard_ys = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../yacas/scripts/standard.ys"
+    );
     yacas_rs::standard::internal_load(&mut env, standard_ys).unwrap();
     assert_eq!(run(&mut env, "10 # f(_x) <-- 2*x;"), "True");
     assert_eq!(run(&mut env, "10 # G(_x,_y) <-- x+y;"), "True");
@@ -179,20 +208,48 @@ fn math_div_arbitrary_precision() {
     assert_eq!(run(&mut env, "MathDiv(-7, -3)"), "2");
     // 超出 i64:曾因 i64 解析失败抛 InvalidArg(2^64 = 18446744073709551616)
     // i64::MIN / -1 溢出:不得回绕成 i64::MIN,应为 2^63
-    assert_eq!(run(&mut env, "MathDiv(-9223372036854775808, -1)"), "9223372036854775808");
-    assert_eq!(run(&mut env, "MathDiv(18446744073709551616, 2)"), "9223372036854775808");
-    assert_eq!(run(&mut env, "MathDiv(-18446744073709551616, 3)"), "-6148914691236517205");
     assert_eq!(
-        run(&mut env, "MathDiv(340282366920938463463374607431768211456, 4294967296)"),
+        run(&mut env, "MathDiv(-9223372036854775808, -1)"),
+        "9223372036854775808"
+    );
+    assert_eq!(
+        run(&mut env, "MathDiv(18446744073709551616, 2)"),
+        "9223372036854775808"
+    );
+    assert_eq!(
+        run(&mut env, "MathDiv(-18446744073709551616, 3)"),
+        "-6148914691236517205"
+    );
+    assert_eq!(
+        run(
+            &mut env,
+            "MathDiv(340282366920938463463374607431768211456, 4294967296)"
+        ),
         "79228162514264337593543950336"
     );
     // 商为 0 时不得输出 "-0"
-    assert_eq!(run(&mut env, "MathDiv(18446744073709551615, 18446744073709551617)"), "0");
-    assert_eq!(run(&mut env, "MathDiv(-18446744073709551615, 18446744073709551617)"), "0");
+    assert_eq!(
+        run(
+            &mut env,
+            "MathDiv(18446744073709551615, 18446744073709551617)"
+        ),
+        "0"
+    );
+    assert_eq!(
+        run(
+            &mut env,
+            "MathDiv(-18446744073709551615, 18446744073709551617)"
+        ),
+        "0"
+    );
     // 零除数 / 非整数操作数:报错不崩溃
-    let tree = parse_expression(&mut env, "MathDiv(1, 0);").unwrap().unwrap();
+    let tree = parse_expression(&mut env, "MathDiv(1, 0);")
+        .unwrap()
+        .unwrap();
     assert!(eval(&mut env, &tree).is_err());
-    let tree = parse_expression(&mut env, "MathDiv(2.5, 2);").unwrap().unwrap();
+    let tree = parse_expression(&mut env, "MathDiv(2.5, 2);")
+        .unwrap()
+        .unwrap();
     assert!(eval(&mut env, &tree).is_err());
 }
 
@@ -209,7 +266,10 @@ fn equal_precedence_later_rule_wins() {
     assert_eq!(run(&mut env, "h1(0)"), "3");
     // 与块大小无关:先堆 30 条同优先级规则,再定义的决定性规则仍应胜出
     for i in 0..30 {
-        assert_eq!(run(&mut env, format!("10 # h2(_x) <-- {i};").as_str()), "True");
+        assert_eq!(
+            run(&mut env, format!("10 # h2(_x) <-- {i};").as_str()),
+            "True"
+        );
     }
     assert_eq!(run(&mut env, "10 # h2(_x) <-- 999;"), "True");
     assert_eq!(run(&mut env, "h2(0)"), "999");

@@ -65,10 +65,7 @@ impl BackQuoteBehaviour {
     }
 
     /// Positional substitution used by macro expansion.
-    pub fn new_with_pairs(
-        _env: &mut Environment,
-        pairs: Vec<(Rc<str>, Rc<LispObject>)>,
-    ) -> Self {
+    pub fn new_with_pairs(_env: &mut Environment, pairs: Vec<(Rc<str>, Rc<LispObject>)>) -> Self {
         BackQuoteBehaviour { pairs: Some(pairs) }
     }
 }
@@ -115,7 +112,11 @@ impl SubstBehaviour for BackQuoteBehaviour {
         let f = arg.sublist().ok_or(YacasError::InvalidArg)?;
         let new_head = crate::evaluator::eval(env, f)?;
         let mut kinds: Vec<ObjectKind> = Vec::new();
-        kinds.push(crate::value::spine_kinds(&new_head).next().expect("new head kind"));
+        kinds.push(
+            crate::value::spine_kinds(&new_head)
+                .next()
+                .expect("new head kind"),
+        );
         let mut cur = f.next.as_ref();
         while let Some(n) = cur {
             kinds.push(crate::value::spine_kinds(n).next().expect("arg kind"));
@@ -179,7 +180,10 @@ impl LocalSymbolBehaviour {
             let new_name = env.symtab.look_up(&format!("UniqueSymbol{}", id));
             new_names.push(new_name);
         }
-        LocalSymbolBehaviour { original_names, new_names }
+        LocalSymbolBehaviour {
+            original_names,
+            new_names,
+        }
     }
 }
 

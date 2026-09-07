@@ -58,10 +58,18 @@ pub struct LispNumber {
 impl LispNumber {
     pub fn from_text(s: String) -> LispNumber {
         let is_float = s.contains('.') || s.contains('e') || s.contains('E');
-        LispNumber { text: Some(s), num: None, is_float }
+        LispNumber {
+            text: Some(s),
+            num: None,
+            is_float,
+        }
     }
     pub fn from_float(f: Float) -> LispNumber {
-        LispNumber { text: None, num: Some(f), is_float: true }
+        LispNumber {
+            text: None,
+            num: Some(f),
+            is_float: true,
+        }
     }
     /// Construct with an explicit type flag (arithmetic commands decide by
     /// operand contamination: int op int → int).
@@ -73,7 +81,11 @@ impl LispNumber {
     /// not truncate those to session precision (`x := N(2/3, 20)` keeps 20
     /// digits even at session precision 10).
     pub fn from_float_flag(f: Float, is_float: bool) -> LispNumber {
-        LispNumber { text: None, num: Some(f), is_float }
+        LispNumber {
+            text: None,
+            num: Some(f),
+            is_float,
+        }
     }
     /// Type flag.
     pub fn is_float(&self) -> bool {
@@ -262,7 +274,10 @@ pub fn atom_or_number(table: &mut SymbolTable, s: &str) -> Rc<LispObject> {
 pub fn build_list(kinds: Vec<ObjectKind>) -> Option<Rc<LispObject>> {
     let mut next: Option<Rc<LispObject>> = None;
     for kind in kinds.into_iter().rev() {
-        next = Some(Rc::new(LispObject { next: next.take(), kind }));
+        next = Some(Rc::new(LispObject {
+            next: next.take(),
+            kind,
+        }));
     }
     next
 }
@@ -373,7 +388,10 @@ mod tests {
         // The copy's head is exclusively owned, so the original is untouched
         // by mutations to the copy.
         let mut copy_head = copy;
-        assert!(Rc::get_mut(&mut copy_head).is_some(), "copied head is exclusive");
+        assert!(
+            Rc::get_mut(&mut copy_head).is_some(),
+            "copied head is exclusive"
+        );
         // Chain surgery rebuilds: clone kinds + append, then build anew.
         let mut kinds: Vec<ObjectKind> = spine_kinds(&copy_head).collect();
         kinds.push(ObjectKind::Atom(t.look_up("h")));

@@ -24,19 +24,51 @@ pub type OperatorTable = HashMap<Rc<str>, Operator>;
 pub fn register_stdops(e: &mut crate::env::Environment) {
     let infix = |t: &mut crate::env::Environment, name: &str, prec: i32| {
         let sym = t.symtab.look_up(name);
-        t.infix.insert(sym, Operator { prec, left_prec: prec, right_prec: prec, right_assoc: false });
+        t.infix.insert(
+            sym,
+            Operator {
+                prec,
+                left_prec: prec,
+                right_prec: prec,
+                right_assoc: false,
+            },
+        );
     };
     let prefix = |t: &mut crate::env::Environment, name: &str, prec: i32| {
         let sym = t.symtab.look_up(name);
-        t.prefix.insert(sym, Operator { prec, left_prec: prec, right_prec: prec, right_assoc: false });
+        t.prefix.insert(
+            sym,
+            Operator {
+                prec,
+                left_prec: prec,
+                right_prec: prec,
+                right_assoc: false,
+            },
+        );
     };
     let postfix = |t: &mut crate::env::Environment, name: &str, prec: i32| {
         let sym = t.symtab.look_up(name);
-        t.postfix.insert(sym, Operator { prec, left_prec: prec, right_prec: prec, right_assoc: false });
+        t.postfix.insert(
+            sym,
+            Operator {
+                prec,
+                left_prec: prec,
+                right_prec: prec,
+                right_assoc: false,
+            },
+        );
     };
     let bodied = |t: &mut crate::env::Environment, name: &str, prec: i32| {
         let sym = t.symtab.look_up(name);
-        t.bodied.insert(sym, Operator { prec, left_prec: prec, right_prec: prec, right_assoc: false });
+        t.bodied.insert(
+            sym,
+            Operator {
+                prec,
+                left_prec: prec,
+                right_prec: prec,
+                right_assoc: false,
+            },
+        );
     };
     let right_assoc = |t: &mut crate::env::Environment, name: &str| {
         if let Some(op) = t.infix.get_mut(&t.symtab.look_up(name)) {

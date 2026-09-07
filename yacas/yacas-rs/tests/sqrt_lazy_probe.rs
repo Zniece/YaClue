@@ -14,7 +14,8 @@ use yacas_rs::printer::infix_print;
 
 fn run(env: &mut Environment, src: &str) -> String {
     let t = parse_expression(env, &format!("{src};"))
-        .unwrap_or_else(|e| panic!("parse {src}: {e:?}")).expect("非空");
+        .unwrap_or_else(|e| panic!("parse {src}: {e:?}"))
+        .expect("非空");
     match eval(env, &t) {
         Ok(r) => infix_print(env, &r),
         Err(e) => format!("ERR({e:?})"),
@@ -71,13 +72,19 @@ fn math_sqrt_float_no_hang() {
     run(&mut env, &format!("DefaultDirectory(\"{d}\")"));
     assert_eq!(run(&mut env, "Load(\"yacasinit.ys\")"), "True");
     assert_eq!(run(&mut env, "MathSqrt(0)"), "0"); // 触发加载
-    // 能返回、值以 1.4142 开头(精确位数受精度控制链影响,不断言全串)
+                                                   // 能返回、值以 1.4142 开头(精确位数受精度控制链影响,不断言全串)
     let r = run(&mut env, "MathSqrtFloat(2.)");
     assert!(r.starts_with("1.41421"), "MathSqrtFloat(2.) = {r}");
     let r2 = run(&mut env, "MathSqrt(4)");
     assert_eq!(r2, "2");
     let scaled = run(&mut env, "N(Sqrt(1e100)/1e50)");
-    assert!(scaled.starts_with("0.999999"), "scaled sqrt(1e100) = {scaled}");
+    assert!(
+        scaled.starts_with("0.999999"),
+        "scaled sqrt(1e100) = {scaled}"
+    );
     let scaled = run(&mut env, "N(Sqrt(1e1000)/1e500)");
-    assert!(scaled.starts_with("0.999999"), "scaled sqrt(1e1000) = {scaled}");
+    assert!(
+        scaled.starts_with("0.999999"),
+        "scaled sqrt(1e1000) = {scaled}"
+    );
 }

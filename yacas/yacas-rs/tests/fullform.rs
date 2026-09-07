@@ -33,7 +33,10 @@ fn golden_fullform_l4() {
         check(&e, &expected);
         checked += 1;
     }
-    let total = golden.lines().filter(|l| l.starts_with("FullForm(")).count();
+    let total = golden
+        .lines()
+        .filter(|l| l.starts_with("FullForm("))
+        .count();
     assert_eq!(checked, total, "应有 {total} 条对拍");
 }
 

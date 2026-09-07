@@ -144,10 +144,7 @@ fn parse_node(tokens: &[String], pos: &mut usize) -> Result<Expr, String> {
     let tok = tokens.get(*pos).ok_or("FullForm 解析:意外结束")?.clone();
     *pos += 1;
     if tok == "(" {
-        let head = tokens
-            .get(*pos)
-            .ok_or("FullForm 解析:缺少 head")?
-            .clone();
+        let head = tokens.get(*pos).ok_or("FullForm 解析:缺少 head")?.clone();
         if head == "(" || head == ")" {
             return Err(format!("FullForm 解析:非法 head '{head}'"));
         }
@@ -172,9 +169,7 @@ fn parse_node(tokens: &[String], pos: &mut usize) -> Result<Expr, String> {
 fn classify_atom(tok: &str) -> Expr {
     let is_number = {
         let t = tok.strip_prefix(['+', '-']).unwrap_or(tok);
-        !t.is_empty()
-            && t.chars().any(|c| c.is_ascii_digit())
-            && t.parse::<f64>().is_ok()
+        !t.is_empty() && t.chars().any(|c| c.is_ascii_digit()) && t.parse::<f64>().is_ok()
     };
     if is_number {
         Expr::Number(tok.to_string())
@@ -303,8 +298,14 @@ impl ReplEngine {
             .spawn()
             .map_err(|e| EngineError::Spawn(format!("无法启动 yacas({bin}): {e}")))?;
 
-        let stdin = child.stdin.take().ok_or(EngineError::Spawn("stdin 不可用".into()))?;
-        let stdout = child.stdout.take().ok_or(EngineError::Spawn("stdout 不可用".into()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or(EngineError::Spawn("stdin 不可用".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or(EngineError::Spawn("stdout 不可用".into()))?;
 
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
@@ -565,8 +566,8 @@ impl RustEngine {
     ) -> Result<EvalResult, EngineError> {
         self.env.set_eval_timeout(Some(timeout));
         let response = (|| {
-            let result = eval_cmd(&mut self.env, command)
-                .map_err(|e| self.eval_error(e, "求值失败"))?;
+            let result =
+                eval_cmd(&mut self.env, command).map_err(|e| self.eval_error(e, "求值失败"))?;
             let fullform = yacas_rs::printer::full_form(&result);
             let expr = Expr::parse_fullform(&fullform).map_err(EngineError::Parse)?;
 
@@ -624,8 +625,7 @@ impl RustEngine {
                 let tex_value = tex_form_value(&mut self.env, &result)
                     .map_err(|error| self.eval_error(error, "批量 TeXForm 失败"))?;
                 Ok(unquote_printed(&yacas_rs::printer::infix_print(
-                    &self.env,
-                    &tex_value,
+                    &self.env, &tex_value,
                 )))
             })
             .collect();
@@ -645,9 +645,7 @@ impl RustEngine {
     }
 
     fn eval_error(&self, error: yacas_rs::errors::YacasError, stage: &str) -> EngineError {
-        if matches!(error, yacas_rs::errors::YacasError::UserInterrupt)
-            && self.deadline_expired()
-        {
+        if matches!(error, yacas_rs::errors::YacasError::UserInterrupt) && self.deadline_expired() {
             EngineError::Timeout(format!("{stage}: 超过求值时限"))
         } else {
             EngineError::Eval(format!("{stage}: {error:?}"))
@@ -760,7 +758,11 @@ impl RustEngineProxy {
             })
             .map_err(|e| EngineError::Spawn(format!("无法启动引擎线程: {e}")))?;
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(RustEngineProxy { tx: Some(tx), rx, handle: Some(handle) }),
+            Ok(Ok(())) => Ok(RustEngineProxy {
+                tx: Some(tx),
+                rx,
+                handle: Some(handle),
+            }),
             startup => {
                 // Close commands before joining, including a worker that exits
                 // without a startup response. No unusable proxy escapes.
@@ -787,7 +789,10 @@ impl Drop for RustEngineProxy {
 
 impl Engine for RustEngineProxy {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
-        let tx = self.tx.as_ref().ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
+        let tx = self
+            .tx
+            .as_ref()
+            .ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
         tx.send(EngineRequest::Eval(command.to_string()))
             .map_err(|e| EngineError::Io(e.to_string()))?;
         match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
@@ -797,7 +802,10 @@ impl Engine for RustEngineProxy {
     }
 
     fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
-        let tx = self.tx.as_ref().ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
+        let tx = self
+            .tx
+            .as_ref()
+            .ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
         tx.send(EngineRequest::EvalExpr(command.to_string()))
             .map_err(|e| EngineError::Io(e.to_string()))?;
         match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
@@ -807,7 +815,10 @@ impl Engine for RustEngineProxy {
     }
 
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
-        let tx = self.tx.as_ref().ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
+        let tx = self
+            .tx
+            .as_ref()
+            .ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
         tx.send(EngineRequest::RenderTex(expressions.to_vec()))
             .map_err(|e| EngineError::Io(e.to_string()))?;
         match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
@@ -877,8 +888,11 @@ mod tests {
     #[test]
     fn rust_eval_recovers_after_parse_and_tex_errors() {
         let mut engine = RustEngine::spawn().unwrap();
-        eval_cmd(&mut engine.env, "1 # TeXForm(ReviewBrokenTex) <-- Check(False, \"broken TeX\")")
-            .unwrap();
+        eval_cmd(
+            &mut engine.env,
+            "1 # TeXForm(ReviewBrokenTex) <-- Check(False, \"broken TeX\")",
+        )
+        .unwrap();
         assert_eq!(
             engine.eval_expr("ReviewBrokenTex").unwrap(),
             Expr::Symbol("ReviewBrokenTex".into())
@@ -897,15 +911,20 @@ mod tests {
     fn rust_eval_times_out_in_command_and_tex_then_recovers() {
         finishes_promptly(|| {
             let mut engine = RustEngine::spawn().unwrap();
-            eval_cmd(&mut engine.env, "1 # TeXForm(ReviewSlowTex) <-- While(True) 1")
-                .unwrap();
+            eval_cmd(
+                &mut engine.env,
+                "1 # TeXForm(ReviewSlowTex) <-- While(True) 1",
+            )
+            .unwrap();
             for command in ["While(True) 1", "ReviewSlowTex"] {
                 let error = engine
                     .eval_with_timeout(command, Duration::from_millis(20))
                     .unwrap_err();
                 assert!(matches!(error, EngineError::Timeout(_)), "{error}");
                 assert!(engine.env.eval_deadline.is_none());
-                let result = engine.eval("2+3").expect("engine recovers after interruption");
+                let result = engine
+                    .eval("2+3")
+                    .expect("engine recovers after interruption");
                 assert_eq!(result.expr.to_string(), "5");
                 assert_eq!(result.tex, "$5$");
             }
@@ -981,10 +1000,7 @@ mod tests {
                             },
                             Expr::Call {
                                 head: "*".into(),
-                                args: vec![
-                                    Expr::Number("2".into()),
-                                    Expr::Symbol("x".into())
-                                ]
+                                args: vec![Expr::Number("2".into()), Expr::Symbol("x".into())]
                             }
                         ]
                     },
@@ -998,13 +1014,19 @@ mod tests {
 
     #[test]
     fn parse_fullform_leaf() {
-        assert_eq!(Expr::parse_fullform("2.5").unwrap(), Expr::Number("2.5".into()));
+        assert_eq!(
+            Expr::parse_fullform("2.5").unwrap(),
+            Expr::Number("2.5".into())
+        );
         assert_eq!(Expr::parse_fullform("x").unwrap(), Expr::Symbol("x".into()));
     }
 
     #[test]
     fn parse_fullform_scientific_number() {
-        assert_eq!(Expr::parse_fullform("0.6245947718e-1").unwrap(), Expr::Number("0.6245947718e-1".into()));
+        assert_eq!(
+            Expr::parse_fullform("0.6245947718e-1").unwrap(),
+            Expr::Number("0.6245947718e-1".into())
+        );
     }
 
     #[test]
@@ -1148,10 +1170,7 @@ mod tests {
         let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
         // 死循环触发超时(引擎被终止)
         let err = engine.eval("While(True) 1").unwrap_err();
-        assert!(
-            matches!(err, EngineError::Timeout(_)),
-            "应报超时: {err}"
-        );
+        assert!(matches!(err, EngineError::Timeout(_)), "应报超时: {err}");
         // 下一次调用自动重启并恢复工作
         let r = engine.eval("D(x) Sin(x)^2").expect("重启后应恢复");
         assert!(r.tex.contains("\\cos"), "TeX 异常: {}", r.tex);

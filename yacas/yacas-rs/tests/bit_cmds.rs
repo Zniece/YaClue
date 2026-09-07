@@ -7,13 +7,24 @@ use yacas_rs::evaluator::eval;
 use yacas_rs::parser::parse_expression;
 use yacas_rs::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap().expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap()
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn bit_cmds() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     let probes = [
         ("DigitsToBits(15,10)", "50"),

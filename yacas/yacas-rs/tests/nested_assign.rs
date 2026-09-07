@@ -9,25 +9,48 @@ use yacas_rs::evaluator::eval;
 use yacas_rs::parser::parse_expression;
 use yacas_rs::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap().expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap()
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn nested_assign() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     let probes = [
-        ("[Local(m);m:=ZeroMatrix(2,2);m[1][2]:=a;m;]", "{{0,a},{0,0}}"),
-        ("[Local(m2);m2:={{0,0},{0,0}};m2[2][1]:=7;m2;]", "{{0,0},{7,0}}"),
-        ("[Local(m);m:=ZeroMatrix(2,2);m[1][1]:=5;m[2][2]:=6;m;]", "{{5,0},{0,6}}"),
+        (
+            "[Local(m);m:=ZeroMatrix(2,2);m[1][2]:=a;m;]",
+            "{{0,a},{0,0}}",
+        ),
+        (
+            "[Local(m2);m2:={{0,0},{0,0}};m2[2][1]:=7;m2;]",
+            "{{0,0},{7,0}}",
+        ),
+        (
+            "[Local(m);m:=ZeroMatrix(2,2);m[1][1]:=5;m[2][2]:=6;m;]",
+            "{{5,0},{0,6}}",
+        ),
         // 单层索引仍走原路径(回归)
         ("[Local(v);v:={1,2,3};v[2]:=9;v;]", "{1,9,3}"),
         // Transpose(依赖嵌套赋值)修复
         ("Transpose({{a,b},{1,2}})", "{{a,1},{b,2}}"),
         ("Transpose({{1,2},{3,4}})", "{{1,3},{2,4}}"),
         // 深层三索引
-        ("[Local(t);t:={{{1,2},{3,4}},{{5,6},{7,8}}};t[2][1][2]:=x;t;]", "{{{1,2},{3,4}},{{5,x},{7,8}}}"),
+        (
+            "[Local(t);t:={{{1,2},{3,4}},{{5,6},{7,8}}};t[2][1][2]:=x;t;]",
+            "{{{1,2},{3,4}},{{5,x},{7,8}}}",
+        ),
     ];
     for (p, exp) in probes {
         assert_eq!(run(&mut e, p), exp, "probe {p}");

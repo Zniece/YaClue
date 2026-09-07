@@ -10,18 +10,31 @@ use ys::evaluator::eval;
 use ys::parser::parse_expression;
 use ys::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap().expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap()
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn system_call_and_name() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     for p in [
         r#"SystemCall("echo hi > /dev/null")"#,
         r#"SystemCall("exit 3")"#,
         r#"SystemCall("nonexistent_cmd_xyz 2>/dev/null")"#,
         "SystemName()",
-    ] { println!("P| {p} => {}", run(&mut e, p)); }
+    ] {
+        println!("P| {p} => {}", run(&mut e, p));
+    }
 }

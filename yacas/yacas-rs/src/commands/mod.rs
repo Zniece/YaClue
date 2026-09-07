@@ -18,15 +18,15 @@ mod io;
 mod numeric;
 mod operators;
 
+use containers::list_of;
 pub use containers::{
     cmd_array_create, cmd_array_get, cmd_array_set, cmd_array_size, cmd_assoc_contains,
-    cmd_assoc_create, cmd_assoc_drop, cmd_assoc_get, cmd_assoc_head, cmd_assoc_keys,
-    cmd_assoc_set, cmd_assoc_size, cmd_assoc_to_list,
+    cmd_assoc_create, cmd_assoc_drop, cmd_assoc_get, cmd_assoc_head, cmd_assoc_keys, cmd_assoc_set,
+    cmd_assoc_size, cmd_assoc_to_list,
 };
-use containers::list_of;
 pub use integer::{
-    cmd_bit_and, cmd_bit_or, cmd_bit_xor, cmd_math_div, cmd_math_fac, cmd_math_gcd,
-    cmd_mod, cmd_shift_left, cmd_shift_right,
+    cmd_bit_and, cmd_bit_or, cmd_bit_xor, cmd_math_div, cmd_math_fac, cmd_math_gcd, cmd_mod,
+    cmd_shift_left, cmd_shift_right,
 };
 use integer::{divrem_with_deadline, int_number};
 pub use io::{
@@ -34,19 +34,19 @@ pub use io::{
     cmd_system_name, cmd_tmp_file, cmd_to_file, cmd_to_stdout, cmd_to_string, cmd_write,
     cmd_write_string,
 };
-pub use operators::{
-    cmd_bodied, cmd_infix, cmd_is_bodied, cmd_is_infix, cmd_is_postfix, cmd_is_prefix,
-    cmd_left_precedence, cmd_op_left_precedence, cmd_op_precedence, cmd_op_right_precedence,
-    cmd_postfix, cmd_prefix, cmd_right_associative, cmd_right_precedence,
-};
-pub use numeric::{
-    cmd_fast_is_prime, cmd_math_abs, cmd_math_ceil, cmd_math_floor, cmd_math_negate,
-    cmd_math_sign, cmd_precision_get, cmd_precision_set,
-};
 use numeric::{
     cmd_bits_to_digits, cmd_digits_to_bits, cmd_fast_arc_sin, cmd_fast_log, cmd_fast_power,
     cmd_math_bit_count, cmd_math_get_exact_bits, cmd_math_mul2_exp, cmd_math_set_exact_bits,
     map_numeric_work_error, num_of_flag, num_text,
+};
+pub use numeric::{
+    cmd_fast_is_prime, cmd_math_abs, cmd_math_ceil, cmd_math_floor, cmd_math_negate, cmd_math_sign,
+    cmd_precision_get, cmd_precision_set,
+};
+pub use operators::{
+    cmd_bodied, cmd_infix, cmd_is_bodied, cmd_is_infix, cmd_is_postfix, cmd_is_prefix,
+    cmd_left_precedence, cmd_op_left_precedence, cmd_op_precedence, cmd_op_right_precedence,
+    cmd_postfix, cmd_prefix, cmd_right_associative, cmd_right_precedence,
 };
 
 use std::rc::Rc;
@@ -61,7 +61,9 @@ use crate::value::{copy_node, spine_kinds, spine_refs, LispObject, ObjectKind};
 // Fetch argument i (the command's ARGUMENT(i)): the i-th argument of the inner
 // chain; an error if absent.
 fn arg(inner: &Rc<LispObject>, i: usize) -> Result<&Rc<LispObject>, YacasError> {
-    spine_refs(inner).nth(i + 1).ok_or(YacasError::WrongNumberOfArgs)
+    spine_refs(inner)
+        .nth(i + 1)
+        .ok_or(YacasError::WrongNumberOfArgs)
 }
 
 // Arity: InternalListLength(head) - 1.
@@ -72,7 +74,10 @@ fn arity_of(inner: &Rc<LispObject>) -> usize {
 /// Set / `:=` (See upstream: cyacas/libyacas/src/mathcommands.cpp LispSetVar): the first argument of each pair (variable name)
 /// is held, the second is evaluated and assigned. Multiple arguments are processed
 /// as consecutive (name, value) pairs.
-pub fn cmd_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_set(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     if n < 2 || !n.is_multiple_of(2) {
         return Err(YacasError::WrongNumberOfArgs);
@@ -80,7 +85,10 @@ pub fn cmd_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
     let mut last = env.false_atom();
     let mut i = 0;
     while i < n {
-        let name = arg(inner, i)?.atom_string().ok_or(YacasError::InvalidArg)?.clone();
+        let name = arg(inner, i)?
+            .atom_string()
+            .ok_or(YacasError::InvalidArg)?
+            .clone();
         let value_node = arg(inner, i + 1)?;
         let value = eval(env, value_node)?;
         let evaluated = value;
@@ -97,7 +105,10 @@ pub fn cmd_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
 /// special-cases this so nested indexed assignment `m[i][j] := v` writes back to the
 /// root variable: upstream relies on shared chains, while the Rust rebuild model
 /// must identify the root variable explicitly.
-pub fn nth_assign_target(env: &mut Environment, left: &Rc<LispObject>) -> Option<(Rc<str>, Vec<i64>)> {
+pub fn nth_assign_target(
+    env: &mut Environment,
+    left: &Rc<LispObject>,
+) -> Option<(Rc<str>, Vec<i64>)> {
     // `left` is an unevaluated Nth call tree: peel the outer Nth layers into
     // (list, index) and recurse down to the atomic root. Indices are evaluated
     // Indices are evaluated like rule 10 does, which supports loop variables i/j.
@@ -138,7 +149,9 @@ pub fn deep_assign(
     value: &Rc<LispObject>,
 ) -> Result<Rc<LispObject>, YacasError> {
     // Fetch the current value of the root variable.
-    let cur = env.get_variable(root.as_ref())?.ok_or(YacasError::InvalidArg)?;
+    let cur = env
+        .get_variable(root.as_ref())?
+        .ok_or(YacasError::InvalidArg)?;
     // Descend through idxs[..len-1] to locate the parent container and set the last
     // index to `value`, rebuilding along the chain bottom-up: modify the deepest
     // level, then wrap back up layer by layer.
@@ -184,7 +197,10 @@ pub fn deep_assign(
             return Err(YacasError::ListNotLongEnough);
         }
         let chain = crate::value::build_list(kinds).ok_or(YacasError::NotList)?;
-        let new_container = Rc::new(LispObject { next: None, kind: ObjectKind::Sublist(chain) });
+        let new_container = Rc::new(LispObject {
+            next: None,
+            kind: ObjectKind::Sublist(chain),
+        });
         // Container-level alias broadcast: this layer's node (the old container,
         // e.g. {1,5}) is rebuilt as new_container ({1,-7}); every variable slot still
         // holding the old container (or sharing its content chain) is updated.
@@ -229,7 +245,10 @@ pub fn try_nth_assign(
 /// Local (See upstream: cyacas/libyacas/src/mathcommands.cpp LispLocal): every argument is held (a variable name) and a local
 /// variable is created (value initially empty). With no arguments, creates a local
 /// named `_`.
-pub fn cmd_local(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_local(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     if n == 0 {
         let name = env.symtab.look_up("_");
@@ -237,7 +256,10 @@ pub fn cmd_local(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lis
         return Ok(env.true_atom());
     }
     for i in 0..n {
-        let name = arg(inner, i)?.atom_string().ok_or(YacasError::InvalidArg)?.clone();
+        let name = arg(inner, i)?
+            .atom_string()
+            .ok_or(YacasError::InvalidArg)?
+            .clone();
         env.new_local(name, None);
     }
     Ok(env.true_atom())
@@ -262,7 +284,10 @@ pub fn cmd_if(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispOb
 
 /// Not (See upstream: cyacas/libyacas/src/mathcommands.cpp InternalNot): True -> False, False -> True; a non-boolean argument
 /// is an error.
-pub fn cmd_not(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_not(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     if is_true(env, &v) {
         Ok(env.false_atom())
@@ -274,7 +299,10 @@ pub fn cmd_not(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
 }
 
 /// Equals (See upstream: cyacas/libyacas/src/mathcommands.cpp InternalEquals): evaluate both arguments, then deep equality.
-pub fn cmd_equals(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_equals(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let a = eval(env, arg(inner, 0)?)?;
     let b = eval(env, arg(inner, 1)?)?;
     if internal_equals(env, &a, &b) {
@@ -286,7 +314,10 @@ pub fn cmd_equals(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
 
 /// Head (See upstream: cyacas/libyacas/src/mathcommands.cpp LispHead = InternalNth(ARG, 1)): step one link into the
 /// inner chain and return the first element. Upstream behavior: Head({a,b,c}) -> a.
-pub fn cmd_head(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_head(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     let sub = v.sublist().ok_or(YacasError::NotList)?;
     crate::standard::internal_nth(sub, 1)
@@ -294,7 +325,10 @@ pub fn cmd_head(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 
 /// Tail (See upstream: cyacas/libyacas/src/mathcommands.cpp LispTail): returns (List rest...) — everything past the head,
 /// wrapped in a List head.
-pub fn cmd_tail(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_tail(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     let sub = v.sublist().ok_or(YacasError::NotList)?;
     // Upstream behavior (LispTail): InternalTail twice (drop the head, then the first
@@ -328,7 +362,10 @@ pub fn cmd_tail(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 /// over-count headless chains by one, so Length(FlatCopy({a,b})) would be 1 instead
 /// of 2 and DestructiveAppend's DestructiveInsert(list, Length(list)+1, ...) would
 /// insert in the middle instead of appending.
-pub fn cmd_length(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_length(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     // For any sublist, count the content chain minus its head (i.e. the argument
     // count). Upstream: InternalListLength((*subList)->Nixed()) — SubList() yields
     // the content chain (a List literal head, or a function name such as Min), and
@@ -371,7 +408,10 @@ pub fn cmd_length(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
 /// argument's sublist onto a fresh List head (Java: head.Next().Set(ARG(1).SubList().Get())).
 /// The inner-chain head itself is kept, not its next link: Listify({a,b,c}) ->
 /// {List,a,b,c} with the original List head preserved.
-pub fn cmd_listify(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_listify(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     let sub = v.sublist().ok_or(YacasError::InvalidArg)?;
     let list_sym = env.symtab.look_up("List");
@@ -389,7 +429,10 @@ pub fn cmd_listify(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
 /// returns the argument's text, unconditionally wrapped in quotes. Upstream behavior:
 /// String("xx") -> ""xx"", String(aa) -> "aa", String(12) -> "12", and String(f(x))
 /// is InvalidArg (sublists have no text form).
-pub fn cmd_string(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_string(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     let text = match v.atom_string() {
         Some(s) => s.to_string(),
@@ -407,16 +450,19 @@ pub fn cmd_string(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
 /// (Equals(Type(2*x),"*") = True, Equals(Type(Sin(x)),"Sin") = True); non-lists
 /// (atoms/numbers) yield the plain atom ""; a non-atomic head (a generic object)
 /// also yields "".
-pub fn cmd_type(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_type(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     let text = match v.atom_string() {
         Some(_) => "\"\"".to_string(), // Upstream behavior: the non-list branch yields an empty string.
         None => match v.sublist() {
             Some(sub) => match sub.atom_string() {
                 Some(s) => format!("\"{s}\""), // Quoted string form (as the stringify lookup produces).
-                None => "\"\"".into(),         // Non-atomic head -> empty string (same Java branch).
+                None => "\"\"".into(), // Non-atomic head -> empty string (same Java branch).
             },
-            None => "\"\"".into(),             // Numbers/other non-lists -> empty string (Type(5) -> "").
+            None => "\"\"".into(), // Numbers/other non-lists -> empty string (Type(5) -> "").
         },
     };
     let sym = env.symtab.look_up(&text);
@@ -426,7 +472,10 @@ pub fn cmd_type(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 /// RuleBaseDefined (See upstream: cyacas/libyacas/src/mathcommands.cpp LispRuleBaseDefined): evaluate both arguments;
 /// the name goes through SymbolName (unquote + intern) before the lookup. True when
 /// a rule base with that name and arity exists.
-pub fn cmd_rule_base_defined(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_rule_base_defined(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let name_node = eval(env, arg(inner, 0)?)?;
     let name = {
         let s = name_node.atom_string().ok_or(YacasError::InvalidArg)?;
@@ -460,17 +509,17 @@ pub fn cmd_rule_base_defined(env: &mut Environment, inner: &Rc<LispObject>) -> R
 /// `DefLoadFunction(patternoper)` inside a DefinePattern rule body with no immediate
 /// call depending on it, and immediate loading would observably differ from
 /// upstream's canceled lazy trigger.
-pub fn cmd_def_load_function(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_def_load_function(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let name_node = eval(env, arg(inner, 0)?)?;
     let raw = name_node.atom_string().ok_or(YacasError::InvalidArg)?;
     let name = crate::standard::symbol_name(env, raw);
-    let entry = env
-        .user_functions
-        .entry(name)
-        .or_default();
+    let entry = env.user_functions.entry(name).or_default();
     entry.inner.borrow_mut().file_to_open = None;
     Ok(env.true_atom())
 }
@@ -479,13 +528,18 @@ pub fn cmd_def_load_function(env: &mut Environment, inner: &Rc<LispObject>) -> R
 /// evaluate the argument (Function|Fixed), unquote, then InternalUse (goes through
 /// the def registry; already-loaded files are skipped). Used by the yacasinit.ys
 /// boot loading entries.
-pub fn cmd_use(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_use(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let v = eval(env, arg(inner, 0)?)?;
     let s = v.atom_string().ok_or(YacasError::InvalidArg)?;
-    let name = crate::standard::internal_unstringify(s).unwrap_or(s).to_string();
+    let name = crate::standard::internal_unstringify(s)
+        .unwrap_or(s)
+        .to_string();
     crate::standard::internal_use(env, &name)?;
     Ok(env.true_atom())
 }
@@ -494,7 +548,10 @@ pub fn cmd_use(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
 /// evaluate, unquote, then InternalLoad (does NOT go through the def registry; that
 /// is the core difference from Use). Upstream performs a CheckSecure check; here the
 /// secure flag only blocks file reads.
-pub fn cmd_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_load(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -503,7 +560,9 @@ pub fn cmd_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
     }
     let v = eval(env, arg(inner, 0)?)?;
     let s = v.atom_string().ok_or(YacasError::InvalidArg)?;
-    let name = crate::standard::internal_unstringify(s).unwrap_or(s).to_string();
+    let name = crate::standard::internal_unstringify(s)
+        .unwrap_or(s)
+        .to_string();
     crate::standard::internal_load(env, &name)?;
     Ok(env.true_atom())
 }
@@ -512,7 +571,10 @@ pub fn cmd_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 /// arguments held): returns a copy of ARGUMENT(1) without evaluating it. yacasinit.ys
 /// Defun bodies rely on `Set(fn,Hold(@func))`: without the hold, fn would bind to a
 /// (Hold ...) sublist and rule definitions would see a non-atomic function name.
-pub fn cmd_hold(_env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_hold(
+    _env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -525,10 +587,16 @@ pub fn cmd_hold(_env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lis
 /// InternalSubstitute + SubstBehaviour). limit.rep rule 701 routes Limit through
 /// ApplyPure("Subst",...); without this command the Limit simplification path would
 /// recurse into a dead end and overflow the stack.
-pub fn cmd_subst(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {    if arity_of(inner) != 3 {
+pub fn cmd_subst(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
+    if arity_of(inner) != 3 {
         return Err(YacasError::WrongNumberOfArgs);
-    }    let from = eval(env, arg(inner, 0)?)?;
-    let to = eval(env, arg(inner, 1)?)?;    let body = eval(env, arg(inner, 2)?)?;
+    }
+    let from = eval(env, arg(inner, 0)?)?;
+    let to = eval(env, arg(inner, 1)?)?;
+    let body = eval(env, arg(inner, 2)?)?;
     let mut behaviour = crate::substitute::SubstBehaviourImpl::new(&from, &to);
     crate::standard::internal_substitute(env, &body, &mut behaviour)
 }
@@ -536,32 +604,50 @@ pub fn cmd_subst(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lis
 /// DefaultDirectory (See upstream: cyacas/libyacas/src/mathcommands.cpp
 /// LispDefaultDirectory): (directoryName) — evaluate, unquote, then append to the
 /// input-directories list (push_back semantics, not replace).
-pub fn cmd_default_directory(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_default_directory(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let v = eval(env, arg(inner, 0)?)?;
     let s = v.atom_string().ok_or(YacasError::InvalidArg)?;
-    let name = crate::standard::internal_unstringify(s).unwrap_or(s).to_string();
+    let name = crate::standard::internal_unstringify(s)
+        .unwrap_or(s)
+        .to_string();
     env.input_directories.push(name);
     Ok(env.true_atom())
 }
 
 /// arg (See upstream: cyacas/libyacas/src/mathcommands.cpp LispArg): the i-th command argument, held (Macro call context).
-pub fn cmd_arg(_env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_arg(
+    _env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let i_node = arg(inner, 0)?;
     let i: usize = i_node
         .number_string()
         .and_then(|s| s.parse().ok())
         .ok_or(YacasError::InvalidArg)?;
-    let slot = arg(inner, 1)?.sublist().ok_or(YacasError::InvalidArg)?.next.as_ref().ok_or(YacasError::WrongNumberOfArgs)?;
-    let v = spine_refs(slot).nth(i - 1).ok_or(YacasError::WrongNumberOfArgs)?;
+    let slot = arg(inner, 1)?
+        .sublist()
+        .ok_or(YacasError::InvalidArg)?
+        .next
+        .as_ref()
+        .ok_or(YacasError::WrongNumberOfArgs)?;
+    let v = spine_refs(slot)
+        .nth(i - 1)
+        .ok_or(YacasError::WrongNumberOfArgs)?;
     Ok(copy_node(v))
 }
 
 /// Atom (See upstream: cyacas/libyacas/src/mathcommands.cpp LispAtom): turns the evaluated argument's text (a number or
 /// atom) into an atom node.
-pub fn cmd_atom(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_atom(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     // Upstream behavior: Atom("aa") -> aa; Atom(ConcatStrings("aa","3")) -> aa3 —
     // the evaluated text is unquoted before building the atom. (The Java LispAtomize
     // wraps the text in quotes first, which does not match upstream; upstream is
@@ -577,7 +663,10 @@ pub fn cmd_atom(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 }
 
 /// ConcatStrings (See upstream: cyacas/libyacas/src/mathcommands.cpp LispConcatStrings): concatenates the string arguments.
-pub fn cmd_concat_strings(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_concat_strings(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let mut out = String::new();
     for i in 0..arity_of(inner) {
         let v = eval(env, arg(inner, i)?)?;
@@ -598,7 +687,10 @@ pub fn cmd_concat_strings(env: &mut Environment, inner: &Rc<LispObject>) -> Resu
 /// list: Concat({a},{b}) -> {a,b}. lists.rep's MapArgs body uses
 /// UnList(Concat({expr[1]},...)); without this command the argument would stay held
 /// and UnList would reject the non-List head.
-pub fn cmd_concat(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_concat(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     let mut kinds: Vec<ObjectKind> = Vec::new();
     for i in 0..n {
@@ -623,7 +715,10 @@ pub fn cmd_concat(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
 /// StringMid'Get (See upstream: cyacas/libyacas/src/mathcommands.cpp YacasStringMidGet):
 /// (from, count, str) -> the `count` characters of str starting at 1-based `from`,
 /// as a new string.
-pub fn cmd_string_mid_get(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_string_mid_get(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 3 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -634,7 +729,9 @@ pub fn cmd_string_mid_get(env: &mut Environment, inner: &Rc<LispObject>) -> Resu
     }
     let s = eval(env, arg(inner, 2)?)?;
     let text = match s.atom_string() {
-        Some(t) => crate::standard::internal_unstringify(t).unwrap_or(t).to_string(),
+        Some(t) => crate::standard::internal_unstringify(t)
+            .unwrap_or(t)
+            .to_string(),
         None => return Err(YacasError::InvalidArg),
     };
     let chars: Vec<char> = text.chars().collect();
@@ -651,7 +748,10 @@ pub fn cmd_string_mid_get(env: &mut Environment, inner: &Rc<LispObject>) -> Resu
 /// StringMid'Set (See upstream: cyacas/libyacas/src/mathcommands.cpp YacasStringMidSet):
 /// (from, repl, str) -> the contents of str starting at 1-based `from` are replaced
 /// by repl, as a new string.
-pub fn cmd_string_mid_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_string_mid_set(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 3 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -661,12 +761,16 @@ pub fn cmd_string_mid_set(env: &mut Environment, inner: &Rc<LispObject>) -> Resu
     }
     let repl_node = eval(env, arg(inner, 1)?)?;
     let repl = match repl_node.atom_string() {
-        Some(t) => crate::standard::internal_unstringify(t).unwrap_or(t).to_string(),
+        Some(t) => crate::standard::internal_unstringify(t)
+            .unwrap_or(t)
+            .to_string(),
         None => return Err(YacasError::InvalidArg),
     };
     let s = eval(env, arg(inner, 2)?)?;
     let text = match s.atom_string() {
-        Some(t) => crate::standard::internal_unstringify(t).unwrap_or(t).to_string(),
+        Some(t) => crate::standard::internal_unstringify(t)
+            .unwrap_or(t)
+            .to_string(),
         None => return Err(YacasError::InvalidArg),
     };
     let chars: Vec<char> = text.chars().collect();
@@ -688,7 +792,10 @@ pub fn cmd_string_mid_set(env: &mut Environment, inner: &Rc<LispObject>) -> Resu
 /// MathAdd (See upstream: cyacas/libyacas/src/mathcommands.cpp LispAdd; Function|Fixed, 2 args): fixed arity —
 /// MathAdd(5,2,1) and MathAdd(7) are WrongNumberOfArgs (distinguishing it from the
 /// variadic `+`).
-pub fn cmd_math_add(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_math_add(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -696,12 +803,17 @@ pub fn cmd_math_add(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
 }
 
 /// Addition (variadic; the fixed-2-arg MathAdd is cmd_math_add).
-pub fn cmd_add(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_add(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     // Seed the accumulator with zero at prec=0 (a storage form, not a truncation
     // cap) — the upstream starts from BigNumber("0", BinaryPrecision()): the
     // environment precision only enters through the add's precision parameter, so
     // results are truncated at the session precision.
-    let mut acc = crate::number::float::Float::from_decimal("0").expect("zero").with_prec(0);
+    let mut acc = crate::number::float::Float::from_decimal("0")
+        .expect("zero")
+        .with_prec(0);
     let mut symbolic = false;
     let mut any_float = false; // Float contamination: 9+0. -> "9." while 2+3 -> "5".
     let n = arity_of(inner);
@@ -738,15 +850,26 @@ pub fn cmd_add(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
         all.push(ObjectKind::Atom(plus_sym));
         all.extend(held);
         let chain = crate::value::build_list(all).ok_or(YacasError::InvalidArg)?;
-        return Ok(Rc::new(LispObject { next: None, kind: ObjectKind::Sublist(chain) }));
+        return Ok(Rc::new(LispObject {
+            next: None,
+            kind: ObjectKind::Sublist(chain),
+        }));
     }
     let num = crate::value::LispNumber::from_float_flag(acc, any_float);
-    Ok(Rc::new(LispObject { next: None, kind: ObjectKind::Number(num) }))
+    Ok(Rc::new(LispObject {
+        next: None,
+        kind: ObjectKind::Number(num),
+    }))
 }
 
 /// `*` (See upstream: cyacas/libyacas/src/mathcommands.cpp LispMultiply): multiplies numbers.
-pub fn cmd_mul(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
-    let mut acc = crate::number::float::Float::from_decimal("1").expect("one").with_prec(0);
+pub fn cmd_mul(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
+    let mut acc = crate::number::float::Float::from_decimal("1")
+        .expect("one")
+        .with_prec(0);
     let mut symbolic = false;
     let mut any_float = false; // Float contamination.
     let n = arity_of(inner);
@@ -768,12 +891,18 @@ pub fn cmd_mul(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
         return crate::standard::return_un_evaluated(env, inner);
     }
     let num = crate::value::LispNumber::from_float_flag(acc, any_float);
-    Ok(Rc::new(LispObject { next: None, kind: ObjectKind::Number(num) }))
+    Ok(Rc::new(LispObject {
+        next: None,
+        kind: ObjectKind::Number(num),
+    }))
 }
 
 /// `-` (See upstream: cyacas/libyacas/src/mathcommands.cpp LispSubtract): one argument negates; more arguments subtract in
 /// sequence.
-pub fn cmd_sub(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_sub(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     if n == 0 {
         return Err(YacasError::WrongNumberOfArgs);
@@ -785,7 +914,10 @@ pub fn cmd_sub(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
             any_float = num.is_float();
             let f = num.float_at(env.precision()).negate();
             let num = crate::value::LispNumber::from_float_flag(f, any_float);
-            return Ok(Rc::new(LispObject { next: None, kind: ObjectKind::Number(num) }));
+            return Ok(Rc::new(LispObject {
+                next: None,
+                kind: ObjectKind::Number(num),
+            }));
         }
         return crate::standard::return_un_evaluated(env, inner);
     }
@@ -798,8 +930,15 @@ pub fn cmd_sub(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
         match (&acc.kind, &v.kind) {
             (ObjectKind::Number(a), ObjectKind::Number(b)) => {
                 any_float |= b.is_float();
-                let f = a.float_at(env.precision()).sub(&b.float_at(env.precision()), env.precision());
-                acc = Rc::new(LispObject { next: None, kind: ObjectKind::Number(crate::value::LispNumber::from_float_flag(f, any_float)) });
+                let f = a
+                    .float_at(env.precision())
+                    .sub(&b.float_at(env.precision()), env.precision());
+                acc = Rc::new(LispObject {
+                    next: None,
+                    kind: ObjectKind::Number(crate::value::LispNumber::from_float_flag(
+                        f, any_float,
+                    )),
+                });
             }
             _ => symbolic = true,
         }
@@ -811,7 +950,10 @@ pub fn cmd_sub(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
 }
 
 /// `/` (See upstream: cyacas/libyacas/src/mathcommands.cpp LispDivide): divides the arguments numerically.
-pub fn cmd_div(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_div(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     if n < 2 {
         return Err(YacasError::WrongNumberOfArgs);
@@ -834,7 +976,12 @@ pub fn cmd_div(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispO
                     })
                     .map_err(map_numeric_work_error)?
                     .ok_or(YacasError::DivideByZero)?;
-                acc = Rc::new(LispObject { next: None, kind: ObjectKind::Number(crate::value::LispNumber::from_float_flag(f, any_float)) });
+                acc = Rc::new(LispObject {
+                    next: None,
+                    kind: ObjectKind::Number(crate::value::LispNumber::from_float_flag(
+                        f, any_float,
+                    )),
+                });
             }
             _ => symbolic = true,
         }
@@ -867,7 +1014,10 @@ fn num_or_text(env: &mut Environment, v: &Rc<LispObject>) -> Result<OrderVal, Ya
         },
     }
 }
-pub fn cmd_less(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_less(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let va = eval(env, arg(inner, 0)?)?;
     let a = num_or_text(env, &va)?;
     let vb = eval(env, arg(inner, 1)?)?;
@@ -877,9 +1027,16 @@ pub fn cmd_less(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
         (OrderVal::Text(x), OrderVal::Text(y)) => x < y,
         _ => return Err(YacasError::InvalidArg),
     };
-    if lt { Ok(env.true_atom()) } else { Ok(env.false_atom()) }
+    if lt {
+        Ok(env.true_atom())
+    } else {
+        Ok(env.false_atom())
+    }
 }
-pub fn cmd_greater(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_greater(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let va = eval(env, arg(inner, 0)?)?;
     let a = num_or_text(env, &va)?;
     let vb = eval(env, arg(inner, 1)?)?;
@@ -889,9 +1046,16 @@ pub fn cmd_greater(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
         (OrderVal::Text(x), OrderVal::Text(y)) => x > y,
         _ => return Err(YacasError::InvalidArg),
     };
-    if gt { Ok(env.true_atom()) } else { Ok(env.false_atom()) }
+    if gt {
+        Ok(env.true_atom())
+    } else {
+        Ok(env.false_atom())
+    }
 }
-pub fn cmd_less_eq(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_less_eq(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let va = eval(env, arg(inner, 0)?)?;
     let a = num_or_text(env, &va)?;
     let vb = eval(env, arg(inner, 1)?)?;
@@ -901,9 +1065,16 @@ pub fn cmd_less_eq(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
         (OrderVal::Text(x), OrderVal::Text(y)) => x <= y,
         _ => return Err(YacasError::InvalidArg),
     };
-    if le { Ok(env.true_atom()) } else { Ok(env.false_atom()) }
+    if le {
+        Ok(env.true_atom())
+    } else {
+        Ok(env.false_atom())
+    }
 }
-pub fn cmd_greater_eq(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_greater_eq(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let va = eval(env, arg(inner, 0)?)?;
     let a = num_or_text(env, &va)?;
     let vb = eval(env, arg(inner, 1)?)?;
@@ -929,7 +1100,11 @@ pub fn cmd_greater_eq(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
 /// makes them visible by mutating the shared chain; here the old pointer is saved
 /// and, after the write-back, every variable slot pointer-equal to the old value is
 /// updated to the result, emulating alias visibility.
-pub fn write_back_arg0(env: &mut Environment, inner: &Rc<LispObject>, result: &Rc<LispObject>) -> Result<(), YacasError> {
+pub fn write_back_arg0(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+    result: &Rc<LispObject>,
+) -> Result<(), YacasError> {
     match arg(inner, 0)?.atom_string() {
         // Atomic variable name: write back to that slot and broadcast.
         Some(name) => {
@@ -953,7 +1128,10 @@ pub fn write_back_arg0(env: &mut Environment, inner: &Rc<LispObject>, result: &R
         }
     }
 }
-pub fn cmd_prog(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_prog(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     if n == 0 {
         return Ok(env.true_atom());
@@ -975,7 +1153,10 @@ pub fn cmd_prog(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 
 /// While (See upstream: cyacas/libyacas/src/mathcommands.cpp LispWhile): evaluate the condition each round; while true,
 /// evaluate the body; exit when the predicate is False and ALWAYS return True.
-pub fn cmd_while(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_while(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     // Upstream behavior (LispWhile): after the loop the CheckArg predicate must be False
     // and the result is always True (not the last body value). Downstream code such
     // as sparsetree.ys MultiDropScan relies on the always-true return to prune empty
@@ -1000,19 +1181,28 @@ pub fn cmd_while(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lis
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispMacroRuleBase ->
 /// InternalRuleBase -> DeclareRuleBase: this creates a *branched* (rule-base)
 /// function, NOT a macro — macro/pattern binding happens at rule-match time.
-pub fn cmd_macro_rule_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_macro_rule_base(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let name_node = eval(env, arg(inner, 0)?)?;
     let name = {
         let s = name_node.atom_string().ok_or(YacasError::InvalidArg)?;
         crate::standard::symbol_name(env, s)
     };
-    let params = params_opt_of(env, { let _a1=arg(inner, 1)?; _a1 })?;
+    let params = params_opt_of(env, {
+        let _a1 = arg(inner, 1)?;
+        _a1
+    })?;
     env.declare_rule_base(name, params.as_ref(), false)?;
     Ok(env.true_atom())
 }
 /// Pattern'Create (the script-level Pattern'Create shape): variable-name chain +
 /// post-predicate -> a Pattern generic object.
-pub fn cmd_pattern_create(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_pattern_create(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let vars = eval(env, arg(inner, 0)?)?;
     let vars_chain = match vars.sublist() {
         Some(s) => s.next.as_ref().cloned(), // An empty `{}` (0-arity rule) -> None.
@@ -1032,7 +1222,10 @@ pub fn cmd_pattern_create(env: &mut Environment, inner: &Rc<LispObject>) -> Resu
 /// arguments already evaluated): (name, arity, prec, pattern) body — pattern-rule
 /// registration. The name goes through SymbolName; the pattern argument is a Pattern
 /// generic object.
-pub fn cmd_macro_rule_pattern(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_macro_rule_pattern(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     if n < 4 {
         return Err(YacasError::WrongNumberOfArgs);
@@ -1043,9 +1236,15 @@ pub fn cmd_macro_rule_pattern(env: &mut Environment, inner: &Rc<LispObject>) -> 
         crate::standard::symbol_name(env, s)
     };
     let arity_node = eval(env, arg(inner, 1)?)?;
-    let arity: usize = arity_node.number_string().and_then(|s| s.parse().ok()).ok_or(YacasError::InvalidArg)?;
+    let arity: usize = arity_node
+        .number_string()
+        .and_then(|s| s.parse().ok())
+        .ok_or(YacasError::InvalidArg)?;
     let prec_node = eval(env, arg(inner, 2)?)?;
-    let prec: i32 = prec_node.number_string().and_then(|s| s.parse().ok()).ok_or(YacasError::InvalidArg)?;
+    let prec: i32 = prec_node
+        .number_string()
+        .and_then(|s| s.parse().ok())
+        .ok_or(YacasError::InvalidArg)?;
     let pattern = eval(env, arg(inner, 3)?)?;
     // The body is also evaluated (per the Java InternalNewRulePattern Function
     // calling convention: all MacroRulePattern arguments arrive evaluated, including
@@ -1070,7 +1269,10 @@ fn symbol_name_of(env: &mut Environment, node: &Rc<LispObject>) -> Result<Rc<str
 fn int_text_of(node: &Rc<LispObject>) -> Result<i64, YacasError> {
     let t = match node.number_string() {
         Some(n) => n,
-        None => node.atom_string().ok_or(YacasError::InvalidArg)?.to_string(),
+        None => node
+            .atom_string()
+            .ok_or(YacasError::InvalidArg)?
+            .to_string(),
     };
     t.trim().parse().map_err(|_| YacasError::InvalidArg)
 }
@@ -1078,7 +1280,10 @@ fn int_text_of(node: &Rc<LispObject>) -> Result<i64, YacasError> {
 // Rule-base parameters: an empty `{}` is legal upstream (a 0-arity function;
 // standard.ys InNumericMode/InVerboseMode etc. use `Function("X",{}) body`).
 // `{}` -> None; otherwise the first-element chain.
-fn params_opt_of(env: &mut Environment, node: &Rc<LispObject>) -> Result<Option<Rc<LispObject>>, YacasError> {
+fn params_opt_of(
+    env: &mut Environment,
+    node: &Rc<LispObject>,
+) -> Result<Option<Rc<LispObject>>, YacasError> {
     let v = eval(env, node)?;
     let sub = v.sublist().ok_or(YacasError::NotList)?;
     if crate::standard::internal_list_length(sub) <= 1 {
@@ -1104,42 +1309,66 @@ fn params_hold_opt_of(node: &Rc<LispObject>) -> Result<Option<Rc<LispObject>>, Y
 
 /// RuleBase (See upstream: cyacas/libyacas/src/mathcommands.cpp LispRuleBase; Macro flag: arguments held):
 /// (name, {params...}).
-pub fn cmd_rule_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_rule_base(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let name = symbol_name_of(env, { let _a0=arg(inner, 0)?; _a0 })?;
+    let name = symbol_name_of(env, {
+        let _a0 = arg(inner, 0)?;
+        _a0
+    })?;
     // The parameter list is NOT evaluated (matching upstream InternalRuleBase's
     // `LispPtr args(ARGUMENT(2))`: the argument is taken directly, the same path as
     // MacroRuleBase). Evaluating it first would substitute current bindings for the
     // parameter names whenever loading happens in a scope where those names are
     // bound, so the function body's variables would resolve to wrong values.
-    let params = params_hold_opt_of({ let _a1=arg(inner, 1)?; _a1 })?;
+    let params = params_hold_opt_of({
+        let _a1 = arg(inner, 1)?;
+        _a1
+    })?;
     env.declare_rule_base(name, params.as_ref(), false)?;
     Ok(env.true_atom())
 }
 
 /// RuleBaseListed (See upstream: cyacas/libyacas/src/mathcommands.cpp LispRuleBaseListed): same as RuleBase with
 /// listed=true (the parameter list is likewise not evaluated).
-pub fn cmd_rule_base_listed(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_rule_base_listed(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let name = symbol_name_of(env, { let _a0=arg(inner, 0)?; _a0 })?;
-    let params = params_hold_opt_of({ let _a1=arg(inner, 1)?; _a1 })?;
+    let name = symbol_name_of(env, {
+        let _a0 = arg(inner, 0)?;
+        _a0
+    })?;
+    let params = params_hold_opt_of({
+        let _a1 = arg(inner, 1)?;
+        _a1
+    })?;
     env.declare_rule_base(name, params.as_ref(), true)?;
     Ok(env.true_atom())
 }
 
 /// MacroRuleBaseListed (See upstream: cyacas/libyacas/src/mathcommands.cpp LispMacroRuleBaseListed; Function flag:
 /// arguments already evaluated).
-pub fn cmd_macro_rule_base_listed(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_macro_rule_base_listed(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let name_node = eval(env, arg(inner, 0)?)?;
     let name = symbol_name_of(env, &name_node)?;
-    let params = params_opt_of(env, { let _a1=arg(inner, 1)?; _a1 })?;
+    let params = params_opt_of(env, {
+        let _a1 = arg(inner, 1)?;
+        _a1
+    })?;
     // Upstream behavior (InternalRuleBase with listed): a branched (rule-base) function, same
     // family as RuleBaseListed — not a macro.
     env.declare_rule_base(name, params.as_ref(), true)?;
@@ -1149,12 +1378,21 @@ pub fn cmd_macro_rule_base_listed(env: &mut Environment, inner: &Rc<LispObject>)
 /// DefMacroRuleBase (See upstream: cyacas/libyacas/src/mathcommands.cpp InternalDefMacroRuleBase; Macro flag:
 /// arguments held): (name, {params...}) — the parameter list is taken unevaluated
 /// (ARGUMENT(2) directly), so parameter-name keys keep the atoms as declared.
-pub fn cmd_def_macro_rule_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_def_macro_rule_base(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let name = symbol_name_of(env, { let _a0=arg(inner, 0)?; _a0 })?;
-    let params = params_hold_opt_of({ let _a1=arg(inner, 1)?; _a1 })?;
+    let name = symbol_name_of(env, {
+        let _a0 = arg(inner, 0)?;
+        _a0
+    })?;
+    let params = params_hold_opt_of({
+        let _a1 = arg(inner, 1)?;
+        _a1
+    })?;
     env.declare_macro_rule_base(name, params.as_ref(), false)?;
     Ok(env.true_atom())
 }
@@ -1162,12 +1400,21 @@ pub fn cmd_def_macro_rule_base(env: &mut Environment, inner: &Rc<LispObject>) ->
 /// DefMacroRuleBaseListed (See upstream: cyacas/libyacas/src/mathcommands.cpp InternalDefMacroRuleBase with
 /// aListed=true; Macro flag). Same as cmd_def_macro_rule_base: the parameter list is
 /// taken unevaluated (keys keep the atomic names).
-pub fn cmd_def_macro_rule_base_listed(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_def_macro_rule_base_listed(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let name = symbol_name_of(env, { let _a0=arg(inner, 0)?; _a0 })?;
-    let params = params_hold_opt_of({ let _a1=arg(inner, 1)?; _a1 })?;
+    let name = symbol_name_of(env, {
+        let _a0 = arg(inner, 0)?;
+        _a0
+    })?;
+    let params = params_hold_opt_of({
+        let _a1 = arg(inner, 1)?;
+        _a1
+    })?;
     env.declare_macro_rule_base(name, params.as_ref(), true)?;
     Ok(env.true_atom())
 }
@@ -1178,7 +1425,10 @@ pub fn cmd_def_macro_rule_base_listed(env: &mut Environment, inner: &Rc<LispObje
 /// element chain). The if-else fallback rule body `UnList({Atom("else"),...})`
 /// relies on this expanding into a proper call that the printer renders with infix
 /// operators: if(3) 11 else 22 -> "if(3)11 else 22".
-pub fn cmd_unlist(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_unlist(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1196,23 +1446,38 @@ pub fn cmd_unlist(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
 
 /// HoldArg (See upstream: cyacas/libyacas/src/mathcommands.cpp LispHoldArg; Macro): (name, paramName) — adds the
 /// parameter to the hold list.
-pub fn cmd_hold_arg(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_hold_arg(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let name = symbol_name_of(env, { let _a0=arg(inner, 0)?; _a0 })?;
-    let var = arg(inner, 1)?.atom_string().ok_or(YacasError::InvalidArg)?.to_string();
+    let name = symbol_name_of(env, {
+        let _a0 = arg(inner, 0)?;
+        _a0
+    })?;
+    let var = arg(inner, 1)?
+        .atom_string()
+        .ok_or(YacasError::InvalidArg)?
+        .to_string();
     env.hold_argument(name, &var)?;
     Ok(env.true_atom())
 }
 
 /// Rule (See upstream: cyacas/libyacas/src/mathcommands.cpp InternalNewRule; Macro flag: arguments
 /// held): (name, arity, precedence, predicate, body) -> env.define_rule.
-pub fn cmd_rule(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_rule(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 5 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let name = symbol_name_of(env, { let _a0=arg(inner, 0)?; _a0 })?;
+    let name = symbol_name_of(env, {
+        let _a0 = arg(inner, 0)?;
+        _a0
+    })?;
     let arity = int_text_of(arg(inner, 1)?)? as i32 as usize;
     let prec = int_text_of(arg(inner, 2)?)? as i32;
     let predicate = arg(inner, 3)?;
@@ -1223,11 +1488,17 @@ pub fn cmd_rule(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 
 /// RulePattern (See upstream: cyacas/libyacas/src/mathcommands.cpp InternalNewRulePattern; Macro flag: arguments held):
 /// (name, arity, precedence, pattern, body) -> env.define_rule_pattern.
-pub fn cmd_rule_pattern(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_rule_pattern(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 5 {
         return Err(YacasError::WrongNumberOfArgs);
     }
-    let name = symbol_name_of(env, { let _a0=arg(inner, 0)?; _a0 })?;
+    let name = symbol_name_of(env, {
+        let _a0 = arg(inner, 0)?;
+        _a0
+    })?;
     let arity = int_text_of(arg(inner, 1)?)? as i32 as usize;
     let prec = int_text_of(arg(inner, 2)?)? as i32;
     let pattern = arg(inner, 3)?;
@@ -1239,7 +1510,10 @@ pub fn cmd_rule_pattern(env: &mut Environment, inner: &Rc<LispObject>) -> Result
 /// MacroRule (See upstream: cyacas/libyacas/src/mathcommands.cpp InternalNewRule; Function flag:
 /// arguments already evaluated): (name, arity, precedence, predicate, body) ->
 /// env.define_rule.
-pub fn cmd_macro_rule(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_macro_rule(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 5 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1267,7 +1541,10 @@ pub fn cmd_macro_rule(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
 /// UnFence — (name, arity) removes the fence.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispUnFence (Function flag:
 /// arguments already evaluated).
-pub fn cmd_un_fence(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_un_fence(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1282,7 +1559,10 @@ pub fn cmd_un_fence(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
 /// Retract — (name, arity) deletes that rule base.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispRetract (Function flag:
 /// arguments already evaluated).
-pub fn cmd_retract(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_retract(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1298,7 +1578,10 @@ pub fn cmd_retract(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
 /// in a List head.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispRuleBaseArgList (Function
 /// flag: arguments already evaluated).
-pub fn cmd_rule_base_arg_list(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_rule_base_arg_list(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1331,7 +1614,10 @@ pub fn cmd_rule_base_arg_list(env: &mut Environment, inner: &Rc<LispObject>) -> 
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispDefLoad;
 /// cyacas/libyacas/src/deffile.cpp LoadDefFile / DoLoadDefFile (Function|Fixed:
 /// arguments already evaluated).
-pub fn cmd_def_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_def_load(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1340,11 +1626,14 @@ pub fn cmd_def_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
     }
     let name_node = eval(env, arg(inner, 0)?)?;
     let s = name_node.atom_string().ok_or(YacasError::InvalidArg)?;
-    let def_name = crate::standard::internal_unstringify(s).unwrap_or(s).to_string();
+    let def_name = crate::standard::internal_unstringify(s)
+        .unwrap_or(s)
+        .to_string();
     // LoadDefFile: flatfile = unstringify(name)+".def", opened via directory
     // search; failure -> FileNotFound.
     let flatfile = format!("{def_name}.def");
-    let path = crate::standard::internal_find_file(env, &flatfile).ok_or(YacasError::FileNotFound)?;
+    let path =
+        crate::standard::internal_find_file(env, &flatfile).ok_or(YacasError::FileNotFound)?;
     let text = std::fs::read_to_string(&path).map_err(|_| YacasError::FileNotFound)?;
     // DoLoadDefFile: tokens are read until `}` or EOF (the manifest is a list of
     // symbol lines plus a trailing `}`; some manifests end at EOF without a
@@ -1365,7 +1654,13 @@ pub fn cmd_def_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
     // get-or-create + file_to_open + symbols.insert + Protect. Destructure
     // &mut env: entry and user_functions are different fields, no borrow conflict.
     let done = env.true_atom();
-    let Environment { user_functions, def_files, symtab, protected, .. } = env;
+    let Environment {
+        user_functions,
+        def_files,
+        symtab,
+        protected,
+        ..
+    } = env;
     let entry = def_files
         .map
         .entry(def_name.clone())
@@ -1392,7 +1687,10 @@ pub fn cmd_def_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
 
 /// List — evaluate arguments one by one and build {List,e1..eN}.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispList (Macro|Variable).
-pub fn cmd_list(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_list(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     let list_sym = env.symtab.look_up("List");
     let mut kinds: Vec<ObjectKind> = Vec::with_capacity(n + 1);
@@ -1412,7 +1710,10 @@ pub fn cmd_list(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 /// (upstream InternalNth: the chain walks index steps from 0, index=1 -> first
 /// element). Function flag: arguments already evaluated.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispNth.
-pub fn cmd_math_nth(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_math_nth(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1421,7 +1722,10 @@ pub fn cmd_math_nth(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
     let index = int_text_of(&index_node)?;
     let index = usize::try_from(index).map_err(|_| YacasError::InvalidArg)?;
     if std::env::var_os("YACAS_TRACE_LOAD").is_some() {
-        eprintln!("[MATHNTH] arg1={} idx={index}", crate::printer::infix_print(env, &list_node));
+        eprintln!(
+            "[MATHNTH] arg1={} idx={index}",
+            crate::printer::infix_print(env, &list_node)
+        );
     }
     let sub = list_node.sublist().ok_or(YacasError::NotList)?;
     crate::standard::internal_nth(sub, index)
@@ -1431,7 +1735,10 @@ pub fn cmd_math_nth(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<
 /// False immediately on a False argument; collect non-boolean values; a single
 /// non-boolean is returned as-is; multiple ones are repacked as {And, original
 /// order}; all-boolean returns True.
-pub fn cmd_and(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_and(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     let mut nogos: Vec<Rc<LispObject>> = Vec::new();
     for i in 0..n {
@@ -1492,7 +1799,11 @@ fn call_head_name(inner: &Rc<LispObject>) -> String {
 
 /// Repack {headName, items...} (upstream Copy(false) + Next splicing; shallow
 /// copy keeps contents shared).
-fn repack_list(env: &mut Environment, head: &str, items: &[Rc<LispObject>]) -> Result<Rc<LispObject>, YacasError> {
+fn repack_list(
+    env: &mut Environment,
+    head: &str,
+    items: &[Rc<LispObject>],
+) -> Result<Rc<LispObject>, YacasError> {
     let head_sym = env.symtab.look_up(head);
     let mut kinds: Vec<ObjectKind> = Vec::with_capacity(items.len() + 1);
     kinds.push(ObjectKind::Atom(head_sym));
@@ -1510,9 +1821,15 @@ fn repack_list(env: &mut Environment, head: &str, items: &[Rc<LispObject>]) -> R
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispIsXxx.
 /// Semantics: IsFunction(f(x)) -> True, IsNumber("5") -> False, and so on.
 /// IsFunction: does the value hold a sublist?
-pub fn cmd_is_function(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_function(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
-    Ok(crate::standard::internal_boolean(env, v.sublist().is_some()))
+    Ok(crate::standard::internal_boolean(
+        env,
+        v.sublist().is_some(),
+    ))
 }
 
 /// IsAtom — true unless the value is a sublist: numbers, strings and plain atoms
@@ -1521,7 +1838,10 @@ pub fn cmd_is_function(env: &mut Environment, inner: &Rc<LispObject>) -> Result<
 /// IsAtom({1})=False, IsAtom("s")=True.
 /// Note: numbers count as atoms (LispNumber and LispAtom are the same family).
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispIsAtom.
-pub fn cmd_is_atom(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_atom(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     Ok(crate::standard::internal_boolean(
         env,
@@ -1531,9 +1851,15 @@ pub fn cmd_is_atom(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
 
 /// IsNumber — true only for number nodes (upstream: Number()!=null); a string
 /// like "5" is not a number.
-pub fn cmd_is_number(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_number(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
-    Ok(crate::standard::internal_boolean(env, matches!(v.kind, ObjectKind::Number(_))))
+    Ok(crate::standard::internal_boolean(
+        env,
+        matches!(v.kind, ObjectKind::Number(_)),
+    ))
 }
 
 /// IsInteger — true when the numeric representation has no decimal point and no
@@ -1559,19 +1885,34 @@ fn int_sign_predicate(
     };
     Ok(crate::standard::internal_boolean(env, f(n)))
 }
-pub fn cmd_is_non_negative_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_non_negative_integer(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     int_sign_predicate(env, inner, |n| n >= 0)
 }
-pub fn cmd_is_positive_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_positive_integer(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     int_sign_predicate(env, inner, |n| n > 0)
 }
-pub fn cmd_is_non_positive_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_non_positive_integer(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     int_sign_predicate(env, inner, |n| n <= 0)
 }
-pub fn cmd_is_negative_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_negative_integer(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     int_sign_predicate(env, inner, |n| n < 0)
 }
-pub fn cmd_is_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_integer(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     let text = match &v.kind {
         ObjectKind::Number(n) => Some(n.string()),
@@ -1588,18 +1929,25 @@ pub fn cmd_is_integer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
 /// hold the symbol name. `IsAssumedValue` evaluates its first argument once
 /// for use inside script rules whose pattern parameter is locally bound; a
 /// resolved non-symbol is simply not an assumed atom.
-pub fn cmd_assume(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_assume(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let symbol = arg(inner, 0)?.atom_string().ok_or(YacasError::InvalidArg)?;
     let fact_name = arg(inner, 1)?.atom_string().ok_or(YacasError::InvalidArg)?;
     let fact = Assumption::parse(fact_name).ok_or(YacasError::InvalidArg)?;
-    env.assume(symbol, fact).map_err(|_| YacasError::InvalidArg)?;
+    env.assume(symbol, fact)
+        .map_err(|_| YacasError::InvalidArg)?;
     Ok(env.true_atom())
 }
 
-pub fn cmd_is_assumed(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_assumed(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1668,25 +2016,40 @@ pub fn cmd_pop_assumptions(
 
 /// IsList — true when the value is a sublist whose head is List
 /// (upstream: InternalIsList).
-pub fn cmd_is_list(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_list(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
-    Ok(crate::standard::internal_boolean(env, crate::standard::internal_is_list(&v)))
+    Ok(crate::standard::internal_boolean(
+        env,
+        crate::standard::internal_is_list(&v),
+    ))
 }
 
 /// IsString — true for string atoms (upstream: InternalIsString(String())).
-pub fn cmd_is_string(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_string(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let v = eval(env, arg(inner, 0)?)?;
     let s = match v.atom_string() {
         Some(s) => s.to_string(),
         None => return Ok(env.false_atom()),
     };
-    Ok(crate::standard::internal_boolean(env, crate::standard::internal_is_string(&s)))
+    Ok(crate::standard::internal_boolean(
+        env,
+        crate::standard::internal_is_string(&s),
+    ))
 }
 
 /// Element chain of a list (kinds; skips the List head), matching upstream
 /// SubList().Next() semantics. An empty list `{}` (content chain with only the
 /// List head, no elements) -> empty Vec (upstream Reverse({})={} does not error).
-fn element_kinds(_env: &mut Environment, node: &Rc<LispObject>) -> Result<Vec<ObjectKind>, YacasError> {
+fn element_kinds(
+    _env: &mut Environment,
+    node: &Rc<LispObject>,
+) -> Result<Vec<ObjectKind>, YacasError> {
     let sub = node.sublist().ok_or(YacasError::NotList)?;
     match sub.next.as_ref() {
         Some(elems) => Ok(spine_kinds(elems).collect()),
@@ -1702,7 +2065,10 @@ fn element_kinds(_env: &mut Environment, node: &Rc<LispObject>) -> Result<Vec<Ob
 /// accumulated list — if the destructive Insert did not write back, res would
 /// stay empty and this would raise InvalidArg; the two write-backs go together.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispDestructiveReverse.
-pub fn cmd_reverse(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_reverse(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1713,7 +2079,10 @@ pub fn cmd_reverse(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
     all.push(ObjectKind::Atom(env.symtab.look_up("List")));
     all.extend(kinds);
     let chain = crate::value::build_list(all).ok_or(YacasError::InvalidArg)?;
-    let result = Rc::new(LispObject { next: None, kind: ObjectKind::Sublist(chain) });
+    let result = Rc::new(LispObject {
+        next: None,
+        kind: ObjectKind::Sublist(chain),
+    });
     // Destructive variant: upstream reverses the shared chain in place, which is
     // visible through the variable slot; the Rust equivalent is rebuild + write
     // back.
@@ -1726,7 +2095,10 @@ pub fn cmd_reverse(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
 /// MakeVector's body accumulates through `DestructiveInsert(res,1,…)`; upstream
 /// shares the chain in place, and rebuild + write back is the observably
 /// equivalent destructive behavior here.
-pub fn cmd_destructive_insert(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_destructive_insert(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let result = cmd_insert(env, inner)?;
     write_back_arg0(env, inner, &result)?;
     Ok(result)
@@ -1738,7 +2110,10 @@ pub fn cmd_destructive_insert(env: &mut Environment, inner: &Rc<LispObject>) -> 
 /// the rule body of `aa:=5`, `Eval(aLeftAssign)` first yields the variable name
 /// aa, then 5; a single evaluation would stop at aa).
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispEval (Function flag).
-pub fn cmd_eval(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_eval(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1751,7 +2126,10 @@ pub fn cmd_eval(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lisp
 /// A numeric name -> InvalidArg (upstream CheckArg(!IsNumber(...),1): `1:=2`
 /// reports "In function \"MacroSet\" : Invalid argument").
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispMacroSetVar.
-pub fn cmd_macro_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_macro_set(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1759,7 +2137,10 @@ pub fn cmd_macro_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     if matches!(name_value.kind, ObjectKind::Number(_)) {
         return Err(YacasError::InvalidArg);
     }
-    let name = name_value.atom_string().ok_or(YacasError::InvalidArg)?.clone();
+    let name = name_value
+        .atom_string()
+        .ok_or(YacasError::InvalidArg)?
+        .clone();
     let value = eval(env, arg(inner, 1)?)?;
     env.set_variable(name, &value, false)?;
     Ok(env.true_atom())
@@ -1772,7 +2153,10 @@ pub fn cmd_macro_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
 /// UnList({Atom(fname)}))` — cached constants like Pi/gamma become lazy variables
 /// through this; without it N(Pi,10) does not simplify.
 /// See upstream: cyacas/libyacas/src/corefunctions.h LispSetGlobalLazyVariable.
-pub fn cmd_set_global_lazy_variable(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_set_global_lazy_variable(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1780,7 +2164,10 @@ pub fn cmd_set_global_lazy_variable(env: &mut Environment, inner: &Rc<LispObject
     if matches!(name_value.kind, ObjectKind::Number(_)) {
         return Err(YacasError::InvalidArg);
     }
-    let name = name_value.atom_string().ok_or(YacasError::InvalidArg)?.clone();
+    let name = name_value
+        .atom_string()
+        .ok_or(YacasError::InvalidArg)?
+        .clone();
     let value = eval(env, arg(inner, 1)?)?;
     env.set_variable(name, &value, true)?;
     Ok(env.true_atom())
@@ -1793,7 +2180,10 @@ pub fn cmd_set_global_lazy_variable(env: &mut Environment, inner: &Rc<LispObject
 /// without it cached values linger and a repeated N re-triggers the old lazy
 /// recomputation re-entrantly.
 /// See upstream: cyacas/libyacas/src/corefunctions.h LispClearVar.
-pub fn cmd_clear(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_clear(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     for i in 0..n {
         let s = arg(inner, i)?.atom_string().ok_or(YacasError::InvalidArg)?;
@@ -1801,7 +2191,10 @@ pub fn cmd_clear(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lis
     }
     Ok(env.true_atom())
 }
-pub fn cmd_macro_clear(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_macro_clear(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     for i in 0..n {
         let v = eval(env, arg(inner, i)?)?;
@@ -1869,10 +2262,16 @@ fn internal_delete(
     Ok(result)
 }
 
-pub fn cmd_delete(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_delete(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     internal_delete(env, inner, false)
 }
-pub fn cmd_destructive_delete(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_destructive_delete(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     internal_delete(env, inner, true)
 }
 
@@ -1880,7 +2279,10 @@ pub fn cmd_destructive_delete(env: &mut Environment, inner: &Rc<LispObject>) -> 
 /// `...@...` statements inside Macro/Function rule bodies of
 /// deffunc.rep/code.ys. Registered under the name "`".
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispBackQuote.
-pub fn cmd_back_quote(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_back_quote(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1898,7 +2300,10 @@ pub fn cmd_back_quote(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
 /// UnProtect from internal_use and would leave lazily loaded file symbols
 /// protected -> SymbolProtected).
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispProtect / LispUnProtect.
-pub fn cmd_protect(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_protect(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1907,7 +2312,10 @@ pub fn cmd_protect(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
     env.protect(&name);
     Ok(env.true_atom())
 }
-pub fn cmd_unprotect(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_unprotect(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1919,13 +2327,20 @@ pub fn cmd_unprotect(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
 
 /// IsProtected — (name) reports whether the symbol is in the protect table.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispIsProtected.
-pub fn cmd_is_protected(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_protected(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let name_node = eval(env, arg(inner, 0)?)?;
     let name = symbol_name_of(env, &name_node)?;
-    Ok(if env.is_protected(&name) { env.true_atom() } else { env.false_atom() })
+    Ok(if env.is_protected(&name) {
+        env.true_atom()
+    } else {
+        env.false_atom()
+    })
 }
 
 /// IsBound — (name) reports whether the name is bound (any local frame or
@@ -1933,31 +2348,48 @@ pub fn cmd_is_protected(env: &mut Environment, inner: &Rc<LispObject>) -> Result
 /// `If(Not IsBound(mathExpThreshold), 500)` — without it If would hit a
 /// non-boolean error.
 /// See upstream: cyacas/libyacas/src/corefunctions.h LispIsBound.
-pub fn cmd_is_bound(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_bound(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     // Take the name from the raw argument (upstream ARGUMENT(1)->String(), no
     // eval — the question is "is this name bound").
     let s = arg(inner, 0)?.atom_string().ok_or(YacasError::InvalidArg)?;
-    Ok(if env.is_bound(s) { env.true_atom() } else { env.false_atom() })
+    Ok(if env.is_bound(s) {
+        env.true_atom()
+    } else {
+        env.false_atom()
+    })
 }
 
 /// IsGeneric — reports whether the argument is a Generic object (Pattern/Array
 /// etc.).
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispIsGeneric.
-pub fn cmd_is_generic(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_is_generic(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let v = eval(env, arg(inner, 0)?)?;
-    Ok(if matches!(v.kind, ObjectKind::Generic(_)) { env.true_atom() } else { env.false_atom() })
+    Ok(if matches!(v.kind, ObjectKind::Generic(_)) {
+        env.true_atom()
+    } else {
+        env.false_atom()
+    })
 }
 
 /// GenericTypeName — the type name of a Generic object, as a quoted string;
 /// non-Generic -> InvalidArg.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispGenericTypeName.
-pub fn cmd_generic_type_name(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_generic_type_name(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -1975,7 +2407,10 @@ pub fn cmd_generic_type_name(env: &mut Environment, inner: &Rc<LispObject>) -> R
 /// matches the list argument (with the List head stripped). Required by
 /// localrules.rep runtime validation.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp GenPatternMatches.
-pub fn cmd_pattern_matches(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_pattern_matches(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2003,7 +2438,10 @@ pub fn cmd_pattern_matches(env: &mut Environment, inner: &Rc<LispObject>) -> Res
 /// and returns the evaluated argument (not True). Used by scripts such as
 /// showq*.ys for debugging.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispFullForm (Function|Fixed).
-pub fn cmd_full_form(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_full_form(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2025,7 +2463,10 @@ pub fn cmd_full_form(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
 /// (like upstream LispErrUser). Used throughout the scripts for argument
 /// validation (e.g. limit.rep's Check(IsAtom(var),"...")).
 /// See upstream: cyacas/libyacas/src/corefunctions.h LispCheck.
-pub fn cmd_check(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_check(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2033,7 +2474,9 @@ pub fn cmd_check(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lis
     if !crate::standard::is_true(env, &pred) {
         let msg = eval(env, arg(inner, 1)?)?;
         let text = match msg.atom_string() {
-            Some(s) => crate::standard::internal_unstringify(s).unwrap_or(s).to_string(),
+            Some(s) => crate::standard::internal_unstringify(s)
+                .unwrap_or(s)
+                .to_string(),
             None => {
                 // Non-string message (like CheckArgIsString): quoted-string atoms or numbers are both InvalidArg
                 return Err(YacasError::InvalidArg);
@@ -2051,7 +2494,10 @@ pub fn cmd_check(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Lis
 /// callbacks), clears the debugger afterwards, and returns expr's result.
 /// debug.rep's TraceExp/Debug/TraceRule depend on this.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispCustomEval.
-pub fn cmd_custom_eval(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_custom_eval(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 4 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2079,13 +2525,18 @@ pub fn cmd_custom_eval(env: &mut Environment, inner: &Rc<LispObject>) -> Result<
 /// currently being evaluated (for use inside debug callbacks); errors when no
 /// debugger is active.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispCustomEvalExpression.
-pub fn cmd_custom_eval_expression(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_custom_eval_expression(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let d = env.debugger.borrow();
     let state = d.as_ref().ok_or_else(|| {
-        YacasError::Generic("Trying to get CustomEval results while not in custom evaluation".to_string())
+        YacasError::Generic(
+            "Trying to get CustomEval results while not in custom evaluation".to_string(),
+        )
     })?;
     match &state.top_expr {
         Some(e) => Ok(copy_node(e)),
@@ -2097,13 +2548,18 @@ pub fn cmd_custom_eval_expression(env: &mut Environment, inner: &Rc<LispObject>)
 /// of the current sub-expression (for use in the Leave callback); errors when
 /// no debugger is active.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispCustomEvalResult.
-pub fn cmd_custom_eval_result(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_custom_eval_result(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let d = env.debugger.borrow();
     let state = d.as_ref().ok_or_else(|| {
-        YacasError::Generic("Trying to get CustomEval results while not in custom evaluation".to_string())
+        YacasError::Generic(
+            "Trying to get CustomEval results while not in custom evaluation".to_string(),
+        )
     })?;
     match &state.top_result {
         Some(r) => Ok(copy_node(r)),
@@ -2116,7 +2572,10 @@ pub fn cmd_custom_eval_result(env: &mut Environment, inner: &Rc<LispObject>) -> 
 /// outwards, stopping at a fenced frame). Returns even without an active
 /// debugger (upstream returns {} for a standalone call).
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispCustomEvalLocals.
-pub fn cmd_custom_eval_locals(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_custom_eval_locals(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2137,23 +2596,25 @@ pub fn cmd_custom_eval_locals(env: &mut Environment, inner: &Rc<LispObject>) -> 
     // Deduplicate (CurrentLocals collects per frame, so names may repeat; order-preserving dedup)
     let mut seen = std::collections::HashSet::new();
     names.retain(|n| seen.insert(n.clone()));
-    let kinds: Vec<ObjectKind> = names
-        .iter()
-        .map(|n| ObjectKind::Atom(n.clone()))
-        .collect();
+    let kinds: Vec<ObjectKind> = names.iter().map(|n| ObjectKind::Atom(n.clone())).collect();
     Ok(list_of(kinds, env))
 }
 
 /// CustomEval'Stop (Function|Fixed, arity 0): sets debugger.stopped (later
 /// evals raise to abort); errors when no debugger is active. Returns True.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispCustomEvalStop.
-pub fn cmd_custom_eval_stop(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_custom_eval_stop(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let mut d = env.debugger.borrow_mut();
     let state = d.as_mut().ok_or_else(|| {
-        YacasError::Generic("Trying to get CustomEval results while not in custom evaluation".to_string())
+        YacasError::Generic(
+            "Trying to get CustomEval results while not in custom evaluation".to_string(),
+        )
     })?;
     state.stopped = true;
     Ok(env.true_atom())
@@ -2165,7 +2626,10 @@ pub fn cmd_custom_eval_stop(env: &mut Environment, inner: &Rc<LispObject>) -> Re
 /// macro body `MacroLocal(item)` depends on this — item is the loop variable
 /// name.
 /// See upstream: cyacas/libyacas/src/corefunctions.h LispNewLocal.
-pub fn cmd_macro_local(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_macro_local(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     for i in 0..n {
         let v = eval(env, arg(inner, i)?)?;
@@ -2181,7 +2645,10 @@ pub fn cmd_macro_local(env: &mut Environment, inner: &Rc<LispObject>) -> Result<
 /// the buffer. The N macro `TrapError(Set(result,@expr), Set(errorString,GetCoreError()))`
 /// depends on this.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispTrapError.
-pub fn cmd_trap_error(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_trap_error(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2211,7 +2678,10 @@ pub fn cmd_trap_error(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
 
 /// GetCoreError: returns the error_output buffer string as a quoted string atom.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispGetCoreError.
-pub fn cmd_get_core_error(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_get_core_error(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2228,7 +2698,10 @@ pub fn cmd_get_core_error(env: &mut Environment, inner: &Rc<LispObject>) -> Resu
 /// without it the value is kept, If sees a non-boolean, the cache entry is
 /// skipped, and N(Pi,10) fails to simplify.
 /// See upstream: cyacas/libyacas/src/corefunctions.h YacasBuiltinAssoc.
-pub fn cmd_builtin_assoc(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_builtin_assoc(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2257,7 +2730,10 @@ pub fn cmd_builtin_assoc(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
 /// includes the head). standard.ys's Numeric/Verbose blocks and yacasinit.ys's
 /// Input/Output/REP blocks depend on this.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispLocalSymbols.
-pub fn cmd_local_symbols(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_local_symbols(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let n = arity_of(inner);
     if n < 2 {
         return Err(YacasError::WrongNumberOfArgs);
@@ -2296,7 +2772,10 @@ pub fn cmd_local_symbols(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
 /// - args must be a list node (like upstream CheckArg(args->SubList(),...)).
 ///
 /// See upstream: cyacas/libyacas/src/mathcommands3.cpp LispApplyPure.
-pub fn cmd_apply_pure(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_apply_pure(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2363,7 +2842,10 @@ pub fn cmd_apply_pure(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
 /// DestructiveAppend(arglist,...) -> ApplyPure("LocalSymbols",arglist)
 /// (args/arglist are macro-frame local atoms).
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp LispFlatCopy.
-pub fn cmd_flat_copy(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_flat_copy(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2378,7 +2860,10 @@ pub fn cmd_flat_copy(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
 
 /// MathSubtract: (a, b) -> numeric a - b (the MathAdd family counterpart).
 /// standard.ys's `--` function body depends on this.
-pub fn cmd_math_subtract(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_math_subtract(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2411,7 +2896,10 @@ pub fn cmd_math_subtract(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
 /// in-place mutation — Rust rebuilds the list; in-place writeback is handled
 /// by the call layer.
 /// See upstream: cyacas/libyacas/src/mathcommands.cpp InternalInsert.
-pub fn cmd_insert(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_insert(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 3 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2466,7 +2954,10 @@ pub fn cmd_insert(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<Li
     all.push(ObjectKind::Atom(env.symtab.look_up("List")));
     all.extend(kinds);
     let chain = crate::value::build_list(all).ok_or(YacasError::InvalidArg)?;
-    Ok(Rc::new(LispObject { next: None, kind: ObjectKind::Sublist(chain) }))
+    Ok(Rc::new(LispObject {
+        next: None,
+        kind: ObjectKind::Sublist(chain),
+    }))
 }
 
 /// Replace/DestructiveReplace (like upstream InternalReplace; Function|Fixed,
@@ -2524,16 +3015,25 @@ fn internal_replace(
     all.push(ObjectKind::Atom(env.symtab.look_up("List")));
     all.extend(kinds);
     let chain = crate::value::build_list(all).ok_or(YacasError::InvalidArg)?;
-    let result = Rc::new(LispObject { next: None, kind: ObjectKind::Sublist(chain) });
+    let result = Rc::new(LispObject {
+        next: None,
+        kind: ObjectKind::Sublist(chain),
+    });
     if destructive {
         write_back_arg0(env, inner, &result)?;
     }
     Ok(result)
 }
-pub fn cmd_replace(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_replace(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     internal_replace(env, inner, false)
 }
-pub fn cmd_destructive_replace(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_destructive_replace(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     internal_replace(env, inner, true)
 }
 
@@ -2554,7 +3054,12 @@ pub fn cmd_destructive_replace(env: &mut Environment, inner: &Rc<LispObject>) ->
 /// Command registration (the corresponding entries of MathCommands.AddCommands;
 /// called from Environment::new).
 pub fn register_core_commands(env: &mut Environment) {
-    let add = |env: &mut Environment, name: &'static str, func: fn(&mut Environment, &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError>| {
+    let add = |env: &mut Environment,
+               name: &'static str,
+               func: fn(
+        &mut Environment,
+        &Rc<LispObject>,
+    ) -> Result<Rc<LispObject>, YacasError>| {
         env.core_commands.insert(
             env.symtab.look_up(name),
             crate::evaluator::CoreCommand {
@@ -2620,7 +3125,11 @@ pub fn register_core_commands(env: &mut Environment) {
     add(env, "MacroRuleBase", cmd_macro_rule_base);
     add(env, "MacroRuleBaseListed", cmd_macro_rule_base_listed);
     add(env, "DefMacroRuleBase", cmd_def_macro_rule_base);
-    add(env, "DefMacroRuleBaseListed", cmd_def_macro_rule_base_listed);
+    add(
+        env,
+        "DefMacroRuleBaseListed",
+        cmd_def_macro_rule_base_listed,
+    );
     add(env, "HoldArg", cmd_hold_arg);
     add(env, "Rule", cmd_rule);
     add(env, "RulePattern", cmd_rule_pattern);
@@ -2860,7 +3369,11 @@ pub fn register_core_commands(env: &mut Environment) {
 /// value (equal -> compare the chain tail next); strings by strcmp (equal ->
 /// compare the tail); sublists compared element by element with InternalEquals,
 /// recursing on the first unequal pair; shorter first, equal length -> False.
-fn strict_less(env: &mut Environment, e1: &Rc<LispObject>, e2: &Rc<LispObject>) -> Result<bool, YacasError> {
+fn strict_less(
+    env: &mut Environment,
+    e1: &Rc<LispObject>,
+    e2: &Rc<LispObject>,
+) -> Result<bool, YacasError> {
     if Rc::ptr_eq(e1, e2) {
         return Ok(false);
     }
@@ -2910,7 +3423,11 @@ fn strict_less(env: &mut Environment, e1: &Rc<LispObject>, e2: &Rc<LispObject>) 
 }
 
 /// Chain-tail comparison for equal elements (like the InternalStrictTotalOrder recursion).
-fn strict_tail(env: &mut Environment, e1: &Rc<LispObject>, e2: &Rc<LispObject>) -> Result<bool, YacasError> {
+fn strict_tail(
+    env: &mut Environment,
+    e1: &Rc<LispObject>,
+    e2: &Rc<LispObject>,
+) -> Result<bool, YacasError> {
     match (&e1.next, &e2.next) {
         (None, None) => Ok(false),
         (None, Some(_)) => Ok(true),
@@ -2919,7 +3436,10 @@ fn strict_tail(env: &mut Environment, e1: &Rc<LispObject>, e2: &Rc<LispObject>) 
     }
 }
 
-pub fn cmd_strict_total_order(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_strict_total_order(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2933,7 +3453,10 @@ pub fn cmd_strict_total_order(env: &mut Environment, inner: &Rc<LispObject>) -> 
 /// LispMathIsSmall / BigNumber::IsSmall): integers -> bit length <= 53
 /// (2^52 True, 2^53 False); floats -> creation precision (decimal digits) <= 53
 /// and |te| < 1021 (N(2.5,16) True, 1e1020 True, 1e1021 False).
-pub fn cmd_math_is_small(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_math_is_small(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2960,7 +3483,10 @@ pub fn cmd_math_is_small(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
 /// LispCharString): ASCII code -> single-character quoted string. The argument
 /// must be numeric text; atoi semantics ("1.5" -> 1); truncated to 8 bits as
 /// (char) (CharString(300) -> ",").
-pub fn cmd_char_string(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_char_string(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -2984,7 +3510,10 @@ pub fn cmd_char_string(env: &mut Environment, inner: &Rc<LispObject>) -> Result<
         code = -code;
     }
     let byte = (code & 0xFF) as u8;
-    Ok(crate::value::make_atom(&mut env.symtab, &format!("\"{}\"", byte as char)))
+    Ok(crate::value::make_atom(
+        &mut env.symtab,
+        &format!("\"{}\"", byte as char),
+    ))
 }
 
 /// Base-b digit character -> value (like DigitIndex; '0'-'9', 'a'-'z', 'A'-'Z';
@@ -3021,7 +3550,11 @@ fn nat_to_base(
         }
         let (q, r) = cur.divrem(&b).expect("div by nonzero");
         let d: u32 = r.to_decimal().parse().expect("r < base");
-        ds.push(if d < 10 { b'0' + d as u8 } else { b'a' + (d - 10) as u8 });
+        ds.push(if d < 10 {
+            b'0' + d as u8
+        } else {
+            b'a' + (d - 10) as u8
+        });
         cur = q;
     }
     ds.reverse();
@@ -3034,14 +3567,16 @@ fn nat_from_base(
     s: &str,
     base: i64,
 ) -> Result<crate::number::nat::Nat, YacasError> {
-    let b = crate::number::nat::Nat::from_decimal(&base.to_string()).ok_or(YacasError::InvalidArg)?;
+    let b =
+        crate::number::nat::Nat::from_decimal(&base.to_string()).ok_or(YacasError::InvalidArg)?;
     let mut acc = crate::number::nat::Nat::zero();
     for (index, c) in s.chars().enumerate() {
         if index & 0xff == 0 {
             env.check_eval_deadline()?;
         }
         let d = base_digit(c, base).ok_or(YacasError::InvalidArg)?;
-        let digit = crate::number::nat::Nat::from_decimal(&d.to_string()).ok_or(YacasError::InvalidArg)?;
+        let digit =
+            crate::number::nat::Nat::from_decimal(&d.to_string()).ok_or(YacasError::InvalidArg)?;
         acc = acc.mul(&b).add(&digit);
     }
     Ok(acc)
@@ -3059,7 +3594,10 @@ fn nat_from_base(
 /// Precision conversion (like CalculatePrecision): bits = ceil(max(BinaryPrecision,
 /// significant digits) × log2(base)), decimal digits = floor(bits × log10 2)
 /// (FromBase(3,"0.1") -> 16 digits).
-pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_from_base(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3160,7 +3698,9 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     let dec = (((bits as f64) * 2f64.log10()).floor().max(1.0)) as u32;
     let bnat = crate::number::nat::Nat::from_decimal(&base.to_string()).expect("base");
     let denom = bnat
-        .pow_with_limits(frac_part.len() as u32, || env.check_eval_deadline().is_err())
+        .pow_with_limits(frac_part.len() as u32, || {
+            env.check_eval_deadline().is_err()
+        })
         .map_err(map_numeric_work_error)?;
     let scaled = m.mul_pow10(dec);
     let (q, r) = divrem_with_deadline(env, &scaled, &denom)?;
@@ -3183,7 +3723,10 @@ pub fn cmd_from_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
 /// overflowing into the integer part), trailing fraction zeros trimmed;
 /// floats always carry '.' (integral values "X.", zero special case "0");
 /// te != 0 appends "e<te>" (e.g. ToBase(2, 0.1e21-like) -> "0.0001100…e21").
-pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_to_base(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3221,7 +3764,10 @@ pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
         if neg && s != "0" {
             s = format!("-{s}");
         }
-        return Ok(crate::value::make_atom(&mut env.symtab, &format!("\"{s}\"")));
+        return Ok(crate::value::make_atom(
+            &mut env.symtab,
+            &format!("\"{s}\""),
+        ));
     }
     // Float: mantissa digits×10^-scale conversion (te is attached separately
     // as the e suffix)
@@ -3279,10 +3825,7 @@ pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
     while digs.last() == Some(&0) {
         digs.pop();
     }
-    let frac_s: String = digs
-        .iter()
-        .map(|&d| base_char(d))
-        .collect();
+    let frac_s: String = digs.iter().map(|&d| base_char(d)).collect();
     let mut out = if frac_s.is_empty() {
         if int_s == "0" {
             "0".to_string()
@@ -3299,7 +3842,10 @@ pub fn cmd_to_base(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<L
     if f.is_neg() && out != "0" {
         out = format!("-{out}");
     }
-    Ok(crate::value::make_atom(&mut env.symtab, &format!("\"{out}\"")))
+    Ok(crate::value::make_atom(
+        &mut env.symtab,
+        &format!("\"{out}\""),
+    ))
 }
 
 fn base_char(d: u32) -> char {
@@ -3312,7 +3858,10 @@ fn base_char(d: u32) -> char {
 
 /// Add 1 with carry to a base-b integer string (rounding overflow into the integer part).
 fn int_part_nat_inc(s: &mut String, base: u32) {
-    let mut ds: Vec<u32> = s.chars().map(|c| base_digit(c, base as i64).unwrap_or(0) as u32).collect();
+    let mut ds: Vec<u32> = s
+        .chars()
+        .map(|c| base_digit(c, base as i64).unwrap_or(0) as u32)
+        .collect();
     let mut carry = 1i64;
     for d in ds.iter_mut().rev() {
         let w = *d as i64 + carry;
@@ -3332,13 +3881,19 @@ fn int_part_nat_inc(s: &mut String, base: u32) {
 /// the vendored build leaves YACAS_VERSION empty -> ""). Interpreter
 /// (see upstream: cyacas/libyacas/include/yacas/corefunctions.h "Interpreter")
 /// -> "yacas".
-pub fn cmd_version(env: &mut Environment, _inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_version(
+    env: &mut Environment,
+    _inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(_inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     Ok(crate::value::make_atom(&mut env.symtab, "\"\""))
 }
-pub fn cmd_interpreter(env: &mut Environment, _inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_interpreter(
+    env: &mut Environment,
+    _inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(_inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3349,7 +3904,10 @@ pub fn cmd_interpreter(env: &mut Environment, _inner: &Rc<LispObject>) -> Result
 /// lispenvironment.cpp GlobalVariables): a List of global variable names,
 /// skipping names with a '$'/'%' prefix. The upstream unordered table has a
 /// non-reproducible order; sorting keeps the output deterministic.
-pub fn cmd_variables(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_variables(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3375,7 +3933,10 @@ pub fn cmd_variables(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
 /// FindFile (see upstream: cyacas/libyacas/src/mathcommands.cpp LispFindFile):
 /// searches input_directories; on a hit -> quoted path, otherwise "".
 /// Raises an error in Secure mode.
-pub fn cmd_find_file(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_find_file(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3384,15 +3945,23 @@ pub fn cmd_find_file(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc
     }
     let v = eval(env, arg(inner, 0)?)?;
     let s = v.atom_string().ok_or(YacasError::InvalidArg)?;
-    let name = crate::standard::internal_unstringify(s).unwrap_or(s).to_string();
+    let name = crate::standard::internal_unstringify(s)
+        .unwrap_or(s)
+        .to_string();
     let path = crate::standard::internal_find_file(env, &name).unwrap_or_default();
-    Ok(crate::value::make_atom(&mut env.symtab, &format!("\"{path}\"")))
+    Ok(crate::value::make_atom(
+        &mut env.symtab,
+        &format!("\"{path}\""),
+    ))
 }
 
 /// FindFunction (see upstream: cyacas/libyacas/src/mathcommands.cpp
 /// LispFindFunction): the defining file name (quoted) of a user function;
 /// none -> the bare symbol Empty (same as cyacas, unquoted).
-pub fn cmd_find_function(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_find_function(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3401,7 +3970,9 @@ pub fn cmd_find_function(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
     }
     let v = eval(env, arg(inner, 0)?)?;
     let s = v.atom_string().ok_or(YacasError::InvalidArg)?;
-    let name = crate::standard::internal_unstringify(s).unwrap_or(s).to_string();
+    let name = crate::standard::internal_unstringify(s)
+        .unwrap_or(s)
+        .to_string();
     if let Some(mf) = env.user_functions.get(name.as_str()) {
         if let Some(def) = mf.inner.borrow().file_to_open.as_ref() {
             return Ok(crate::value::make_atom(
@@ -3415,7 +3986,10 @@ pub fn cmd_find_function(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
 
 /// MaxEvalDepth (see upstream: cyacas/libyacas/src/mathcommands.cpp
 /// LispMaxEvalDepth): sets the limit -> True.
-pub fn cmd_max_eval_depth(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_max_eval_depth(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3427,7 +4001,10 @@ pub fn cmd_max_eval_depth(env: &mut Environment, inner: &Rc<LispObject>) -> Resu
 
 /// GarbageCollect (see upstream: cyacas/libyacas/src/mathcommands3.cpp
 /// LispGarbageCollect): this engine has no GC -> True.
-pub fn cmd_garbage_collect(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_garbage_collect(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3436,7 +4013,10 @@ pub fn cmd_garbage_collect(env: &mut Environment, inner: &Rc<LispObject>) -> Res
 
 /// InDebugMode (see upstream: cyacas/libyacas/src/mathcommands2.cpp
 /// LispInDebugMode): non-debug -> False.
-pub fn cmd_in_debug_mode(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_in_debug_mode(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3448,7 +4028,10 @@ pub fn cmd_in_debug_mode(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
 /// "Cannot call DebugFile in non-debug version of Yacas" (debug.rep guards
 /// with InDebugMode, so this is unreachable in non-debug builds; matches
 /// upstream behavior).
-pub fn cmd_debug_file(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_debug_file(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3457,7 +4040,10 @@ pub fn cmd_debug_file(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
         "Cannot call DebugFile in non-debug version of Yacas",
     ))
 }
-pub fn cmd_debug_line(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_debug_line(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3483,7 +4069,11 @@ fn pretty_get(env: &mut Environment, which: bool) -> Result<Rc<LispObject>, Yaca
         None => Ok(crate::value::make_atom(&mut env.symtab, "\"\"")),
     }
 }
-fn pretty_set(env: &mut Environment, which: bool, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+fn pretty_set(
+    env: &mut Environment,
+    which: bool,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     match arity_of(inner) {
         0 => {
             if which {
@@ -3509,19 +4099,31 @@ fn pretty_set(env: &mut Environment, which: bool, inner: &Rc<LispObject>) -> Res
         _ => Err(YacasError::WrongNumberOfArgs),
     }
 }
-pub fn cmd_pretty_reader_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_pretty_reader_set(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     pretty_set(env, true, inner)
 }
-pub fn cmd_pretty_reader_get(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_pretty_reader_get(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     pretty_get(env, true)
 }
-pub fn cmd_pretty_printer_set(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_pretty_printer_set(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     pretty_set(env, false, inner)
 }
-pub fn cmd_pretty_printer_get(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_pretty_printer_get(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3531,19 +4133,32 @@ pub fn cmd_pretty_printer_get(env: &mut Environment, inner: &Rc<LispObject>) -> 
 /// CurrentFile (see upstream: cyacas/libyacas/src/mathcommands3.cpp
 /// LispCurrentFile): the input state file name (quoted); defaults to
 /// "CommandLine".
-pub fn cmd_current_file(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_current_file(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let f = env.input_file.borrow().clone();
-    let name = if f.is_empty() { "CommandLine".to_string() } else { f };
-    Ok(crate::value::make_atom(&mut env.symtab, &format!("\"{name}\"")))
+    let name = if f.is_empty() {
+        "CommandLine".to_string()
+    } else {
+        f
+    };
+    Ok(crate::value::make_atom(
+        &mut env.symtab,
+        &format!("\"{name}\""),
+    ))
 }
 
 /// CurrentLine (see upstream: cyacas/libyacas/src/mathcommands3.cpp
 /// LispCurrentLine): the active input tokenizer's consumed-'\n' count + 1;
 /// no active input -> 1.
-pub fn cmd_current_line(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_current_line(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3562,7 +4177,10 @@ pub fn cmd_current_line(env: &mut Environment, inner: &Rc<LispObject>) -> Result
 /// BigNumber::DumpDebugInfo): integers -> "No number representation"; floats ->
 /// an ANumber::Print dump (words / after point / te / prec + 32-bit binary
 /// limbs). Written to the current output; always returns True.
-pub fn cmd_math_debug_info(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_math_debug_info(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3599,7 +4217,10 @@ pub fn cmd_math_debug_info(env: &mut Environment, inner: &Rc<LispObject>) -> Res
 /// LispTraceStack): cyacas installs TracedStackEvaluator (which only prints
 /// the stack at MaxRecurseDepth; normal evaluation has no output); this engine
 /// has no frame stack -> identity evaluation.
-pub fn cmd_trace_rule(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_trace_rule(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3608,7 +4229,9 @@ pub fn cmd_trace_rule(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
         ObjectKind::Sublist(sub) => {
             let mut it = crate::value::spine_refs(sub);
             let first = it.next();
-            first.and_then(|f| f.atom_string()).map(|h| (h.clone(), crate::standard::internal_list_length(head) - 1))
+            first
+                .and_then(|f| f.atom_string())
+                .map(|h| (h.clone(), crate::standard::internal_list_length(head) - 1))
         }
         _ => None,
     };
@@ -3633,7 +4256,10 @@ pub fn cmd_trace_rule(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
     result
 }
 
-pub fn cmd_trace_stack(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_trace_stack(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3645,7 +4271,10 @@ pub fn cmd_trace_stack(env: &mut Environment, inner: &Rc<LispObject>) -> Result<
 /// cyacas/libyacas/src/mathcommands3.cpp LispXmlTokenizer / LispDefaultTokenizer):
 /// switch the current tokenizer mode (environment-level flag, synchronized
 /// with the active input).
-pub fn cmd_xml_tokenizer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_xml_tokenizer(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3655,7 +4284,10 @@ pub fn cmd_xml_tokenizer(env: &mut Environment, inner: &Rc<LispObject>) -> Resul
     }
     Ok(env.true_atom())
 }
-pub fn cmd_default_tokenizer(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_default_tokenizer(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3672,7 +4304,10 @@ pub fn cmd_default_tokenizer(env: &mut Environment, inner: &Rc<LispObject>) -> R
 /// tag names / attribute names uppercased; an attribute pair =
 /// List("NAME","value") (value keeps its quotes); the attribute chain order
 /// follows the C++ prepend (later attributes come first).
-pub fn cmd_xml_explode_tag(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_xml_explode_tag(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -3804,13 +4439,18 @@ fn output_append(env: &mut Environment, s: &str) {
 /// LispPatchLoad): evaluates and unquotes the file name, finds it via
 /// input_directories; patches the content into the current output; always
 /// returns True.
-pub fn cmd_patch_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_patch_load(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let v = eval(env, arg(inner, 0)?)?;
     let s = v.atom_string().ok_or(YacasError::InvalidArg)?;
-    let fname = crate::standard::internal_unstringify(s).unwrap_or(s).to_string();
+    let fname = crate::standard::internal_unstringify(s)
+        .unwrap_or(s)
+        .to_string();
     let path = crate::standard::internal_find_file(env, &fname).ok_or(YacasError::FileNotFound)?;
     let text = std::fs::read_to_string(&path).map_err(|_| YacasError::FileNotFound)?;
     patch_process(env, &text)?;
@@ -3820,13 +4460,18 @@ pub fn cmd_patch_load(env: &mut Environment, inner: &Rc<LispObject>) -> Result<R
 /// PatchString (see upstream: cyacas/libyacas/src/mathcommands3.cpp
 /// LispPatchString): patches into a fresh buffer -> quoted string (stringify
 /// does not escape embedded quotes, as in C++).
-pub fn cmd_patch_string(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_patch_string(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 1 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     let v = eval(env, arg(inner, 0)?)?;
     let s = v.atom_string().ok_or(YacasError::InvalidArg)?;
-    let content = crate::standard::internal_unstringify(s).unwrap_or(s).to_string();
+    let content = crate::standard::internal_unstringify(s)
+        .unwrap_or(s)
+        .to_string();
     let depth = env.push_output();
     let r = patch_process(env, &content);
     let captured = env.pop_output(depth);
@@ -3844,7 +4489,11 @@ pub fn cmd_patch_string(env: &mut Environment, inner: &Rc<LispObject>) -> Result
 /// into a sublist (nested '(' recurses; EOF -> InvalidToken); listed mode
 /// prepends a List head before the first element; empty token -> EndOfFile
 /// atom. No ';' check.
-fn plain_parse(env: &mut Environment, tok: &mut crate::tokenizer::Tokenizer, listed: bool) -> Result<Rc<LispObject>, YacasError> {
+fn plain_parse(
+    env: &mut Environment,
+    tok: &mut crate::tokenizer::Tokenizer,
+    listed: bool,
+) -> Result<Rc<LispObject>, YacasError> {
     let token = tok
         .next_token()
         .map_err(|_| YacasError::generic("Invalid token"))?;
@@ -3887,9 +4536,13 @@ fn cmd_lisp_read_impl(env: &mut Environment, listed: bool) -> Result<Rc<LispObje
         let mut stack = env.input_stack.borrow_mut();
         stack
             .last_mut()
-            .ok_or(YacasError::Generic("LispRead: no active input stream".to_string()))?
+            .ok_or(YacasError::Generic(
+                "LispRead: no active input stream".to_string(),
+            ))?
             .take()
-            .ok_or(YacasError::Generic("LispRead: input tokenizer missing".to_string()))?
+            .ok_or(YacasError::Generic(
+                "LispRead: input tokenizer missing".to_string(),
+            ))?
     };
     let r = plain_parse(env, &mut tok, listed);
     env.input_stack
@@ -3899,13 +4552,19 @@ fn cmd_lisp_read_impl(env: &mut Environment, listed: bool) -> Result<Rc<LispObje
         .replace(tok);
     r
 }
-pub fn cmd_lisp_read(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_lisp_read(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }
     cmd_lisp_read_impl(env, false)
 }
-pub fn cmd_lisp_read_listed(env: &mut Environment, inner: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn cmd_lisp_read_listed(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 0 {
         return Err(YacasError::WrongNumberOfArgs);
     }

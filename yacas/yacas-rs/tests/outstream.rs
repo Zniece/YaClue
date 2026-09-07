@@ -4,28 +4,45 @@ use ys::evaluator::eval;
 use ys::parser::parse_expression;
 use ys::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap_or_else(|e| panic!("parse {src}: {e:?}")).expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap_or_else(|e| panic!("parse {src}: {e:?}"))
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn outstream_oracle() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     let probes = [
         // ToString 捕获:返回带引号串(cyacas 实证 "2ab" 等)
         (r#"ToString()[Write(1+1); WriteString("ab");]"#, "\"2ab\""),
         (r#"ToString()[Write(1);]"#, "\"1\""),
         (r#"ToString()[Write(1,2);]"#, "\"1 2\""),
-        (r#"ToString()[Write("x");]"#, "\"\"x\"\""),  // Write("x")→"x"(带引号)
+        (r#"ToString()[Write("x");]"#, "\"\"x\"\""), // Write("x")→"x"(带引号)
         (r#"ToString()[Write(Atom("x"));]"#, "\"x\""),
         (r#"ToString()[WriteString("xy");]"#, "\"xy\""),
         (r#"ToString()[Write({1,2});]"#, "\"{1,2}\""),
-        (r#"ToString()[Write(1);WriteString(" ");Write(2);]"#, "\"1 2\""),
+        (
+            r#"ToString()[Write(1);WriteString(" ");Write(2);]"#,
+            "\"1 2\"",
+        ),
         (r#"ToString()[Write(1);Write(2);]"#, "\"1 2\""),
-        (r#"ToString()[WriteString("ab");WriteString("cd");]"#, "\"abcd\""),
-        (r#"ToString()[Write(1);Write("x");]"#, "\"1\"x\"\""),  // 数字接引号无空格
-        (r#"ToString()[Write(1);Write(x);]"#, "\"1 x\""),   // 数字接符号有空格
+        (
+            r#"ToString()[WriteString("ab");WriteString("cd");]"#,
+            "\"abcd\"",
+        ),
+        (r#"ToString()[Write(1);Write("x");]"#, "\"1\"x\"\""), // 数字接引号无空格
+        (r#"ToString()[Write(1);Write(x);]"#, "\"1 x\""),      // 数字接符号有空格
         (r#"ToString()[Write(1);Write({1,2});]"#, "\"1{1,2}\""),
         (r#"ToString()[WriteString("a");Write("x");]"#, "\"a\"x\"\""),
         (r#"ToString()[Write("x");Write("y");]"#, "\"\"x\"\"y\"\""),

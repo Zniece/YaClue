@@ -12,13 +12,24 @@ use ys::evaluator::eval;
 use ys::parser::parse_expression;
 use ys::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap_or_else(|e| panic!("parse {src}: {e:?}")).expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap_or_else(|e| panic!("parse {src}: {e:?}"))
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn container_family_oracle() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     let probes = [
         // Array:size/fill 拷贝、空数组、子列表 fill、越界被 TrapError 捕获
@@ -32,8 +43,14 @@ fn container_family_oracle() {
         ("Array'Size(b)", "0"),
         (r#"Array'Set(a,1,{1,2})"#, "True"),
         ("Array'Get(a,1)", "{1,2}"),
-        (r#"TrapError(Array'Get(Array'Create(1,0),5), "caught")"#, "\"caught\""),
-        (r#"TrapError(Array'Set(Array'Create(1,0),2,9), "caught")"#, "\"caught\""),
+        (
+            r#"TrapError(Array'Get(Array'Create(1,0),5), "caught")"#,
+            "\"caught\"",
+        ),
+        (
+            r#"TrapError(Array'Set(Array'Create(1,0),2,9), "caught")"#,
+            "\"caught\"",
+        ),
         (r#"TrapError(Array'Create(2,3,4), "caught")"#, "\"caught\""),
         // Association:排序(字符串/数字/列表键)、Head、Drop、错误路径
         ("c := Association'Create()", "Association({})"),
@@ -56,12 +73,24 @@ fn container_family_oracle() {
         (r#"Association'Set(d,{1,2,0},"C")"#, "True"),
         (r#"Association'Set(d,{1,3},"B")"#, "True"),
         (r#"Association'Keys(d)"#, r#"{{1,2},{1,2,0},{1,3}}"#),
-        (r#"Association'ToList(d)"#, r#"{{{1,2},"A"},{{1,2,0},"C"},{{1,3},"B"}}"#),
+        (
+            r#"Association'ToList(d)"#,
+            r#"{{{1,2},"A"},{{1,2,0},"C"},{{1,3},"B"}}"#,
+        ),
         (r#"Association'Head(d)"#, r#"{{1,2},"A"}"#),
-        (r#"TrapError(Association'Head(Association'Create()), "caught")"#, "\"caught\""),
-        (r#"TrapError(Association'Get(42,"k"), "caught")"#, "\"caught\""),
+        (
+            r#"TrapError(Association'Head(Association'Create()), "caught")"#,
+            "\"caught\"",
+        ),
+        (
+            r#"TrapError(Association'Get(42,"k"), "caught")"#,
+            "\"caught\"",
+        ),
         // CreateFromList 端到端
-        (r#"m := Association'CreateFromList({{"a",1},{"b",2},{"c",3}})"#, r#"Association({{"a",1},{"b",2},{"c",3}})"#),
+        (
+            r#"m := Association'CreateFromList({{"a",1},{"b",2},{"c",3}})"#,
+            r#"Association({{"a",1},{"b",2},{"c",3}})"#,
+        ),
         ("Association'Size(m)", "3"),
         (r#"Association'Keys(m)"#, r#"{"a","b","c"}"#),
         (r#"Association'ToList(m)"#, r#"{{"a",1},{"b",2},{"c",3}}"#),
@@ -70,7 +99,10 @@ fn container_family_oracle() {
         (r#"Association'Drop(m,"a")"#, "True"),
         (r#"Association'Keys(m)"#, r#"{"b","c"}"#),
         ("Association'CreateFromList({})", "Association({})"),
-        (r#"Association'Size(Association'CreateFromList({{"x",{1,2}},{"x",99}}))"#, "1"),
+        (
+            r#"Association'Size(Association'CreateFromList({{"x",{1,2}},{"x",99}}))"#,
+            "1",
+        ),
     ];
     for (p, exp) in probes {
         let got = run(&mut e, p);

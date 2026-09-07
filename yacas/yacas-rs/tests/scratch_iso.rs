@@ -4,7 +4,9 @@ use yacas_rs::parser::parse_expression;
 use yacas_rs::printer::infix_print;
 
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap().expect("非空");
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap()
+        .expect("非空");
     match eval(env, &t) {
         Ok(r) => infix_print(env, &r),
         Err(e) => format!("ERR({e:?})"),

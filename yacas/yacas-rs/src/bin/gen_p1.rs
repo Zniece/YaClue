@@ -9,7 +9,11 @@ use std::process::Command;
 
 fn main() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo = manifest.parent().and_then(|p| p.parent()).expect("repo root").to_path_buf();
+    let repo = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("repo root")
+        .to_path_buf();
     let probes_path = manifest.join("tests/e2e_payload/payload1.txt");
     let probes = std::fs::read_to_string(&probes_path).expect("read payload1.txt");
     let mut input = String::new();
@@ -18,8 +22,11 @@ fn main() {
         input.push_str(e);
         input.push_str(";\n");
     }
-    let cyacas = std::env::var("YACAS_BIN")
-        .unwrap_or_else(|_| repo.join("build-ref/cyacas/yacas/yacas").to_string_lossy().into_owned());
+    let cyacas = std::env::var("YACAS_BIN").unwrap_or_else(|_| {
+        repo.join("build-ref/cyacas/yacas/yacas")
+            .to_string_lossy()
+            .into_owned()
+    });
     let scripts = std::env::var("YACAS_SCRIPTS")
         .unwrap_or_else(|_| repo.join("yacas/scripts").to_string_lossy().into_owned());
     let mut child = Command::new(&cyacas)
@@ -29,7 +36,12 @@ fn main() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap_or_else(|e| panic!("spawn cyacas ({cyacas}): {e}"));
-    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     let lines: Vec<&str> = stdout.lines().skip(12 /* startup banner */).collect();
@@ -38,7 +50,13 @@ fn main() {
         .filter(|l| !l.trim().is_empty())
         .map(|l| l.trim().trim_start_matches('>'))
         .collect();
-    assert_eq!(lines.len(), exprs.len(), "output lines {} != probes {}", lines.len(), exprs.len());
+    assert_eq!(
+        lines.len(),
+        exprs.len(),
+        "output lines {} != probes {}",
+        lines.len(),
+        exprs.len()
+    );
     let mut golden = String::new();
     let mut outs = lines.iter();
     for raw in probes.lines().filter(|l| !l.trim().is_empty()) {

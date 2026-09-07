@@ -52,25 +52,48 @@ fn main() {
     let mut diffs = 0;
     for (c, r) in cpp_out.iter().zip(rs_out.iter()) {
         println!("────────────────────────────────────────────");
-        println!("StepsD({}, x):  C++ {} 步 / Rust {} 步", c.0, c.1.len(), r.1.len());
+        println!(
+            "StepsD({}, x):  C++ {} 步 / Rust {} 步",
+            c.0,
+            c.1.len(),
+            r.1.len()
+        );
         if c.1 != r.1 {
             diffs += 1;
             println!("  ✗ 步骤序列分歧:");
             for (i, (cs, rs_step)) in c.1.iter().zip(r.1.iter()).enumerate() {
                 if cs != rs_step {
-                    println!("    第 {} 步:\n      C++ : {:?}\n      Rust: {:?}", i + 1, cs, rs_step);
+                    println!(
+                        "    第 {} 步:\n      C++ : {:?}\n      Rust: {:?}",
+                        i + 1,
+                        cs,
+                        rs_step
+                    );
                 }
             }
             if c.1.len() != r.1.len() {
-                let extra = if c.1.len() < r.1.len() { &r.1[c.1.len()..] } else { &c.1[r.1.len()..] };
+                let extra = if c.1.len() < r.1.len() {
+                    &r.1[c.1.len()..]
+                } else {
+                    &c.1[r.1.len()..]
+                };
                 println!("    长度差多余步: {extra:?}");
             }
         } else {
             println!("  ✓ {} 步全部一致(rule/expr/tex 三元组)", c.1.len());
         }
         println!("  末步一致性验证: C++ {} / Rust {}", c.2, r.2);
-        if c.2 != r.2 { diffs += 1; }
+        if c.2 != r.2 {
+            diffs += 1;
+        }
     }
     println!("────────────────────────────────────────────");
-    println!("{}", if diffs == 0 { "双引擎完全一致,可替换 ✓".to_string() } else { format!("{diffs} 处分歧,替换前需修 ✗") });
+    println!(
+        "{}",
+        if diffs == 0 {
+            "双引擎完全一致,可替换 ✓".to_string()
+        } else {
+            format!("{diffs} 处分歧,替换前需修 ✗")
+        }
+    );
 }

@@ -19,10 +19,10 @@ pub const DEFAULT_PREC: u32 = 25;
 
 #[derive(Debug, Clone)]
 pub struct Float {
-    digits: Nat,     // integral digits (leading zeros trimmed; empty = 0)
-    scale: u32,      // number of fractional digits (≥ 0)
-    tens_exp: i64,   // tens exponent (te==0 prints verbatim, te!=0 e-form)
-    prec: u32,       // requested decimal precision (drives guard truncation)
+    digits: Nat,   // integral digits (leading zeros trimmed; empty = 0)
+    scale: u32,    // number of fractional digits (≥ 0)
+    tens_exp: i64, // tens exponent (te==0 prints verbatim, te!=0 e-form)
+    prec: u32,     // requested decimal precision (drives guard truncation)
     neg: bool,
     text: Option<String>, // original literal text (passthrough printing)
 }
@@ -70,7 +70,14 @@ impl Float {
     /// Raw constructor for exact core commands (e.g. the 2^n/5^m shifts of
     /// `MathMul2Exp`); value = digits × 10^(te − scale).
     pub fn from_parts(digits: Nat, scale: u32, tens_exp: i64, prec: u32, neg: bool) -> Self {
-        Float { digits, scale, tens_exp, prec, neg, text: None }
+        Float {
+            digits,
+            scale,
+            tens_exp,
+            prec,
+            neg,
+            text: None,
+        }
     }
 
     /// ×2^n shift (always exact): n ≥ 0 multiplies the digits by 2^n;
@@ -138,7 +145,9 @@ impl Float {
         }
         Ok(Float {
             digits,
-            scale: self.scale.checked_add(added_scale)
+            scale: self
+                .scale
+                .checked_add(added_scale)
                 .ok_or(super::limits::NumericWorkError::Overflow)?,
             tens_exp: self.tens_exp,
             prec: self.prec,
@@ -383,7 +392,11 @@ impl Float {
             };
         }
         let (q, rnz) = self.int_frac();
-        let val = if rnz && self.neg { q.add(&Nat::from_decimal("1").unwrap()) } else { q };
+        let val = if rnz && self.neg {
+            q.add(&Nat::from_decimal("1").unwrap())
+        } else {
+            q
+        };
         Float {
             neg: self.neg && (rnz || !val.is_zero()),
             text: None,
@@ -409,7 +422,11 @@ impl Float {
             };
         }
         let (q, rnz) = self.int_frac();
-        let val = if rnz && !self.neg { q.add(&Nat::from_decimal("1").unwrap()) } else { q };
+        let val = if rnz && !self.neg {
+            q.add(&Nat::from_decimal("1").unwrap())
+        } else {
+            q
+        };
         Float {
             neg: self.neg && !val.is_zero(),
             text: None,
@@ -538,7 +555,7 @@ impl Float {
         let shift = (k + 1) as u32;
         if enforce_limit
             && self.digits.to_decimal().len() + shift as usize
-            > super::limits::MAX_DECIMAL_WORK_DIGITS as usize
+                > super::limits::MAX_DECIMAL_WORK_DIGITS as usize
         {
             return Err(super::limits::NumericWorkError::Overflow);
         }
@@ -597,7 +614,11 @@ impl Float {
         } else if f.tens_exp != 0 {
             // e-form: cut the mantissa to `prec` digits, te unchanged.
             if dl > prec as i64 {
-                let (d, s) = truncate_down(f.digits.clone(), f.scale, f.scale - (dl - prec as i64) as u32);
+                let (d, s) = truncate_down(
+                    f.digits.clone(),
+                    f.scale,
+                    f.scale - (dl - prec as i64) as u32,
+                );
                 f.digits = d;
                 f.scale = s;
             }
@@ -637,7 +658,11 @@ impl Float {
     /// session `prec == 0` the operand max is used.
     pub fn add(&self, o: &Float, prec: u32) -> Float {
         use std::cmp::Ordering;
-        let out_prec = if prec > 0 { prec } else { self.prec.max(o.prec) };
+        let out_prec = if prec > 0 {
+            prec
+        } else {
+            self.prec.max(o.prec)
+        };
         // Computation guard: keep max(session, operand) digits internally so
         // low digits are not lost; the guard digits stay in storage and are
         // cut only when printing.
@@ -748,7 +773,11 @@ impl Float {
         enforce_limit: bool,
         interrupted: impl FnMut() -> bool,
     ) -> Result<Float, super::limits::NumericWorkError> {
-        let out_prec = if prec > 0 { prec } else { self.prec.max(o.prec) };
+        let out_prec = if prec > 0 {
+            prec
+        } else {
+            self.prec.max(o.prec)
+        };
         let result_digits = self.digits.to_decimal().len() + o.digits.to_decimal().len();
         if enforce_limit && result_digits > super::limits::MAX_DECIMAL_WORK_DIGITS as usize + 1 {
             return Err(super::limits::NumericWorkError::Overflow);
@@ -884,12 +913,7 @@ fn truncate_down(digits: Nat, scale: u32, cap: u32) -> (Nat, u32) {
 /// Drop low significant digits while preserving the represented value.
 /// Removing a digit normally lowers `scale`; once scale reaches zero, the
 /// remaining decimal shift is transferred into `tens_exp`.
-fn truncate_significant(
-    digits: Nat,
-    scale: u32,
-    tens_exp: i64,
-    cap: u32,
-) -> (Nat, u32, i64) {
+fn truncate_significant(digits: Nat, scale: u32, tens_exp: i64, cap: u32) -> (Nat, u32, i64) {
     if cap == 0 {
         return (digits, scale, tens_exp);
     }
@@ -902,11 +926,7 @@ fn truncate_significant(
     if scale >= drop {
         (kept, scale - drop, tens_exp)
     } else {
-        (
-            kept,
-            0,
-            tens_exp.saturating_add((drop - scale) as i64),
-        )
+        (kept, 0, tens_exp.saturating_add((drop - scale) as i64))
     }
 }
 
@@ -930,7 +950,13 @@ impl Float {
     }
     /// Construct with fraction-side trailing zeros trimmed (used by FromBase:
     /// `FromBase(10, "0.2222222222222222222")` stores 19 digits, not 34).
-    pub fn from_parts_trimmed(digits: Nat, scale: u32, tens_exp: i64, prec: u32, neg: bool) -> Self {
+    pub fn from_parts_trimmed(
+        digits: Nat,
+        scale: u32,
+        tens_exp: i64,
+        prec: u32,
+        neg: bool,
+    ) -> Self {
         let mut f = Float::from_parts(digits, scale, tens_exp, prec, neg);
         if f.tens_exp == 0 {
             let mut d = f.digits.clone();
@@ -1055,10 +1081,19 @@ mod tests {
     #[test]
     fn div_golden_layer2() {
         // Quotients carry the requested precision (guard truncation).
-        assert_eq!(f("1").div(&f("3"), 20).unwrap().format(), "0.33333333333333333333");
-        assert_eq!(f("1").div(&f("7"), 25).unwrap().format(), "0.1428571428571428571428571");
+        assert_eq!(
+            f("1").div(&f("3"), 20).unwrap().format(),
+            "0.33333333333333333333"
+        );
+        assert_eq!(
+            f("1").div(&f("7"), 25).unwrap().format(),
+            "0.1428571428571428571428571"
+        );
         assert_eq!(f("4").div(&f("3"), 5).unwrap().format(), "1.33333");
-        assert_eq!(f("-1").div(&f("3"), 20).unwrap().format(), "-0.33333333333333333333");
+        assert_eq!(
+            f("-1").div(&f("3"), 20).unwrap().format(),
+            "-0.33333333333333333333"
+        );
         assert_eq!(f("1").div(&f("3"), 5).unwrap().format(), "0.33333");
         assert_eq!(f("1").div(&f("8"), 20).unwrap().format(), "0.125");
         assert_eq!(f("2").div(&f("3"), 10).unwrap().format(), "0.6666666666");
@@ -1066,7 +1101,10 @@ mod tests {
         // Any magnitude keeps precision: 1/1000 → 0.1e-2 (normalized).
         assert_eq!(f("1").div(&f("1000"), 25).unwrap().format(), "0.1e-2");
         // 0.1/3 → 0.333…e-1 (decimal divisor, truncated at request).
-        assert_eq!(f("0.1").div(&f("3"), 10).unwrap().format(), "0.3333333333e-1");
+        assert_eq!(
+            f("0.1").div(&f("3"), 10).unwrap().format(),
+            "0.3333333333e-1"
+        );
         // Division by zero.
         assert!(f("1").div(&f("0"), 20).is_none());
     }
@@ -1117,8 +1155,7 @@ mod tests {
     fn scientific_results_keep_significant_digits() {
         let shifted = f("1e100").mul2exp(-332).expect("bounded shift");
         assert!(
-            shifted.format().starts_with("0.1142987391")
-                && shifted.format().ends_with("e1"),
+            shifted.format().starts_with("0.1142987391") && shifted.format().ends_with("e1"),
             "1e100 * 2^-332 = {}",
             shifted.format()
         );

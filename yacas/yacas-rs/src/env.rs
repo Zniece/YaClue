@@ -165,7 +165,11 @@ impl Environment {
     /// Push an output buffer, optionally targeting a file (`ToFile`).
     pub fn push_output_to(&self, file: Option<String>) -> usize {
         let mut s = self.output_stack.borrow_mut();
-        s.push(OutputBuffer { text: String::new(), prev_last_char: '\0', file });
+        s.push(OutputBuffer {
+            text: String::new(),
+            prev_last_char: '\0',
+            file,
+        });
         s.len() - 1
     }
 
@@ -217,7 +221,10 @@ impl Environment {
 
     /// Check the current evaluation deadline from long-running core loops.
     pub(crate) fn check_eval_deadline(&self) -> Result<(), crate::errors::YacasError> {
-        if self.eval_deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+        if self
+            .eval_deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
             Err(crate::errors::YacasError::UserInterrupt)
         } else {
             Ok(())
@@ -261,11 +268,15 @@ impl Environment {
     }
 
     pub fn true_atom(&self) -> Rc<LispObject> {
-        self.true_atom.clone().expect("env: True atom not initialized")
+        self.true_atom
+            .clone()
+            .expect("env: True atom not initialized")
     }
 
     pub fn false_atom(&self) -> Rc<LispObject> {
-        self.false_atom.clone().expect("env: False atom not initialized")
+        self.false_atom
+            .clone()
+            .expect("env: False atom not initialized")
     }
 
     /// Search local frames from innermost outward, scanning each frame's
@@ -299,7 +310,12 @@ impl Environment {
 
     /// Set a variable: a local hit writes the local slot; otherwise the
     /// protection check runs and the global table is written.
-    pub fn set_variable(&mut self, name: Rc<str>, value: &Rc<LispObject>, lazy: bool) -> Result<(), crate::errors::YacasError> {
+    pub fn set_variable(
+        &mut self,
+        name: Rc<str>,
+        value: &Rc<LispObject>,
+        lazy: bool,
+    ) -> Result<(), crate::errors::YacasError> {
         if let Some(local) = self.find_local(&name) {
             *local.value.borrow_mut() = Some(value.clone());
             return Ok(());
@@ -307,7 +323,10 @@ impl Environment {
         if self.is_protected(&name) {
             return Err(crate::errors::YacasError::SymbolProtected);
         }
-        let g = GlobalVariable { value: Some(value.clone()), eval_before_return: lazy };
+        let g = GlobalVariable {
+            value: Some(value.clone()),
+            eval_before_return: lazy,
+        };
         self.globals.insert(name, g);
         Ok(())
     }
@@ -320,7 +339,10 @@ impl Environment {
     /// rule's pattern parameters must not evaluate pattern left-hand sides.
     /// (A macro parameter's read-evaluates behavior comes from the macro
     /// body's `@` substitution, not from variable reads.)
-    pub fn get_variable(&mut self, name: &str) -> Result<Option<Rc<LispObject>>, crate::errors::YacasError> {
+    pub fn get_variable(
+        &mut self,
+        name: &str,
+    ) -> Result<Option<Rc<LispObject>>, crate::errors::YacasError> {
         if let Some(local) = self.find_local(name) {
             return Ok(local.value.borrow().clone());
         }
@@ -377,7 +399,10 @@ impl Environment {
 
     /// Pop the current frame.
     pub fn pop_local_frame(&mut self) -> Result<(), crate::errors::YacasError> {
-        let frame = self.locals.take().ok_or(crate::errors::YacasError::InvalidStack)?;
+        let frame = self
+            .locals
+            .take()
+            .ok_or(crate::errors::YacasError::InvalidStack)?;
         self.locals = frame.next;
         Ok(())
     }
@@ -439,9 +464,7 @@ impl Environment {
             old: &Rc<LispObject>,
             old_chain: &Option<Rc<LispObject>>,
             new_val: &Rc<LispObject>,
-            memo: &std::cell::RefCell<
-                std::collections::HashMap<usize, Option<Rc<LispObject>>>,
-            >,
+            memo: &std::cell::RefCell<std::collections::HashMap<usize, Option<Rc<LispObject>>>>,
         ) -> Option<Rc<LispObject>> {
             let is_alias = |v: &Rc<LispObject>| -> bool {
                 if std::rc::Rc::ptr_eq(v, old) {
@@ -540,8 +563,14 @@ impl Environment {
     }
 
     /// Look up a user function by name and arity (`None` if absent).
-    pub fn user_func(&self, name: &Rc<str>, arity: usize) -> Option<Rc<dyn crate::userfunc::UserFunction>> {
-        self.user_functions.get(name).and_then(|m| m.user_func(arity))
+    pub fn user_func(
+        &self,
+        name: &Rc<str>,
+        arity: usize,
+    ) -> Option<Rc<dyn crate::userfunc::UserFunction>> {
+        self.user_functions
+            .get(name)
+            .and_then(|m| m.user_func(arity))
     }
 
     /// `DeclareRuleBase`: register a plain (non-macro) branching function;
@@ -560,10 +589,7 @@ impl Environment {
         } else {
             Rc::new(crate::userfunc::BranchingUserFunction::new(params)?)
         };
-        let entry = self
-            .user_functions
-            .entry(name)
-            .or_default();
+        let entry = self.user_functions.entry(name).or_default();
         entry.define_rule_base(new_func)
     }
 
@@ -583,10 +609,7 @@ impl Environment {
         } else {
             Rc::new(crate::userfunc::MacroUserFunction::new(params)?)
         };
-        let entry = self
-            .user_functions
-            .entry(name)
-            .or_default();
+        let entry = self.user_functions.entry(name).or_default();
         entry.define_rule_base(new_func)
     }
 
@@ -603,8 +626,13 @@ impl Environment {
         if self.is_protected(&name) {
             return Err(crate::errors::YacasError::SymbolProtected);
         }
-        let entry = self.user_functions.get(&name).ok_or(crate::errors::YacasError::CreatingRule)?;
-        let f = entry.user_func(arity).ok_or(crate::errors::YacasError::CreatingRule)?;
+        let entry = self
+            .user_functions
+            .get(&name)
+            .ok_or(crate::errors::YacasError::CreatingRule)?;
+        let f = entry
+            .user_func(arity)
+            .ok_or(crate::errors::YacasError::CreatingRule)?;
         if crate::standard::is_true(self, predicate) {
             f.declare_rule(precedence, None, body)
         } else {
@@ -622,8 +650,13 @@ impl Environment {
         pattern: &Rc<LispObject>,
         body: &Rc<LispObject>,
     ) -> Result<(), crate::errors::YacasError> {
-        let entry = self.user_functions.get(&name).ok_or(crate::errors::YacasError::CreatingRule)?;
-        let f = entry.user_func(arity).ok_or(crate::errors::YacasError::CreatingRule)?;
+        let entry = self
+            .user_functions
+            .get(&name)
+            .ok_or(crate::errors::YacasError::CreatingRule)?;
+        let f = entry
+            .user_func(arity)
+            .ok_or(crate::errors::YacasError::CreatingRule)?;
         let g = match &pattern.kind {
             crate::value::ObjectKind::Generic(g) => g.clone(),
             _ => return Err(crate::errors::YacasError::InvalidArg),
@@ -632,25 +665,45 @@ impl Environment {
     }
 
     /// `HoldArgument`: add a variable name to the function's hold list.
-    pub fn hold_argument(&mut self, name: Rc<str>, variable: &str) -> Result<(), crate::errors::YacasError> {
-        let entry = self.user_functions.get(&name).ok_or(crate::errors::YacasError::InvalidArg)?;
+    pub fn hold_argument(
+        &mut self,
+        name: Rc<str>,
+        variable: &str,
+    ) -> Result<(), crate::errors::YacasError> {
+        let entry = self
+            .user_functions
+            .get(&name)
+            .ok_or(crate::errors::YacasError::InvalidArg)?;
         entry.hold_argument(variable);
         Ok(())
     }
 
     /// `UnFenceRule` (protection check; the function must exist).
-    pub fn un_fence_rule(&mut self, name: Rc<str>, arity: usize) -> Result<(), crate::errors::YacasError> {
+    pub fn un_fence_rule(
+        &mut self,
+        name: Rc<str>,
+        arity: usize,
+    ) -> Result<(), crate::errors::YacasError> {
         if self.is_protected(&name) {
             return Err(crate::errors::YacasError::SymbolProtected);
         }
-        let entry = self.user_functions.get(&name).ok_or(crate::errors::YacasError::InvalidArg)?;
-        let f = entry.user_func(arity).ok_or(crate::errors::YacasError::InvalidArg)?;
+        let entry = self
+            .user_functions
+            .get(&name)
+            .ok_or(crate::errors::YacasError::InvalidArg)?;
+        let f = entry
+            .user_func(arity)
+            .ok_or(crate::errors::YacasError::InvalidArg)?;
         f.un_fence();
         Ok(())
     }
 
     /// `Retract` (protection check; deletes the rule base for the arity).
-    pub fn retract(&mut self, name: Rc<str>, arity: usize) -> Result<(), crate::errors::YacasError> {
+    pub fn retract(
+        &mut self,
+        name: Rc<str>,
+        arity: usize,
+    ) -> Result<(), crate::errors::YacasError> {
         if self.is_protected(&name) {
             return Err(crate::errors::YacasError::SymbolProtected);
         }
@@ -664,10 +717,7 @@ impl Environment {
     /// file is pending and not yet loaded, clear the hook and load it.
     pub fn def_load_function(&mut self, name: Rc<str>) -> Result<(), crate::errors::YacasError> {
         let def = {
-            let entry = self
-                .user_functions
-                .entry(name)
-                .or_default();
+            let entry = self.user_functions.entry(name).or_default();
             let mut inner = entry.inner.borrow_mut();
             inner.file_to_open.take()
         };

@@ -46,9 +46,8 @@ pub fn transform(
     let operation = kind.name();
     let command = match kind {
         TransformKind::Apart => {
-            let variable = variable.ok_or_else(|| {
-                EngineError::Eval("Apart 需要指定变量".into())
-            })?;
+            let variable =
+                variable.ok_or_else(|| EngineError::Eval("Apart 需要指定变量".into()))?;
             validate_variable(variable)?;
             format!("Apart({input},{variable})")
         }
@@ -80,7 +79,10 @@ fn validate_expression(input: &str) -> Result<(), EngineError> {
     if input.is_empty() {
         return Err(EngineError::Eval("表达式为空".into()));
     }
-    if input.chars().any(|c| matches!(c, ';' | '\n' | '\r' | ':' | '"')) {
+    if input
+        .chars()
+        .any(|c| matches!(c, ';' | '\n' | '\r' | ':' | '"'))
+    {
         return Err(EngineError::Eval("表达式包含不允许的字符".into()));
     }
     let open = input.chars().filter(|&c| c == '(').count();
@@ -115,7 +117,9 @@ mod tests {
     use crate::engine::RustEngine;
 
     fn equivalent(engine: &mut dyn Engine, left: &str, right: &str) {
-        let result = engine.eval(&format!("Simplify(({left})-({right}))")).unwrap();
+        let result = engine
+            .eval(&format!("Simplify(({left})-({right}))"))
+            .unwrap();
         assert_eq!(result.expr.to_string(), "0", "{left} != {right}");
     }
 
@@ -127,10 +131,19 @@ mod tests {
             (TransformKind::Tidy, "(x+x)/2", "x", None),
             (TransformKind::Expand, "(x+1)^2", "x^2+2*x+1", None),
             (TransformKind::Factor, "x^2-1", "(x-1)*(x+1)", None),
-            (TransformKind::Apart, "1/(x^2-1)", "1/(2*(x-1))-1/(2*(x+1))", Some("x")),
+            (
+                TransformKind::Apart,
+                "1/(x^2-1)",
+                "1/(2*(x-1))-1/(2*(x+1))",
+                Some("x"),
+            ),
         ] {
             let result = transform(&mut engine, input, kind, variable).unwrap();
-            assert!(!result.unresolved, "{}: {}", result.operation, result.output);
+            assert!(
+                !result.unresolved,
+                "{}: {}",
+                result.operation, result.output
+            );
             assert!(!result.tex.is_empty());
             equivalent(&mut engine, &result.output, expected);
         }

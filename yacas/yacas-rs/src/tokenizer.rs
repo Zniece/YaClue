@@ -36,7 +36,11 @@ pub struct Tokenizer {
 
 impl Tokenizer {
     pub fn new(src: &str) -> Self {
-        Tokenizer { chars: src.chars().collect(), pos: 0, xml: false }
+        Tokenizer {
+            chars: src.chars().collect(),
+            pos: 0,
+            xml: false,
+        }
     }
 
     pub fn end_of_stream(&self) -> bool {
@@ -57,7 +61,11 @@ impl Tokenizer {
     // intentional but this is not an iterator.)
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> char {
-        let c = if self.end_of_stream() { '\0' } else { self.chars[self.pos] };
+        let c = if self.end_of_stream() {
+            '\0'
+        } else {
+            self.chars[self.pos]
+        };
         if !self.end_of_stream() {
             self.pos += 1;
         }
@@ -77,7 +85,10 @@ impl Tokenizer {
     /// Current input line number: consumed-newline count + 1 (read by
     /// `CurrentLine`).
     pub fn line(&self) -> u32 {
-        1 + self.chars[..self.pos].iter().filter(|&&c| c == '\n').count() as u32
+        1 + self.chars[..self.pos]
+            .iter()
+            .filter(|&&c| c == '\n')
+            .count() as u32
     }
 
     /// Next token; an empty string means EOF (upstream convention).

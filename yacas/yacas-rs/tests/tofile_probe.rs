@@ -11,30 +11,53 @@ use ys::evaluator::eval;
 use ys::parser::parse_expression;
 use ys::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap_or_else(|e| panic!("parse {src}: {e:?}")).expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap_or_else(|e| panic!("parse {src}: {e:?}"))
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn tofile_probe() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     let tf = std::env::temp_dir().join("yacas_rust_tf.txt");
     let p = tf.display().to_string();
     let probes = [
         (format!("ToFile(\"{p}\")WriteString(\"file-abc\");"), "True"),
-        ("ToString()[WriteString(\"inner\");]".to_string(), "\"inner\""),
+        (
+            "ToString()[WriteString(\"inner\");]".to_string(),
+            "\"inner\"",
+        ),
         // 二次 ToFile 覆盖
-        (format!("ToFile(\"{p}\")WriteString(\"overwrite\");"), "True"),
+        (
+            format!("ToFile(\"{p}\")WriteString(\"overwrite\");"),
+            "True",
+        ),
     ];
     for (src, exp) in &probes {
         let got = run(&mut e, src);
         assert_eq!(&got, exp, "probe {src}");
     }
     let content = std::fs::read_to_string(&p).expect("read tf");
-    assert_eq!(content, "overwrite", "ToFile 应覆盖写(cyacas ios_base::out)");
+    assert_eq!(
+        content, "overwrite",
+        "ToFile 应覆盖写(cyacas ios_base::out)"
+    );
     // ToStdout 穿透:ToString 捕获不到 ToStdout body
-    let got = run(&mut e, "ToString()[ToStdout()WriteString(\"force\");WriteString(\"inner\");]");
+    let got = run(
+        &mut e,
+        "ToString()[ToStdout()WriteString(\"force\");WriteString(\"inner\");]",
+    );
     assert_eq!(got, "\"inner\"", "ToStdout 穿透捕获,cyacas 实证 r=[inner]");
     let _ = std::fs::remove_file(&p);
 }

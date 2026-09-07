@@ -72,7 +72,12 @@ fn stdopers_parse_probes_match_cyacas() {
     let mut env = Environment::new();
     // `1+2*3 → 7` 需完整脚本链(照 yacasinit.ys:36-45:patterns → deffunc →
     // standard → stdarith)。运算符表静态启动表已内建,stdopers 装载幂等复现。
-    for f in ["patterns.rep/code.ys", "deffunc.rep/code.ys", "standard.ys", "stdarith.ys"] {
+    for f in [
+        "patterns.rep/code.ys",
+        "deffunc.rep/code.ys",
+        "standard.ys",
+        "stdarith.ys",
+    ] {
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/");
         internal_use(&mut env, &format!("{p}{f}")).unwrap();
     }
@@ -86,7 +91,10 @@ fn stdopers_parse_probes_match_cyacas() {
     assert_eq!(run(&mut env, "OpPrecedence(\"=\")"), "90");
     assert_eq!(run(&mut env, "OpRightPrecedence(\"-\")"), "40");
     // 新注册同优先级中缀(cyacas 实测 a====b 平铺)
-    assert_eq!(run(&mut env, "Infix(\"====\", OpPrecedence(\"=\"))"), "True");
+    assert_eq!(
+        run(&mut env, "Infix(\"====\", OpPrecedence(\"=\"))"),
+        "True"
+    );
     assert_eq!(run(&mut env, "a ==== b"), "a====b");
     // RightAssociative 本身(cyacas 实测返回 True)
     assert_eq!(run(&mut env, "RightAssociative(\"^\")"), "True");

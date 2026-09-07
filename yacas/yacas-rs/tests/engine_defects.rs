@@ -62,8 +62,16 @@ fn d7_eval_timeout() {
         .unwrap()
         .expect("非空");
     let r = eval(&mut env, &tree);
-    assert!(r.is_err(), "超时应产生错误: {:?}", r.map(|v| infix_print(&env, &v)));
-    assert!(t0.elapsed() < std::time::Duration::from_secs(5), "超时应在 bounded 时间内触发,实际 {:?}", t0.elapsed());
+    assert!(
+        r.is_err(),
+        "超时应产生错误: {:?}",
+        r.map(|v| infix_print(&env, &v))
+    );
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(5),
+        "超时应在 bounded 时间内触发,实际 {:?}",
+        t0.elapsed()
+    );
     // 清除后恢复正常
     env.set_eval_timeout(None);
 }
@@ -93,7 +101,10 @@ fn oversized_exact_binary_shifts_are_bounded_without_poisoning_engine() {
         "-9223372036854775808",
     ] {
         assert!(
-            matches!(run_error(&mut env, &format!("MathMul2Exp(1., {shift})")), YacasError::NumericOverflow),
+            matches!(
+                run_error(&mut env, &format!("MathMul2Exp(1., {shift})")),
+                YacasError::NumericOverflow
+            ),
             "shift {shift} should return NumericOverflow"
         );
         assert_eq!(run(&mut env, "2+2"), "4");
@@ -110,7 +121,10 @@ fn oversized_precision_is_rejected_without_wrapping_or_poisoning_engine() {
         "Builtin'Precision'Set(4294967296)",
         "MathSetExactBits(1., 332194)",
     ] {
-        assert!(matches!(run_error(&mut env, source), YacasError::NumericOverflow));
+        assert!(matches!(
+            run_error(&mut env, source),
+            YacasError::NumericOverflow
+        ));
         assert_eq!(run(&mut env, "Builtin'Precision'Get()"), "10");
         assert_eq!(run(&mut env, "2+2"), "4");
     }
@@ -126,10 +140,16 @@ fn explosive_exact_operations_are_bounded_and_interruptible() {
         "FastPower(2, 332194)",
         "FastPower(2, -332194)",
     ] {
-        assert!(matches!(run_error(&mut env, source), YacasError::NumericOverflow));
+        assert!(matches!(
+            run_error(&mut env, source),
+            YacasError::NumericOverflow
+        ));
         assert_eq!(run(&mut env, "2+2"), "4");
     }
-    assert_eq!(run(&mut env, "ShiftRight(18446744073709551616, 4294967296)"), "0");
+    assert_eq!(
+        run(&mut env, "ShiftRight(18446744073709551616, 4294967296)"),
+        "0"
+    );
 
     for source in [
         "MathFac(25205)",
@@ -137,7 +157,10 @@ fn explosive_exact_operations_are_bounded_and_interruptible() {
         "ShiftLeft(1, 10000)",
     ] {
         env.set_eval_timeout(Some(std::time::Duration::ZERO));
-        assert!(matches!(run_error(&mut env, source), YacasError::UserInterrupt));
+        assert!(matches!(
+            run_error(&mut env, source),
+            YacasError::UserInterrupt
+        ));
         env.set_eval_timeout(None);
         assert_eq!(run(&mut env, "2+2"), "4");
     }
@@ -158,7 +181,10 @@ fn big_integer_division_commands_observe_deadline() {
         "MathDivide(100000000000000000001., 300000000000000000001.)",
     ] {
         env.set_eval_timeout(Some(std::time::Duration::ZERO));
-        assert!(matches!(run_error(&mut env, source), YacasError::UserInterrupt));
+        assert!(matches!(
+            run_error(&mut env, source),
+            YacasError::UserInterrupt
+        ));
         env.set_eval_timeout(None);
         assert_eq!(run(&mut env, "2+2"), "4");
     }
@@ -170,7 +196,10 @@ fn oversized_numeric_product_is_rejected_before_multiplication() {
     boot(&mut env);
     let operand = "9".repeat(60_000);
     let source = format!("MathMultiply({operand}, {operand})");
-    assert!(matches!(run_error(&mut env, &source), YacasError::NumericOverflow));
+    assert!(matches!(
+        run_error(&mut env, &source),
+        YacasError::NumericOverflow
+    ));
     assert_eq!(run(&mut env, "2+2"), "4");
 }
 
@@ -189,7 +218,10 @@ fn d3_is_free_of_function_head() {
     let mut env = Environment::new();
     boot(&mut env);
     assert_eq!(run(&mut env, "IsFreeOf(Integrate, Sin(x))"), "True");
-    assert_eq!(run(&mut env, "IsFreeOf(Integrate, Integrate(x)(x))"), "False");
+    assert_eq!(
+        run(&mut env, "IsFreeOf(Integrate, Integrate(x)(x))"),
+        "False"
+    );
 }
 
 #[test]
@@ -209,7 +241,10 @@ fn d4_is_odd_function_power() {
 fn boot_d5(env: &mut Environment) {
     env.set_eval_timeout(Some(std::time::Duration::from_secs(20)));
     let scripts = concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/");
-    assert_eq!(run(env, &format!("DefaultDirectory(\"{scripts}\")")), "True");
+    assert_eq!(
+        run(env, &format!("DefaultDirectory(\"{scripts}\")")),
+        "True"
+    );
     assert_eq!(run(env, "Load(\"yacasinit.ys\")"), "True");
     assert_eq!(run(env, "Builtin'Precision'Set(20)"), "True");
 }
@@ -217,7 +252,9 @@ fn boot_d5(env: &mut Environment) {
 fn d5_value_at(env: &mut Environment, expression: &str, point: &str) -> f64 {
     let command = format!("N(Eval(ApplyPure(\"Subst\",{{x,{point},{expression}}})))");
     let result = run(env, &command);
-    result.parse().unwrap_or_else(|e| panic!("{command}: non-numeric {result:?}: {e}"))
+    result
+        .parse()
+        .unwrap_or_else(|e| panic!("{command}: non-numeric {result:?}: {e}"))
 }
 
 fn d5_assert_close(actual: f64, expected: f64, context: &str) {
@@ -234,13 +271,23 @@ fn d5_simplify_preserves_reconstructed_antiderivatives() {
     for (setup, noncanonical) in [
         ("F4:=x/2-Sin(x)*Cos(x)/2", false),
         ("F4:=Hold((x+(-2*Sin(x)*Cos(x))/2)/2)", true),
-        ("F4:=Subst(theta,x)Hold((theta+(-2*Sin(theta)*Cos(theta))/2)/2)", true),
-        ("F4:=ApplyPure(\"Subst\",{theta,x,Hold(theta/2-Sin(2*theta)/4)})", false),
+        (
+            "F4:=Subst(theta,x)Hold((theta+(-2*Sin(theta)*Cos(theta))/2)/2)",
+            true,
+        ),
+        (
+            "F4:=ApplyPure(\"Subst\",{theta,x,Hold(theta/2-Sin(2*theta)/4)})",
+            false,
+        ),
     ] {
         run(&mut env, setup);
         let stored = run(&mut env, "F4");
         if noncanonical {
-            assert_ne!(stored, run(&mut env, "Eval(F4)"), "{setup}: must exercise a raw stored tree");
+            assert_ne!(
+                stored,
+                run(&mut env, "Eval(F4)"),
+                "{setup}: must exercise a raw stored tree"
+            );
         }
         run(&mut env, "d5Residual:=(Deriv(x) F4)-Sin(x)^2");
         run(&mut env, "d5SimplifiedResidual:=Simplify(d5Residual)");
@@ -255,14 +302,22 @@ fn d5_simplify_preserves_reconstructed_antiderivatives() {
             let expected = x / 2.0 - (2.0 * x).sin() / 4.0;
             for expression in ["F4", "d5SimplifiedPrimitive"] {
                 let actual = d5_value_at(&mut env, expression, point);
-                d5_assert_close(actual, expected, &format!("{setup}: {expression} at {point}"));
+                d5_assert_close(
+                    actual,
+                    expected,
+                    &format!("{setup}: {expression} at {point}"),
+                );
             }
             for expression in ["d5Residual", "d5SimplifiedResidual"] {
                 let actual = d5_value_at(&mut env, expression, point);
                 d5_assert_close(actual, 0.0, &format!("{setup}: {expression} at {point}"));
             }
         }
-        assert_eq!(run(&mut env, "F4"), stored, "Simplify must not mutate the stored input");
+        assert_eq!(
+            run(&mut env, "F4"),
+            stored,
+            "Simplify must not mutate the stored input"
+        );
     }
 }
 
@@ -270,11 +325,22 @@ fn d5_simplify_preserves_reconstructed_antiderivatives() {
 fn d5_derivative_residual_requires_explicit_grouping() {
     let mut env = Environment::new();
     boot_d5(&mut env);
-    run(&mut env, "F4:=Subst(theta,x)Hold((theta+(-2*Sin(theta)*Cos(theta))/2)/2)");
+    run(
+        &mut env,
+        "F4:=Subst(theta,x)Hold((theta+(-2*Sin(theta)*Cos(theta))/2)/2)",
+    );
     // Deriv is bodied: the subtraction belongs to its body unless the
     // derivative call itself is parenthesized. This also holds in cyacas.
     run(&mut env, "d5Correct:=Simplify((Deriv(x) F4)-Sin(x)^2)");
     run(&mut env, "d5Ungrouped:=Simplify(Deriv(x) F4-Sin(x)^2)");
-    d5_assert_close(d5_value_at(&mut env, "d5Correct", "Pi/4"), 0.0, "grouped residual");
-    d5_assert_close(d5_value_at(&mut env, "d5Ungrouped", "Pi/4"), -0.5, "derivative of the whole difference");
+    d5_assert_close(
+        d5_value_at(&mut env, "d5Correct", "Pi/4"),
+        0.0,
+        "grouped residual",
+    );
+    d5_assert_close(
+        d5_value_at(&mut env, "d5Ungrouped", "Pi/4"),
+        -0.5,
+        "derivative of the whole difference",
+    );
 }

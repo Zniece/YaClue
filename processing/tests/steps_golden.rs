@@ -28,79 +28,79 @@ const GOLDEN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/ste
 /// (下方的覆盖断言会强制这一点)。
 const CASES: &[(&str, &str, &str)] = &[
     // ---- 求导 StepsD'Full ----
-    ("D", "5", "x"),             // const-rule
-    ("D", "x", "x"),             // identity-rule
-    ("D", "3*x^2", "x"),         // constant-multiple-rule + power-rule
-    ("D", "-Sin(x)", "x"),       // constant-multiple-rule(一元负号路径)
-    ("D", "x^2 + Sin(x)", "x"),  // sum-rule
-    ("D", "x*Cos(x)", "x"),      // product-rule
-    ("D", "Sin(x)/x", "x"),      // quotient-rule
-    ("D", "Sin(x)^2", "x"),      // power-rule(复合)+ sin-rule + simplify
-    ("D", "Exp(x)", "x"),        // exp-rule
-    ("D", "2^x", "x"),           // exponential-rule
-    ("D", "Ln(x)", "x"),         // ln-rule
-    ("D", "Sqrt(x)", "x"),       // sqrt-rule
-    ("D", "x^x", "x"),           // direct(底指数均含变量,引擎直求)
-    ("D", "Tan(x)", "x"),        // tan-rule
-    ("D", "Cot(x)", "x"),        // 引擎规范化为 1/Tan 后走商法则(钉住规范化行为)
-    ("D", "Sec(x)", "x"),        // 引擎规范化为 1/Cos 后走商法则
-    ("D", "Csc(x)", "x"),        // 引擎规范化为 1/Sin 后走商法则
-    ("D", "ArcSin(x)", "x"),     // arcsin-rule
-    ("D", "ArcCos(x)", "x"),     // arccos-rule
-    ("D", "ArcTan(x)", "x"),     // arctan-rule
-    ("D", "Sinh(x)", "x"),       // sinh-rule
-    ("D", "Cosh(x)", "x"),       // cosh-rule
-    ("D", "Tanh(x)", "x"),       // tanh-rule
-    ("D", "Tan(x^2)", "x"),      // tan-chain-rule + power-chain-rule(显式链式)
-    ("D", "ArcTan(x^2)", "x"),   // arctan-chain-rule
-    ("D", "Sinh(x^2)", "x"),     // sinh-chain-rule
-    ("D", "Ln(Sin(x))", "x"),    // ln-chain-rule + sin-rule
-    ("D", "Exp(Cos(x))", "x"),   // exp-chain-rule + cos-rule
-    ("D", "2^(x^2)", "x"),       // exponential-chain-rule
-    ("D2", "Sin(x)", "x"),       // 高阶:两轮步骤拼接(sin-rule → cos-rule 轮)
-    ("D2", "x^4", "x"),          // 高阶:两轮 power-rule
+    ("D", "5", "x"),            // const-rule
+    ("D", "x", "x"),            // identity-rule
+    ("D", "3*x^2", "x"),        // constant-multiple-rule + power-rule
+    ("D", "-Sin(x)", "x"),      // constant-multiple-rule(一元负号路径)
+    ("D", "x^2 + Sin(x)", "x"), // sum-rule
+    ("D", "x*Cos(x)", "x"),     // product-rule
+    ("D", "Sin(x)/x", "x"),     // quotient-rule
+    ("D", "Sin(x)^2", "x"),     // power-rule(复合)+ sin-rule + simplify
+    ("D", "Exp(x)", "x"),       // exp-rule
+    ("D", "2^x", "x"),          // exponential-rule
+    ("D", "Ln(x)", "x"),        // ln-rule
+    ("D", "Sqrt(x)", "x"),      // sqrt-rule
+    ("D", "x^x", "x"),          // direct(底指数均含变量,引擎直求)
+    ("D", "Tan(x)", "x"),       // tan-rule
+    ("D", "Cot(x)", "x"),       // 引擎规范化为 1/Tan 后走商法则(钉住规范化行为)
+    ("D", "Sec(x)", "x"),       // 引擎规范化为 1/Cos 后走商法则
+    ("D", "Csc(x)", "x"),       // 引擎规范化为 1/Sin 后走商法则
+    ("D", "ArcSin(x)", "x"),    // arcsin-rule
+    ("D", "ArcCos(x)", "x"),    // arccos-rule
+    ("D", "ArcTan(x)", "x"),    // arctan-rule
+    ("D", "Sinh(x)", "x"),      // sinh-rule
+    ("D", "Cosh(x)", "x"),      // cosh-rule
+    ("D", "Tanh(x)", "x"),      // tanh-rule
+    ("D", "Tan(x^2)", "x"),     // tan-chain-rule + power-chain-rule(显式链式)
+    ("D", "ArcTan(x^2)", "x"),  // arctan-chain-rule
+    ("D", "Sinh(x^2)", "x"),    // sinh-chain-rule
+    ("D", "Ln(Sin(x))", "x"),   // ln-chain-rule + sin-rule
+    ("D", "Exp(Cos(x))", "x"),  // exp-chain-rule + cos-rule
+    ("D", "2^(x^2)", "x"),      // exponential-chain-rule
+    ("D2", "Sin(x)", "x"),      // 高阶:两轮步骤拼接(sin-rule → cos-rule 轮)
+    ("D2", "x^4", "x"),         // 高阶:两轮 power-rule
     // ---- 积分 StepsI'Full ----
-    ("I", "7", "x"),             // const-integral-rule
-    ("I", "x", "x"),             // power-rule
-    ("I", "Sqrt(x)", "x"),       // direct(积分侧无 Sqrt 规则,引擎直积)
-    ("I", "x^2 + Cos(x)", "x"),  // sum-rule
-    ("I", "3*Sin(x)", "x"),      // constant-multiple-rule
-    ("I", "-Exp(x)", "x"),       // constant-multiple-rule(一元负号路径)
-    ("I", "2/x", "x"),           // ln-rule
-    ("I", "1/(1 + x^2)", "x"),   // arctan-rule
-    ("I", "Sin(x)", "x"),        // sin-rule
-    ("I", "Cos(x)", "x"),        // cos-rule
-    ("I", "Exp(x)", "x"),        // exp-rule
-    ("I", "Tan(x)", "x"),        // tan-rule(积分侧文案)
-    ("I", "x*Sin(x)", "x"),      // parts-rule
-    ("I", "x^2*Sin(x)", "x"),    // parts-rule(幂×三角)
-    ("I", "Ln(x)", "x"),         // parts-rule(Ln 单独)
-    ("I", "x*Ln(x)", "x"),       // parts-rule(rest×Ln)
-    ("I", "Sin(x^2)*2*x", "x"),  // u-sub-rule + back-sub-rule
-    ("I", "x*Exp(x^2)", "x"),    // u-sub-rule(rest*Exp)+ back-sub-rule
-    ("I", "x/(x^2 + 1)", "x"),   // u-sub-rule + direct(换元无进展,引擎直积)+ back-sub-rule
-    ("I", "Tan(x)", "x"),        // tan-rule(积分侧文案)
-    ("I", "Cot(x)", "x"),        // cot-rule
-    ("I", "Sinh(x)", "x"),       // sinh-rule
-    ("I", "Cosh(x)", "x"),       // cosh-rule
-    ("I", "Tanh(x)", "x"),       // tanh-rule
-    ("I", "Tan(x)^3", "x"),      // tan-power-reduction-rule
-    ("I", "Sec(x)^3", "x"),      // sec-power-reduction-rule + sec-rule
-    ("I", "2/Sqrt(1 - x^2)", "x"), // arcsin-rule(反正弦形)
-    ("I", "1/(x^2 - 1)", "x"),    // partial-fraction-rule + sum + ln ×2
+    ("I", "7", "x"),                 // const-integral-rule
+    ("I", "x", "x"),                 // power-rule
+    ("I", "Sqrt(x)", "x"),           // direct(积分侧无 Sqrt 规则,引擎直积)
+    ("I", "x^2 + Cos(x)", "x"),      // sum-rule
+    ("I", "3*Sin(x)", "x"),          // constant-multiple-rule
+    ("I", "-Exp(x)", "x"),           // constant-multiple-rule(一元负号路径)
+    ("I", "2/x", "x"),               // ln-rule
+    ("I", "1/(1 + x^2)", "x"),       // arctan-rule
+    ("I", "Sin(x)", "x"),            // sin-rule
+    ("I", "Cos(x)", "x"),            // cos-rule
+    ("I", "Exp(x)", "x"),            // exp-rule
+    ("I", "Tan(x)", "x"),            // tan-rule(积分侧文案)
+    ("I", "x*Sin(x)", "x"),          // parts-rule
+    ("I", "x^2*Sin(x)", "x"),        // parts-rule(幂×三角)
+    ("I", "Ln(x)", "x"),             // parts-rule(Ln 单独)
+    ("I", "x*Ln(x)", "x"),           // parts-rule(rest×Ln)
+    ("I", "Sin(x^2)*2*x", "x"),      // u-sub-rule + back-sub-rule
+    ("I", "x*Exp(x^2)", "x"),        // u-sub-rule(rest*Exp)+ back-sub-rule
+    ("I", "x/(x^2 + 1)", "x"),       // u-sub-rule + direct(换元无进展,引擎直积)+ back-sub-rule
+    ("I", "Tan(x)", "x"),            // tan-rule(积分侧文案)
+    ("I", "Cot(x)", "x"),            // cot-rule
+    ("I", "Sinh(x)", "x"),           // sinh-rule
+    ("I", "Cosh(x)", "x"),           // cosh-rule
+    ("I", "Tanh(x)", "x"),           // tanh-rule
+    ("I", "Tan(x)^3", "x"),          // tan-power-reduction-rule
+    ("I", "Sec(x)^3", "x"),          // sec-power-reduction-rule + sec-rule
+    ("I", "2/Sqrt(1 - x^2)", "x"),   // arcsin-rule(反正弦形)
+    ("I", "1/(x^2 - 1)", "x"),       // partial-fraction-rule + sum + ln ×2
     ("I", "x/(x^2 + 3*x + 2)", "x"), // partial-fraction-rule(分子含变量)
-    ("I", "Tan(x^2)*2*x", "x"),   // u-sub(Tan,带因子)+ tan-rule
-    ("I", "Sinh(2*x)", "x"),      // u-sub(Sinh,无因子,g' 常数)
-    ("I", "2*x*Cosh(x^2)", "x"),  // u-sub(Cosh,反向序)
-    ("I", "Tanh(x^3)*3*x^2", "x"), // u-sub(Tanh,带因子)
-    ("I", "1/(x^2 + 4)", "x"),    // arctan-rule(一般 a,M2c)
-    ("I", "1/Sqrt(4 - x^2)", "x"), // arcsin-rule(一般 a)
-    ("I", "x/Sqrt(x^2 + 4)", "x"), // power-rule(rest/Sqrt(g) 复合一步式)
-    ("I", "1/Sqrt(x^2 + 4)", "x"), // sqrt-sum-rule(引擎无此路径)
-    ("I", "3/Sqrt(x^2 - 4)", "x"), // sqrt-diff-rule(引擎无此路径)
-    ("I", "Sqrt(4 - x^2)", "x"),  // θ 机器(三角换元完整故事)
+    ("I", "Tan(x^2)*2*x", "x"),      // u-sub(Tan,带因子)+ tan-rule
+    ("I", "Sinh(2*x)", "x"),         // u-sub(Sinh,无因子,g' 常数)
+    ("I", "2*x*Cosh(x^2)", "x"),     // u-sub(Cosh,反向序)
+    ("I", "Tanh(x^3)*3*x^2", "x"),   // u-sub(Tanh,带因子)
+    ("I", "1/(x^2 + 4)", "x"),       // arctan-rule(一般 a,M2c)
+    ("I", "1/Sqrt(4 - x^2)", "x"),   // arcsin-rule(一般 a)
+    ("I", "x/Sqrt(x^2 + 4)", "x"),   // power-rule(rest/Sqrt(g) 复合一步式)
+    ("I", "1/Sqrt(x^2 + 4)", "x"),   // sqrt-sum-rule(引擎无此路径)
+    ("I", "3/Sqrt(x^2 - 4)", "x"),   // sqrt-diff-rule(引擎无此路径)
+    ("I", "Sqrt(4 - x^2)", "x"),     // θ 机器(三角换元完整故事)
     ("I", "x^2/Sqrt(4 - x^2)", "x"), // θ 机器(R = x^2)
-    ("I", "x*Sqrt(4 - x^2)", "x"), // θ 机器(内嵌 u-sub)
+    ("I", "x*Sqrt(4 - x^2)", "x"),   // θ 机器(内嵌 u-sub)
     ("I", "x^2*Sqrt(4 - x^2)", "x"), // θ 机器(混合积,Sin^2*Cos^2 → 恒等展开)
 ];
 
@@ -109,7 +109,7 @@ const DEF_CASES: &[(&str, &str, &str, &str)] = &[
     ("x^2", "x", "0", "2"),
     ("Sin(x)", "x", "0", "Pi"),
     ("Exp(x)", "x", "0", "1"),
-    ("x^3", "x", "-1", "1"), // 奇对称区间,FTC 得 0
+    ("x^3", "x", "-1", "1"),              // 奇对称区间,FTC 得 0
     ("x^2/Sqrt(4 - x^2)", "x", "0", "2"), // θ 链 + 代限值 → Pi
     ("x*Sqrt(4 - x^2)", "x", "0", "2"),
     ("Sin(x)/Sqrt(4 - x^2)", "x", "0", "1"), // 无解析原函数 → 数值求积兜底
@@ -209,7 +209,10 @@ fn golden_matches_baseline() {
             .unwrap_or_else(|e| panic!("定积分用例 {expr} [{from},{to}] 生成失败: {e}"));
         let mut text = format!("### ID {expr} @ {var} [{from},{to}]\n");
         for st in &steps {
-            text.push_str(&format!("{}\t{}\t{}\t{}\n", st.rule, st.expr, st.tex, st.why));
+            text.push_str(&format!(
+                "{}\t{}\t{}\t{}\n",
+                st.rule, st.expr, st.tex, st.why
+            ));
             if !st.rule.is_empty() {
                 seen.insert(st.rule.clone());
             }

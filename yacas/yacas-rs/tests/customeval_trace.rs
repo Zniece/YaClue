@@ -26,7 +26,13 @@ fn run(env: &mut Environment, src: &str) -> String {
 #[test]
 fn custom_eval_family_oracle() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     let probes = [
         // 配套命令无调试器:报错被 TrapError 捕获(cyacas oracle:err-gexpr 等)
@@ -39,7 +45,10 @@ fn custom_eval_family_oracle() {
         ("CustomEval(True,True,True,1+1)", "2"),
         ("[x := 9; CustomEval(True,True,True,x+1);]", "10"),
         // CustomEval 清除:调用后 debugger 复位,Expression 又报错
-        (r#"[CustomEval(True,True,True,1); TrapError(CustomEval'Expression(), "gone");]"#, "\"gone\""),
+        (
+            r#"[CustomEval(True,True,True,1); TrapError(CustomEval'Expression(), "gone");]"#,
+            "\"gone\"",
+        ),
     ];
     for (p, exp) in probes {
         let got = run(&mut e, p);
@@ -53,7 +62,13 @@ fn trace_hook_structure() {
     // 验证 Enter/Leave 对每个子表达式触发、Expression/Result 取值正确。
     // cyacas TraceExp(1+1) oracle 结构:1+1 → 1 → IsNumber(x) → MathAdd(x,y) → 2。
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     let src = r#"ToString()[CustomEval(
         [WriteString("E:"); Write(CustomEval'Expression()); WriteString(";");],
@@ -61,7 +76,10 @@ fn trace_hook_structure() {
         True, 1+1);]"#;
     let got = run(&mut e, src);
     // 开头 Enter 1+1;进入其子表达式;结束 Leave 2(1+1 结果)
-    assert!(got.starts_with("\"E:1+1;"), "应先 Enter 顶层 1+1, got={got}");
+    assert!(
+        got.starts_with("\"E:1+1;"),
+        "应先 Enter 顶层 1+1, got={got}"
+    );
     assert!(got.ends_with("L:2;\""), "应末 Leave 2, got={got}");
     assert!(got.contains("E:MathAdd(x,y);"), "应跟踪 MathAdd 调用");
     assert!(got.contains("L:True;"), "IsNumber 等谓词结果 True");

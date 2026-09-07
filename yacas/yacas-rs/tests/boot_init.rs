@@ -25,7 +25,11 @@ fn boot_init(env: &mut Environment) {
     let d = format!("{}/", scripts_root());
     run(env, &format!("DefaultDirectory(\"{d}\")"));
     // Load("yacasinit.ys") = 全链装载(照 cyacas 主程序 Load 进入)
-    assert_eq!(run(env, "Load(\"yacasinit.ys\")"), "True", "yacasinit.ys 全链装载失败");
+    assert_eq!(
+        run(env, "Load(\"yacasinit.ys\")"),
+        "True",
+        "yacasinit.ys 全链装载失败"
+    );
 }
 
 #[test]

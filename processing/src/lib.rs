@@ -9,6 +9,6 @@ pub mod assumptions;
 pub mod engine;
 pub mod equations;
 pub mod limits;
-pub mod quadrature;
 pub mod plot;
+pub mod quadrature;
 pub mod steps;

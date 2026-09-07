@@ -39,7 +39,10 @@ fn use_loads_boot_files_via_directory_search() {
     // standard.ys(目录搜索解析相对名,照 InternalFindFile:CWD→iInputDirectories)。
     // 装载后 Nth/NrArgs 可调(standard.ys 的 10# 规则;对照 load_standard.rs 期望)。
     let mut env = Environment::new();
-    run(&mut env, &format!("DefaultDirectory(\"{}/\")", scripts_root()));
+    run(
+        &mut env,
+        &format!("DefaultDirectory(\"{}/\")", scripts_root()),
+    );
     assert_eq!(run(&mut env, "Use(\"stdopers.ys\")"), "True");
     assert_eq!(run(&mut env, "Use(\"patterns.rep/code.ys\")"), "True");
     assert_eq!(run(&mut env, "Use(\"deffunc.rep/code.ys\")"), "True");
@@ -59,8 +62,14 @@ fn load_does_not_touch_def_registry() {
     // 注:`:=` 系 deffunc 脚本机制(console 启动链早已载好);裸 env 需先 Use 三步
     // 与 cyacas boot 状态一致,pack1.ys 的 `Probe1(x) := …` 才可定义。
     let mut env = Environment::new();
-    run(&mut env, &format!("DefaultDirectory(\"{}/\" )", scripts_root()));
-    run(&mut env, &format!("DefaultDirectory(\"{}/\")", fixtures_dir()));
+    run(
+        &mut env,
+        &format!("DefaultDirectory(\"{}/\" )", scripts_root()),
+    );
+    run(
+        &mut env,
+        &format!("DefaultDirectory(\"{}/\")", fixtures_dir()),
+    );
     run(&mut env, "Use(\"stdopers.ys\")");
     run(&mut env, "Use(\"patterns.rep/code.ys\")");
     run(&mut env, "Use(\"deffunc.rep/code.ys\")");

@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use crate::value::{ObjectKind, LispObject};
+use crate::value::{LispObject, ObjectKind};
 
 /// Print an expression in FullForm.
 pub fn full_form(expr: &Rc<LispObject>) -> String {
@@ -77,7 +77,10 @@ impl Default for InfixOut {
 
 impl InfixOut {
     pub fn new() -> Self {
-        InfixOut { text: String::new(), prev_last_char: '\0' }
+        InfixOut {
+            text: String::new(),
+            prev_last_char: '\0',
+        }
     }
     fn write_token(&mut self, s: &str) {
         let first = s.chars().next().unwrap_or('\0');
@@ -112,14 +115,17 @@ pub fn infix_print_at(env: &Environment, expr: &Rc<LispObject>) -> String {
 /// `buf.prev_last_char` across calls (consecutive `Write`s share printer
 /// state). A separating space is inserted when both boundary characters are
 /// alphanumeric; quotes do not trigger one.
-pub fn infix_print_into(env: &Environment, expr: &Rc<LispObject>, buf: &mut crate::env::OutputBuffer) {
+pub fn infix_print_into(
+    env: &Environment,
+    expr: &Rc<LispObject>,
+    buf: &mut crate::env::OutputBuffer,
+) {
     let rendered = infix_print_at(env, expr);
     let first = rendered.chars().next().unwrap_or('\0');
     let alnum = |c: char| is_alpha(c) || c.is_ascii_digit();
     let prev = buf.prev_last_char;
-    let need_space = !buf.text.is_empty()
-        && prev != '\0'
-        && alnum(prev) && (alnum(first) || first == '_');
+    let need_space =
+        !buf.text.is_empty() && prev != '\0' && alnum(prev) && (alnum(first) || first == '_');
     if need_space {
         buf.text.push(' ');
     }
@@ -189,22 +195,35 @@ fn print_atomish(
             // Entries are sorted by key order, like the upstream ToList view.
             let mut sorted = entries;
             sorted.sort_by(|x, y| {
-                if crate::standard::total_less(env, &x.0, &y.0) { std::cmp::Ordering::Less }
-                else if crate::standard::total_less(env, &y.0, &x.0) { std::cmp::Ordering::Greater }
-                else { std::cmp::Ordering::Equal }
+                if crate::standard::total_less(env, &x.0, &y.0) {
+                    std::cmp::Ordering::Less
+                } else if crate::standard::total_less(env, &y.0, &x.0) {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
             });
             // Build the {k1,v1},{k2,v2}… list, then print it.
-            let mut all = vec![ObjectKind::Atom(env.symtab.get("List").expect("List").clone())];
+            let mut all = vec![ObjectKind::Atom(
+                env.symtab.get("List").expect("List").clone(),
+            )];
 
             for (k, v) in &sorted {
-                let mut pair = vec![ObjectKind::Atom(env.symtab.get("List").expect("List").clone())];
+                let mut pair = vec![ObjectKind::Atom(
+                    env.symtab.get("List").expect("List").clone(),
+                )];
 
                 pair.push(crate::value::spine_kinds(k).next().expect("k"));
                 pair.push(crate::value::spine_kinds(v).next().expect("v"));
-                all.push(ObjectKind::Sublist(crate::value::build_list(pair).expect("pair")));
+                all.push(ObjectKind::Sublist(
+                    crate::value::build_list(pair).expect("pair"),
+                ));
             }
             let tolist = crate::value::build_list(all).expect("tolist");
-            let list_node = Rc::new(LispObject { next: None, kind: ObjectKind::Sublist(tolist) });
+            let list_node = Rc::new(LispObject {
+                next: None,
+                kind: ObjectKind::Sublist(tolist),
+            });
             infix_expression(env, &list_node, out, K_MAX_PREC);
             out.write_token(")");
             return;
@@ -246,9 +265,21 @@ fn print_atomish(
     };
     let head_rc = env.symtab.get(&head_str);
     // Table lookup: prefix/postfix need arity 2, infix arity 3.
-    let prefix = if length == 2 { head_rc.and_then(|r| env.prefix.get(r).cloned()) } else { None };
-    let infix = if length == 3 { head_rc.and_then(|r| env.infix.get(r).cloned()) } else { None };
-    let postfix = if length == 2 { head_rc.and_then(|r| env.postfix.get(r).cloned()) } else { None };
+    let prefix = if length == 2 {
+        head_rc.and_then(|r| env.prefix.get(r).cloned())
+    } else {
+        None
+    };
+    let infix = if length == 3 {
+        head_rc.and_then(|r| env.infix.get(r).cloned())
+    } else {
+        None
+    };
+    let postfix = if length == 2 {
+        head_rc.and_then(|r| env.postfix.get(r).cloned())
+    } else {
+        None
+    };
     let bodied = head_rc.and_then(|r| env.bodied.get(r).cloned());
     let op = prefix.as_ref().or(postfix.as_ref()).or(infix.as_ref());
     if let Some(op) = op {
@@ -391,9 +422,6 @@ mod tests {
     #[test]
     fn nested_indent() {
         assert_eq!(ff("aa+bb*cc"), "(+ aa \n    (* bb cc ))");
-        assert_eq!(
-            ff("aa^bb^cc^dd"),
-            "(^ aa \n    (^ bb \n      (^ cc dd )))"
-        );
+        assert_eq!(ff("aa^bb^cc^dd"), "(^ aa \n    (^ bb \n      (^ cc dd )))");
     }
 }

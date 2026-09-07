@@ -31,7 +31,7 @@ pub static RULE_MATCH_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 use crate::env::Environment;
 use crate::errors::YacasError;
-use crate::value::{copy_node, ObjectKind, LispObject};
+use crate::value::{copy_node, LispObject, ObjectKind};
 
 /// A formal parameter: name + hold flag.
 #[derive(Clone)]
@@ -43,12 +43,18 @@ pub struct BranchParameter {
 /// The three rule forms.
 pub enum RuleKind {
     /// Predicate rule: the predicate must evaluate to True.
-    Predicate { predicate: Rc<LispObject>, body: Rc<LispObject> },
+    Predicate {
+        predicate: Rc<LispObject>,
+        body: Rc<LispObject>,
+    },
     /// Unconditional rule.
     True { body: Rc<LispObject> },
     /// Pattern rule (a Pattern generic object; matched via
     /// `GenericClass::matches_pattern`).
-    Pattern { pattern: Rc<dyn crate::value::GenericClass>, body: Rc<LispObject> },
+    Pattern {
+        pattern: Rc<dyn crate::value::GenericClass>,
+        body: Rc<LispObject>,
+    },
 }
 
 /// One rule, with a unique id used for rollback detection.
@@ -104,7 +110,11 @@ pub trait UserFunction {
     fn set_traced(&self, on: bool);
     fn is_traced(&self) -> bool;
     /// Evaluate `call` (a call node including the head).
-    fn evaluate(&self, env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError>;
+    fn evaluate(
+        &self,
+        env: &mut Environment,
+        call: &Rc<LispObject>,
+    ) -> Result<Rc<LispObject>, YacasError>;
 }
 
 impl BranchingUserFunction {
@@ -156,7 +166,10 @@ impl BranchingUserFunction {
         }
 
         if std::env::var_os("YACAS_TRACE_LOAD").is_some() {
-            let head = call.atom_string().map(|s| s.to_string()).unwrap_or_default();
+            let head = call
+                .atom_string()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             eprintln!("[EVAL-FN] {head} arity={arity}");
         }
         // 1) Arguments: held → copy verbatim; otherwise evaluate.
@@ -170,7 +183,11 @@ impl BranchingUserFunction {
         // this very function, which needs `borrow_mut`.
         let params_meta: Vec<(Rc<str>, bool)> = {
             let inner = self.inner.borrow();
-            inner.parameters.iter().map(|p| (p.name.clone(), p.hold)).collect()
+            inner
+                .parameters
+                .iter()
+                .map(|p| (p.name.clone(), p.hold))
+                .collect()
         };
         {
             let mut cur = call.next.as_ref();
@@ -264,11 +281,18 @@ impl BranchingUserFunction {
             } else {
                 false
             };
-            let t_start = if sampled { Some(std::time::Instant::now()) } else { None };
+            let t_start = if sampled {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            };
             let matched = rule_matches(&kind, env, arguments)?;
             if let Some(t0) = t_start {
                 // 1/256 采样,外推全量谓词耗时
-                RULE_MATCH_TIME.fetch_add(t0.elapsed().as_nanos() as u64 * 256, std::sync::atomic::Ordering::Relaxed);
+                RULE_MATCH_TIME.fetch_add(
+                    t0.elapsed().as_nanos() as u64 * 256,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
             }
             if matched && std::env::var_os("YACAS_RULE_STATS").is_some() {
                 RULE_MATCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -304,7 +328,13 @@ impl BranchingUserFunction {
             // happened); step back to the first index still holding it.
             let mut j = i;
             while j > 0 {
-                let same = self.inner.borrow().rules.get(j).map(|r| r.id == id).unwrap_or(false);
+                let same = self
+                    .inner
+                    .borrow()
+                    .rules
+                    .get(j)
+                    .map(|r| r.id == id)
+                    .unwrap_or(false);
                 if same {
                     break;
                 }
@@ -338,10 +368,20 @@ impl UserFunction for BranchingUserFunction {
     ) -> Result<(), YacasError> {
         let mut inner = self.inner.borrow_mut();
         let kind = match predicate {
-            Some(p) => RuleKind::Predicate { predicate: p.clone(), body: body.clone() },
+            Some(p) => RuleKind::Predicate {
+                predicate: p.clone(),
+                body: body.clone(),
+            },
             None => RuleKind::True { body: body.clone() },
         };
-        insert_rule(&mut inner.rules, Rule { id: next_rule_id(), precedence, kind });
+        insert_rule(
+            &mut inner.rules,
+            Rule {
+                id: next_rule_id(),
+                precedence,
+                kind,
+            },
+        );
         Ok(())
     }
     fn declare_pattern(
@@ -351,11 +391,17 @@ impl UserFunction for BranchingUserFunction {
         body: &Rc<LispObject>,
     ) -> Result<(), YacasError> {
         let mut inner = self.inner.borrow_mut();
-        insert_rule(&mut inner.rules, Rule {
-            id: next_rule_id(),
-            precedence,
-            kind: RuleKind::Pattern { pattern, body: body.clone() },
-        });
+        insert_rule(
+            &mut inner.rules,
+            Rule {
+                id: next_rule_id(),
+                precedence,
+                kind: RuleKind::Pattern {
+                    pattern,
+                    body: body.clone(),
+                },
+            },
+        );
         Ok(())
     }
     fn arg_list(&self) -> Option<Rc<LispObject>> {
@@ -373,7 +419,11 @@ impl UserFunction for BranchingUserFunction {
     fn is_traced(&self) -> bool {
         self.inner.borrow().traced
     }
-    fn evaluate(&self, env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+    fn evaluate(
+        &self,
+        env: &mut Environment,
+        call: &Rc<LispObject>,
+    ) -> Result<Rc<LispObject>, YacasError> {
         self.evaluate_common(env, call, false)
     }
 }
@@ -432,7 +482,9 @@ fn rule_kind_clone(kind: &RuleKind) -> RuleKind {
 
 fn rule_body(kind: &RuleKind) -> Option<&Rc<LispObject>> {
     match kind {
-        RuleKind::Predicate { body, .. } | RuleKind::True { body } | RuleKind::Pattern { body, .. } => Some(body),
+        RuleKind::Predicate { body, .. }
+        | RuleKind::True { body }
+        | RuleKind::Pattern { body, .. } => Some(body),
     }
 }
 
@@ -536,7 +588,11 @@ impl UserFunction for MacroUserFunction {
     fn is_traced(&self) -> bool {
         self.branching.is_traced()
     }
-    fn evaluate(&self, env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+    fn evaluate(
+        &self,
+        env: &mut Environment,
+        call: &Rc<LispObject>,
+    ) -> Result<Rc<LispObject>, YacasError> {
         self.branching.evaluate_common(env, call, true)
     }
 }
@@ -609,7 +665,9 @@ pub struct ListedBranchingUserFunction {
 
 impl ListedBranchingUserFunction {
     pub fn new(param_list: Option<&Rc<LispObject>>) -> Result<Self, YacasError> {
-        Ok(ListedBranchingUserFunction { branching: BranchingUserFunction::new(param_list)? })
+        Ok(ListedBranchingUserFunction {
+            branching: BranchingUserFunction::new(param_list)?,
+        })
     }
 }
 
@@ -654,7 +712,11 @@ impl UserFunction for ListedBranchingUserFunction {
     fn is_traced(&self) -> bool {
         self.branching.is_traced()
     }
-    fn evaluate(&self, env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+    fn evaluate(
+        &self,
+        env: &mut Environment,
+        call: &Rc<LispObject>,
+    ) -> Result<Rc<LispObject>, YacasError> {
         let call2 = listed_prepare(env, call, self.arity())?;
         self.branching.evaluate_common(env, &call2, false)
     }
@@ -667,7 +729,9 @@ pub struct ListedMacroUserFunction {
 
 impl ListedMacroUserFunction {
     pub fn new(param_list: Option<&Rc<LispObject>>) -> Result<Self, YacasError> {
-        Ok(ListedMacroUserFunction { macro_fn: MacroUserFunction::new(param_list)? })
+        Ok(ListedMacroUserFunction {
+            macro_fn: MacroUserFunction::new(param_list)?,
+        })
     }
 }
 
@@ -712,7 +776,11 @@ impl UserFunction for ListedMacroUserFunction {
     fn is_traced(&self) -> bool {
         self.macro_fn.is_traced()
     }
-    fn evaluate(&self, env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+    fn evaluate(
+        &self,
+        env: &mut Environment,
+        call: &Rc<LispObject>,
+    ) -> Result<Rc<LispObject>, YacasError> {
         let call2 = listed_prepare(env, call, self.arity())?;
         self.macro_fn.evaluate(env, &call2)
     }
@@ -785,13 +853,19 @@ impl Default for MultiUserFunction {
 /// current output buffer (same channel as `Write`).
 pub fn trace_show_enter(env: &mut Environment, call: &Rc<LispObject>) {
     let indent = "  ".repeat(env.eval_depth.min(4096) as usize);
-    let func = call.atom_string().map(|s| s.to_string()).unwrap_or_default();
+    let func = call
+        .atom_string()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     let wrapped = Rc::new(LispObject {
         next: None,
         kind: crate::value::ObjectKind::Sublist(call.clone()),
     });
     let expr = trace_escape(&crate::printer::infix_print(env, &wrapped));
-    write_trace_line(env, &format!("{indent}TrEnter(\"{func}\",\"{expr}\",\"\",0);\n"));
+    write_trace_line(
+        env,
+        &format!("{indent}TrEnter(\"{func}\",\"{expr}\",\"\",0);\n"),
+    );
 }
 
 /// `TrLeave` trace line: `TrLeave("<call>","<result>");`.

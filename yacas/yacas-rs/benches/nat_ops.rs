@@ -6,7 +6,11 @@ use yacas_rs::number::nat::Nat;
 fn decimal(digits: usize, seed: usize) -> String {
     (0..digits)
         .map(|i| {
-            let digit = if i == 0 { 1 + seed % 9 } else { (i + seed) % 10 };
+            let digit = if i == 0 {
+                1 + seed % 9
+            } else {
+                (i + seed) % 10
+            };
             char::from_digit(digit as u32, 10).expect("decimal digit")
         })
         .collect()
@@ -25,8 +29,8 @@ fn measure(mut operation: impl FnMut()) -> (u32, Duration) {
     let start = Instant::now();
     operation();
     let once = start.elapsed().max(Duration::from_nanos(1));
-    let repetitions = (Duration::from_millis(150).as_nanos() / once.as_nanos())
-        .clamp(1, 1_000) as u32;
+    let repetitions =
+        (Duration::from_millis(150).as_nanos() / once.as_nanos()).clamp(1, 1_000) as u32;
     let start = Instant::now();
     for _ in 0..repetitions {
         operation();
@@ -49,7 +53,11 @@ fn main() {
         .filter(|arg| arg != "--bench")
         .map(|arg| arg.parse().expect("sizes must be decimal integers"))
         .collect();
-    let sizes = if sizes.is_empty() { vec![100, 1_000, 10_000] } else { sizes };
+    let sizes = if sizes.is_empty() {
+        vec![100, 1_000, 10_000]
+    } else {
+        sizes
+    };
 
     println!("operation,digits,repetitions,ns_per_op");
     for digits in sizes {

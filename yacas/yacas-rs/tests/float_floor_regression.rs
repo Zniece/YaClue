@@ -15,7 +15,10 @@ fn run(env: &mut Environment, src: &str) -> String {
 fn scientific_fraction_floor_ceil_and_radian_reduction() {
     let mut env = Environment::new();
     let scripts = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/");
-    assert_eq!(run(&mut env, &format!("DefaultDirectory(\"{scripts}\")")), "True");
+    assert_eq!(
+        run(&mut env, &format!("DefaultDirectory(\"{scripts}\")")),
+        "True"
+    );
     assert_eq!(run(&mut env, "Load(\"yacasinit.ys\")"), "True");
 
     assert_eq!(run(&mut env, "MathFloor(-0.9370247274e-1)"), "-1");
@@ -24,6 +27,12 @@ fn scientific_fraction_floor_ceil_and_radian_reduction() {
     let reduced = run(&mut env, "TruncRadian(-0.58875)")
         .parse::<f64>()
         .expect("TruncRadian should produce a numeric result");
-    assert!((0.0..std::f64::consts::TAU).contains(&reduced), "unexpected angle: {reduced}");
-    assert!((reduced - (std::f64::consts::TAU - 0.58875)).abs() < 1e-9, "unexpected angle: {reduced}");
+    assert!(
+        (0.0..std::f64::consts::TAU).contains(&reduced),
+        "unexpected angle: {reduced}"
+    );
+    assert!(
+        (reduced - (std::f64::consts::TAU - 0.58875)).abs() < 1e-9,
+        "unexpected angle: {reduced}"
+    );
 }

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::env::Environment;
 use crate::errors::YacasError;
-use crate::value::{copy_node, spine_refs, ObjectKind, LispObject};
+use crate::value::{copy_node, spine_refs, LispObject, ObjectKind};
 
 // Diagnostic tracing, enabled by `YACAS_TRACE_LOAD` in the environment.
 thread_local! {
@@ -116,7 +116,9 @@ pub fn internal_reverse_list(list: &Rc<LispObject>) -> Rc<LispObject> {
 
 /// N-th element (0-based; `ListNotLongEnough` if out of range).
 pub fn internal_nth(list: &Rc<LispObject>, n: usize) -> Result<Rc<LispObject>, YacasError> {
-    let node = spine_refs(list).nth(n).ok_or(YacasError::ListNotLongEnough)?;
+    let node = spine_refs(list)
+        .nth(n)
+        .ok_or(YacasError::ListNotLongEnough)?;
     Ok(copy_node(node))
 }
 
@@ -295,7 +297,10 @@ fn num_of(env: &Environment, node: &Rc<LispObject>) -> Option<crate::number::flo
 
 /// Return-unevaluated fallback: copy the call, evaluate each argument, and
 /// rebuild the chain in argument order.
-pub fn return_un_evaluated(env: &mut Environment, call: &Rc<LispObject>) -> Result<Rc<LispObject>, YacasError> {
+pub fn return_un_evaluated(
+    env: &mut Environment,
+    call: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
     let head = copy_node(call);
     let mut chain: Option<Rc<LispObject>> = None;
     let mut cur = call.next.as_ref();
@@ -345,7 +350,11 @@ pub fn internal_substitute(
         }
         let kinds: Vec<ObjectKind> = items
             .iter()
-            .map(|n| crate::value::spine_kinds(n).next().expect("substitute item kind"))
+            .map(|n| {
+                crate::value::spine_kinds(n)
+                    .next()
+                    .expect("substitute item kind")
+            })
             .collect();
         let inner = crate::value::build_list(kinds).expect("substitute inner");
         Ok(Rc::new(LispObject {
@@ -375,7 +384,11 @@ pub fn do_internal_load(env: &mut Environment, text: &str) -> Result<(), YacasEr
         }
         if load_trace_enabled() && TRACE_STMTS.with(|t| *t.borrow()) {
             let file = LOAD_STACK.with(|s| s.borrow().last().cloned());
-            eprintln!("[LOAD-STMT {}] {}", file.as_deref().unwrap_or("(direct)"), crate::printer::infix_print(env, &expr));
+            eprintln!(
+                "[LOAD-STMT {}] {}",
+                file.as_deref().unwrap_or("(direct)"),
+                crate::printer::infix_print(env, &expr)
+            );
         }
         crate::evaluator::eval(env, &expr)?;
     }
@@ -425,7 +438,10 @@ pub fn internal_use(env: &mut Environment, file_name: &str) -> Result<(), YacasE
             .map
             .entry(file_name.to_string())
             .or_insert_with(|| crate::loader::DefFile::new(file_name));
-        (entry.is_loaded, entry.symbols.iter().cloned().collect::<Vec<Rc<str>>>())
+        (
+            entry.is_loaded,
+            entry.symbols.iter().cloned().collect::<Vec<Rc<str>>>(),
+        )
     };
     if !is_loaded {
         if load_trace_enabled() {

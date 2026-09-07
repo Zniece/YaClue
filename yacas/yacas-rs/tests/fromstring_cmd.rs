@@ -11,13 +11,24 @@ use ys::evaluator::eval;
 use ys::parser::parse_expression;
 use ys::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap().expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap()
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn from_string_read_readtoken() {
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     // Read 只解析不求值(cyacas oracle:x→x,x+1→x+1,Eval(Read())→10)
     let probes = [
@@ -29,10 +40,24 @@ fn from_string_read_readtoken() {
     // 上面的 x:=10 需独立(parse 单表达式),改用 Prog
     let probes2 = [
         (r#"[x := 10; FromString("x;")Eval(Read());]"#, "10"),
-        (r#"FromString("1;2;3;")[a:=Read(); b:=Read(); c:=Read(); {a,b,c};]"#, "{1,2,3}"),
+        (
+            r#"FromString("1;2;3;")[a:=Read(); b:=Read(); c:=Read(); {a,b,c};]"#,
+            "{1,2,3}",
+        ),
         (r#"FromString("hello world")ReadToken()"#, "hello"),
-        (r#"FromString("hello world")[ReadToken();ReadToken();]"#, "world"),
+        (
+            r#"FromString("hello world")[ReadToken();ReadToken();]"#,
+            "world",
+        ),
     ];
-    for (p, exp) in probes { let g = run(&mut e, p); println!("P| {p} => {g}"); assert_eq!(g, exp, "probe {p}"); }
-    for (p, exp) in probes2 { let g = run(&mut e, p); println!("P| {p} => {g}"); assert_eq!(g, exp, "probe {p}"); }
+    for (p, exp) in probes {
+        let g = run(&mut e, p);
+        println!("P| {p} => {g}");
+        assert_eq!(g, exp, "probe {p}");
+    }
+    for (p, exp) in probes2 {
+        let g = run(&mut e, p);
+        println!("P| {p} => {g}");
+        assert_eq!(g, exp, "probe {p}");
+    }
 }

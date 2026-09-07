@@ -11,21 +11,38 @@ use ys::evaluator::eval;
 use ys::parser::parse_expression;
 use ys::printer::infix_print;
 fn run(env: &mut Environment, src: &str) -> String {
-    let t = parse_expression(env, &format!("{src};")).unwrap().expect("ok");
-    match eval(env, &t) { Ok(r) => infix_print(env, &r), Err(e) => format!("ERR({e:?})") }
+    let t = parse_expression(env, &format!("{src};"))
+        .unwrap()
+        .expect("ok");
+    match eval(env, &t) {
+        Ok(r) => infix_print(env, &r),
+        Err(e) => format!("ERR({e:?})"),
+    }
 }
 #[test]
 fn from_file_read() {
     std::fs::write("/tmp/ff_in.ys", "1+2;\n").unwrap();
     std::fs::write("/tmp/ff_in2.ys", "aa;bb;\n42;\n").unwrap();
     let mut e = Environment::new();
-    run(&mut e, &format!("DefaultDirectory(\"{}/\")", concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")));
+    run(
+        &mut e,
+        &format!(
+            "DefaultDirectory(\"{}/\")",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts")
+        ),
+    );
     assert_eq!(run(&mut e, "Load(\"yacasinit.ys\")"), "True");
     let probes = [
         (r#"FromFile("/tmp/ff_in.ys")Read()"#, "1+2"),
-        (r#"FromFile("/tmp/ff_in2.ys")[a:=Read(); b:=Read(); {a,b};]"#, "{aa,bb}"),
+        (
+            r#"FromFile("/tmp/ff_in2.ys")[a:=Read(); b:=Read(); {a,b};]"#,
+            "{aa,bb}",
+        ),
         (r#"FromFile("/tmp/ff_in.ys")[Read(); Read();]"#, "EndOfFile"),
-        (r#"TrapError(FromFile("/no/such/file.ys")Read(), "caught")"#, "\"caught\""),
+        (
+            r#"TrapError(FromFile("/no/such/file.ys")Read(), "caught")"#,
+            "\"caught\"",
+        ),
     ];
     for (p, exp) in probes {
         assert_eq!(run(&mut e, p), exp, "probe {p}");

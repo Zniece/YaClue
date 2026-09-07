@@ -49,7 +49,12 @@ pub struct SampleOptions {
 
 impl Default for SampleOptions {
     fn default() -> Self {
-        SampleOptions { points: 64, max_depth: 5, eps: 1e-3, batch: 64 }
+        SampleOptions {
+            points: 64,
+            max_depth: 5,
+            eps: 1e-3,
+            batch: 64,
+        }
     }
 }
 
@@ -94,10 +99,7 @@ pub fn sample(
             breaks.push(i);
         }
     }
-    let points = pts
-        .into_iter()
-        .map(|(x, y)| PlotPoint { x, y })
-        .collect();
+    let points = pts.into_iter().map(|(x, y)| PlotPoint { x, y }).collect();
     Ok(SampledPlot { points, breaks })
 }
 
@@ -121,11 +123,7 @@ fn refine_intervals(
             .collect();
         let values = eval_batched(engine, func, var, &midpoints, options.batch)?;
         let mut next = Vec::new();
-        for (((left, right), x), y) in active
-            .into_iter()
-            .zip(midpoints)
-            .zip(values)
-        {
+        for (((left, right), x), y) in active.into_iter().zip(midpoints).zip(values) {
             let middle = (x, y);
             let interpolation = (left.1 + right.1) / 2.0;
             let scale = left.1.abs().max(right.1.abs()).max(y.abs()).max(1.0);
@@ -142,7 +140,7 @@ fn refine_intervals(
         active = next;
     }
     leaves.extend(active);
-    leaves.sort_by(|a, b| a.0.0.total_cmp(&b.0.0));
+    leaves.sort_by(|a, b| a.0 .0.total_cmp(&b.0 .0));
     let Some(first) = leaves.first() else {
         return Ok(Vec::new());
     };
@@ -166,11 +164,7 @@ pub(crate) fn eval_batched(
     for chunk in xs.chunks(batch.max(1)) {
         let items: Vec<String> = chunk
             .iter()
-            .map(|v| {
-                format!(
-                    "N(Eval(ApplyPure(\"Subst\", {{{var},{v},{func}}})))"
-                )
-            })
+            .map(|v| format!("N(Eval(ApplyPure(\"Subst\", {{{var},{v},{func}}})))"))
             .collect();
         let cmd = format!("N({{{}}})", items.join(", "));
         let result: EvalResult = engine.eval(&cmd)?;
@@ -197,8 +191,12 @@ fn flatten_number_list(expr: &Expr) -> Vec<f64> {
         }
     }
     match expr {
-        Expr::Call { head, args } if head == "List" => args.iter().map(|e| scalar(e).unwrap_or(f64::NAN)).collect(),
-        Expr::Call { head, args } if head == "N" => args.first().map(flatten_number_list).unwrap_or_default(),
+        Expr::Call { head, args } if head == "List" => {
+            args.iter().map(|e| scalar(e).unwrap_or(f64::NAN)).collect()
+        }
+        Expr::Call { head, args } if head == "N" => {
+            args.first().map(flatten_number_list).unwrap_or_default()
+        }
         // Single scalar result (e.g. a one-element batch collapsed by the engine).
         one => scalar(one).into_iter().collect(),
     }
@@ -223,7 +221,11 @@ mod tests {
         let last = plot.points.last().expect("non-empty");
         assert!((last.x - std::f64::consts::PI).abs() < 1e-12);
         assert!((last.y - 0.0).abs() < 1e-6);
-        let mid = plot.points.iter().find(|p| (p.x - 1.5).abs() < 0.1).expect("mid point");
+        let mid = plot
+            .points
+            .iter()
+            .find(|p| (p.x - 1.5).abs() < 0.1)
+            .expect("mid point");
         assert!((mid.y - 1.5f64.sin()).abs() < 1e-2);
         assert!(plot.breaks.is_empty(), "Sin is finite everywhere");
     }
@@ -252,7 +254,11 @@ mod tests {
     fn refines_curvature_but_not_lines() {
         // A straight line must not be refined (curvature criterion).
         let mut engine = RustEngine::spawn().expect("boot");
-        let opts = SampleOptions { points: 16, max_depth: 5, ..Default::default() };
+        let opts = SampleOptions {
+            points: 16,
+            max_depth: 5,
+            ..Default::default()
+        };
         let line = sample(&mut engine, "2*x+1", "x", (0.0, 10.0), &opts).expect("sample");
         assert_eq!(line.points.len(), 17, "linear: base grid only");
         // x^2 has constant curvature: every interval refines to max depth.
@@ -260,7 +266,11 @@ mod tests {
         assert!(quad.points.len() > 17, "quadratic: refinement happened");
         // And the refinement actually reduces approximation error: midpoint
         // of [0,10] must be very close to 25.
-        let mid = quad.points.iter().find(|p| (p.x - 5.0).abs() < 1e-9).expect("midpoint sampled");
+        let mid = quad
+            .points
+            .iter()
+            .find(|p| (p.x - 5.0).abs() < 1e-9)
+            .expect("midpoint sampled");
         assert!((mid.y - 25.0).abs() < 1e-2);
     }
 

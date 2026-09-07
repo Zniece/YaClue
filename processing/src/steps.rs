@@ -48,9 +48,7 @@ fn validate_expr(expr: &str) -> Result<(), EngineError> {
     }
     for bad in [';', '\n', '\r', ':', '"'] {
         if e.contains(bad) {
-            return Err(EngineError::Eval(format!(
-                "表达式包含不允许的字符 '{bad}'"
-            )));
+            return Err(EngineError::Eval(format!("表达式包含不允许的字符 '{bad}'")));
         }
     }
     // 括号平衡
@@ -119,7 +117,9 @@ fn steps_from_command(
         .collect();
     let tex = engine.render_tex_batch(&expressions)?;
     if tex.len() != candidates.len() {
-        return Err(EngineError::Parse("批量 TeX 结果数量与步骤数量不一致".into()));
+        return Err(EngineError::Parse(
+            "批量 TeX 结果数量与步骤数量不一致".into(),
+        ));
     }
     Ok(candidates
         .into_iter()
@@ -174,7 +174,11 @@ pub fn derive_steps_order_with_verbosity(
     if order == 0 {
         return Err(EngineError::Eval("求导阶数必须 >= 1".into()));
     }
-    steps_from_command(engine, &format!("StepsD'Full({expr}, {var}, {order})"), verbosity)
+    steps_from_command(
+        engine,
+        &format!("StepsD'Full({expr}, {var}, {order})"),
+        verbosity,
+    )
 }
 
 /// 对 `expr` 关于 `var` 生成分步积分过程
@@ -234,7 +238,15 @@ pub fn derive_definite_with_options(
     to: &str,
     options: &QuadratureOptions,
 ) -> Result<Vec<Step>, EngineError> {
-    derive_definite_configured(engine, expr, var, from, to, options, StepVerbosity::Detailed)
+    derive_definite_configured(
+        engine,
+        expr,
+        var,
+        from,
+        to,
+        options,
+        StepVerbosity::Detailed,
+    )
 }
 
 fn derive_definite_configured(
@@ -277,7 +289,11 @@ fn derive_definite_configured(
     Ok(steps)
 }
 
-fn numeric_scalar(engine: &mut dyn Engine, expression: &str, label: &str) -> Result<f64, EngineError> {
+fn numeric_scalar(
+    engine: &mut dyn Engine,
+    expression: &str,
+    label: &str,
+) -> Result<f64, EngineError> {
     let result = engine.eval(&format!("N({expression})"))?;
     match result.expr {
         Expr::Number(value) => value
@@ -285,7 +301,9 @@ fn numeric_scalar(engine: &mut dyn Engine, expression: &str, label: &str) -> Res
             .ok()
             .filter(|value| value.is_finite())
             .ok_or_else(|| EngineError::Eval(format!("定积分{label}不是有限实数: {expression}"))),
-        _ => Err(EngineError::Eval(format!("定积分{label}不是有限实数: {expression}"))),
+        _ => Err(EngineError::Eval(format!(
+            "定积分{label}不是有限实数: {expression}"
+        ))),
     }
 }
 
@@ -339,37 +357,30 @@ mod tests {
             eval_calls: 0,
             batch_sizes: Vec::new(),
         };
-        let detailed = derive_steps_with_verbosity(
-            &mut engine,
-            "x^2",
-            "x",
-            StepVerbosity::Detailed,
-        )
-        .unwrap();
+        let detailed =
+            derive_steps_with_verbosity(&mut engine, "x^2", "x", StepVerbosity::Detailed).unwrap();
         assert!(detailed.iter().all(|step| !step.tex.is_empty()));
 
-        let standard = derive_steps_with_verbosity(
-            &mut engine,
-            "x^2",
-            "x",
-            StepVerbosity::Standard,
-        )
-        .unwrap();
-        let concise = derive_steps_with_verbosity(
-            &mut engine,
-            "x^2",
-            "x",
-            StepVerbosity::Concise,
-        )
-        .unwrap();
+        let standard =
+            derive_steps_with_verbosity(&mut engine, "x^2", "x", StepVerbosity::Standard).unwrap();
+        let concise =
+            derive_steps_with_verbosity(&mut engine, "x^2", "x", StepVerbosity::Concise).unwrap();
         assert!(
             detailed.len() > standard.len(),
             "detailed={} standard={} concise={}",
-            detailed.len(), standard.len(), concise.len()
+            detailed.len(),
+            standard.len(),
+            concise.len()
         );
         assert!(standard.len() > concise.len());
-        assert_eq!(engine.eval_calls, 3, "each derivation evaluates its step chain once");
-        assert_eq!(engine.batch_sizes, vec![detailed.len(), standard.len(), concise.len()]);
+        assert_eq!(
+            engine.eval_calls, 3,
+            "each derivation evaluates its step chain once"
+        );
+        assert_eq!(
+            engine.batch_sizes,
+            vec![detailed.len(), standard.len(), concise.len()]
+        );
         assert_eq!(detailed.last().unwrap().expr, concise.last().unwrap().expr);
     }
 
@@ -425,9 +436,16 @@ mod tests {
         // x*Sin(x):分部策略横幅为第一步
         assert_eq!(steps[0].rule, "method-parts");
         let diff = engine
-            .eval("Simplify(StepsI(x*Sin(x), x)[Length(StepsI(x*Sin(x), x))][2] - (Sin(x)-x*Cos(x)))")
+            .eval(
+                "Simplify(StepsI(x*Sin(x), x)[Length(StepsI(x*Sin(x), x))][2] - (Sin(x)-x*Cos(x)))",
+            )
             .expect("验证求值失败");
-        assert_eq!(diff.expr.to_string(), "0", "分部积分结果错误: {}", diff.expr);
+        assert_eq!(
+            diff.expr.to_string(),
+            "0",
+            "分部积分结果错误: {}",
+            diff.expr
+        );
 
         // u-substitution
         let steps = derive_integrals(&mut engine, "Sin(x^2)*2*x", "x").expect("StepsI 失败");

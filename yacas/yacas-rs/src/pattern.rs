@@ -64,7 +64,9 @@ pub struct MatchNumber {
 
 impl MatchNumber {
     pub fn new(num_text: &str) -> Self {
-        MatchNumber { num_text: num_text.to_string() }
+        MatchNumber {
+            num_text: num_text.to_string(),
+        }
     }
 }
 
@@ -79,8 +81,9 @@ impl ParamMatcher for MatchNumber {
             crate::value::ObjectKind::Number(n) => n.float_at(env.precision()),
             _ => return Ok(false),
         };
-        let pat = crate::number::float::Float::from_decimal_with_prec(&self.num_text, env.precision())
-            .ok_or(YacasError::InvalidArg)?;
+        let pat =
+            crate::number::float::Float::from_decimal_with_prec(&self.num_text, env.precision())
+                .ok_or(YacasError::InvalidArg)?;
         Ok(pat.equals(&target))
     }
 }
@@ -161,7 +164,11 @@ pub struct PatternPredicate {
 impl PatternPredicate {
     /// Build from a full pattern expression; each argument becomes a matcher
     /// and the post-predicate is copied into the predicate list.
-    pub fn new(env: &mut Environment, pattern: &Rc<LispObject>, post_predicate: &Rc<LispObject>) -> Result<Self, YacasError> {
+    pub fn new(
+        env: &mut Environment,
+        pattern: &Rc<LispObject>,
+        post_predicate: &Rc<LispObject>,
+    ) -> Result<Self, YacasError> {
         let mut pp = PatternPredicate {
             param_matchers: Vec::new(),
             variables: Vec::new(),
@@ -178,7 +185,11 @@ impl PatternPredicate {
 
     /// Match: per-argument matching → tentative binding + predicates in a
     /// scratch frame → on success, bind once more for the rule body.
-    pub fn matches(&self, env: &mut Environment, arguments: &[Rc<LispObject>]) -> Result<bool, YacasError> {
+    pub fn matches(
+        &self,
+        env: &mut Environment,
+        arguments: &[Rc<LispObject>],
+    ) -> Result<bool, YacasError> {
         let mut slots: Vec<Option<Rc<LispObject>>> = vec![None; self.variables.len()];
         if self.param_matchers.len() != arguments.len() {
             return Ok(false);
@@ -206,7 +217,11 @@ impl PatternPredicate {
     /// (a sublist predicate is flattened into its content chain), with the
     /// variable atom appended. E.g. `expr_IsFreeOf(cc)` is
     /// `(_ expr (IsFreeOf cc))` → predicate `(IsFreeOf cc expr)`.
-    fn make_param_matcher(&mut self, env: &mut Environment, pattern: &Rc<LispObject>) -> Result<Box<dyn ParamMatcher>, YacasError> {
+    fn make_param_matcher(
+        &mut self,
+        env: &mut Environment,
+        pattern: &Rc<LispObject>,
+    ) -> Result<Box<dyn ParamMatcher>, YacasError> {
         match &pattern.kind {
             crate::value::ObjectKind::Number(_) => {
                 let text = pattern.number_string().expect("number text");
@@ -224,7 +239,8 @@ impl PatternPredicate {
                             if let Some(var) = second.atom_string() {
                                 let index = self.look_up_var(var.clone());
                                 if num > 2 {
-                                    let pred_node = second.next.as_ref().ok_or(YacasError::InvalidArg)?;
+                                    let pred_node =
+                                        second.next.as_ref().ok_or(YacasError::InvalidArg)?;
                                     let mut parts: Vec<Rc<LispObject>> = Vec::new();
                                     match pred_node.sublist() {
                                         // Sublist predicate: flatten its content chain.
@@ -239,9 +255,12 @@ impl PatternPredicate {
                                     parts.push(crate::value::LispObject::atom(var_sym));
                                     let kinds: Vec<ObjectKind> = parts
                                         .into_iter()
-                                        .map(|n| crate::value::spine_kinds(&n).next().expect("kind"))
+                                        .map(|n| {
+                                            crate::value::spine_kinds(&n).next().expect("kind")
+                                        })
                                         .collect();
-                                    let inner = crate::value::build_list(kinds).expect("pred inner");
+                                    let inner =
+                                        crate::value::build_list(kinds).expect("pred inner");
                                     let pred2 = Rc::new(LispObject {
                                         next: None,
                                         kind: crate::value::ObjectKind::Sublist(inner),
@@ -286,88 +305,93 @@ impl PatternPredicate {
         };
         if let Some(vars) = vars {
             let mut cur: Option<&Rc<LispObject>> = Some(vars);
-        while let Some(n) = cur {
-            let matcher: Box<dyn ParamMatcher> = if let Some(s) = n.atom_string() {
-                // Atom with a `_` suffix → variable + predicate; without →
-                // literal atom match.
-                let (var_name, pred_name) = match s.rfind('_') {
-                    Some(i) if i > 0 && i + 1 < s.len() => {
-                        (Rc::from(&s[..i]), Rc::from(&s[i + 1..]))
-                    }
-                    _ => (s.clone(), Rc::<str>::default()),
-                };
-                if pred_name.is_empty() {
-                    Box::new(MatchAtom::new(s.clone()))
-                } else {
-                    let index = pp.look_up_var(var_name.clone());
-                    let head_sym = env.symtab.look_up(&pred_name);
-                    let var_atom = crate::value::LispObject::atom(env.symtab.look_up(&var_name));
-                    let inner = crate::value::build_list(vec![
-                        ObjectKind::Atom(head_sym),
-                        crate::value::spine_kinds(&var_atom).next().expect("var kind"),
-                    ])
-                    .expect("pred inner is non-empty");
-                    let pred_node = Rc::new(LispObject {
-                        next: None,
-                        kind: ObjectKind::Sublist(inner),
-                    });
-                    pp.predicates.push(pred_node);
-                    Box::new(MatchVariable::new(index))
-                }
-            } else if let Some(num_text) = n.number_string() {
-                Box::new(MatchNumber::new(&num_text))
-            } else if let Some(sub) = n.sublist() {
-                if sub.atom_string().map(|s| s.as_ref()) == Some("_") {
-                    match sub.next.as_ref().and_then(|v| v.atom_string()) {
-                        Some(var) => {
-                            let index = pp.look_up_var(var.clone());
-                            // `(_ var [pred...])`: optional predicate next to
-                            // `var`, flattened if a sublist, variable appended.
-                            let num = crate::standard::internal_list_length(sub);
-                            if num > 2 {
-                                let pred_node = sub
-                                    .next
-                                    .as_ref()
-                                    .and_then(|v| v.next.as_ref())
-                                    .ok_or(YacasError::InvalidArg)?;
-                                let mut pred: Vec<Rc<LispObject>> = Vec::new();
-                                match pred_node.sublist() {
-                                    Some(inner) => {
-                                        for n in crate::value::spine_refs(inner) {
-                                            pred.push(copy_node(n));
-                                        }
-                                    }
-                                    None => pred.push(copy_node(pred_node)),
-                                }
-                                let var_sym = env.symtab.look_up(var.as_ref());
-                                pred.push(crate::value::LispObject::atom(var_sym));
-                                let inner = crate::value::build_list(
-                                    pred.into_iter()
-                                        .map(|n| crate::value::spine_kinds(&n).next().expect("kind"))
-                                        .collect(),
-                                )
-                                .expect("pred inner");
-                                let pred2 = Rc::new(LispObject {
-                                    next: None,
-                                    kind: ObjectKind::Sublist(inner),
-                                });
-                                pp.predicates.push(pred2);
-                            }
-                            Box::new(MatchVariable::new(index))
+            while let Some(n) = cur {
+                let matcher: Box<dyn ParamMatcher> = if let Some(s) = n.atom_string() {
+                    // Atom with a `_` suffix → variable + predicate; without →
+                    // literal atom match.
+                    let (var_name, pred_name) = match s.rfind('_') {
+                        Some(i) if i > 0 && i + 1 < s.len() => {
+                            (Rc::from(&s[..i]), Rc::from(&s[i + 1..]))
                         }
-                        // `(_ (sub...) ...)`: the variable slot itself is a
-                        // sublist — delegate to the recursive matcher.
-                        None => pp.make_param_matcher(env, n)?,
+                        _ => (s.clone(), Rc::<str>::default()),
+                    };
+                    if pred_name.is_empty() {
+                        Box::new(MatchAtom::new(s.clone()))
+                    } else {
+                        let index = pp.look_up_var(var_name.clone());
+                        let head_sym = env.symtab.look_up(&pred_name);
+                        let var_atom =
+                            crate::value::LispObject::atom(env.symtab.look_up(&var_name));
+                        let inner = crate::value::build_list(vec![
+                            ObjectKind::Atom(head_sym),
+                            crate::value::spine_kinds(&var_atom)
+                                .next()
+                                .expect("var kind"),
+                        ])
+                        .expect("pred inner is non-empty");
+                        let pred_node = Rc::new(LispObject {
+                            next: None,
+                            kind: ObjectKind::Sublist(inner),
+                        });
+                        pp.predicates.push(pred_node);
+                        Box::new(MatchVariable::new(index))
+                    }
+                } else if let Some(num_text) = n.number_string() {
+                    Box::new(MatchNumber::new(&num_text))
+                } else if let Some(sub) = n.sublist() {
+                    if sub.atom_string().map(|s| s.as_ref()) == Some("_") {
+                        match sub.next.as_ref().and_then(|v| v.atom_string()) {
+                            Some(var) => {
+                                let index = pp.look_up_var(var.clone());
+                                // `(_ var [pred...])`: optional predicate next to
+                                // `var`, flattened if a sublist, variable appended.
+                                let num = crate::standard::internal_list_length(sub);
+                                if num > 2 {
+                                    let pred_node = sub
+                                        .next
+                                        .as_ref()
+                                        .and_then(|v| v.next.as_ref())
+                                        .ok_or(YacasError::InvalidArg)?;
+                                    let mut pred: Vec<Rc<LispObject>> = Vec::new();
+                                    match pred_node.sublist() {
+                                        Some(inner) => {
+                                            for n in crate::value::spine_refs(inner) {
+                                                pred.push(copy_node(n));
+                                            }
+                                        }
+                                        None => pred.push(copy_node(pred_node)),
+                                    }
+                                    let var_sym = env.symtab.look_up(var.as_ref());
+                                    pred.push(crate::value::LispObject::atom(var_sym));
+                                    let inner = crate::value::build_list(
+                                        pred.into_iter()
+                                            .map(|n| {
+                                                crate::value::spine_kinds(&n).next().expect("kind")
+                                            })
+                                            .collect(),
+                                    )
+                                    .expect("pred inner");
+                                    let pred2 = Rc::new(LispObject {
+                                        next: None,
+                                        kind: ObjectKind::Sublist(inner),
+                                    });
+                                    pp.predicates.push(pred2);
+                                }
+                                Box::new(MatchVariable::new(index))
+                            }
+                            // `(_ (sub...) ...)`: the variable slot itself is a
+                            // sublist — delegate to the recursive matcher.
+                            None => pp.make_param_matcher(env, n)?,
+                        }
+                    } else {
+                        pp.make_param_matcher(env, n)?
                     }
                 } else {
-                    pp.make_param_matcher(env, n)?
-                }
-            } else {
-                return Err(YacasError::InvalidArg);
-            };
-            pp.param_matchers.push(matcher);
-            cur = n.next.as_ref();
-        }
+                    return Err(YacasError::InvalidArg);
+                };
+                pp.param_matchers.push(matcher);
+                cur = n.next.as_ref();
+            }
         }
         pp.predicates.push(copy_node(post_predicate));
         Ok(pp)
@@ -391,7 +415,11 @@ impl PatternPredicate {
         for pred in &self.predicates {
             let p = crate::evaluator::eval(env, pred)?;
             if std::env::var_os("YACAS_TRACE_LOAD").is_some() {
-                eprintln!("[PRED] {} => {}", crate::printer::infix_print(env, pred), crate::printer::infix_print(env, &p));
+                eprintln!(
+                    "[PRED] {} => {}",
+                    crate::printer::infix_print(env, pred),
+                    crate::printer::infix_print(env, &p)
+                );
             }
             if is_false(env, &p) {
                 return Ok(false);

@@ -27,7 +27,10 @@ fn is_float(s: &str) -> bool {
 /// 层 1+2 迷你求值:`^`、`*`、`/`、`+`、`-`、字面量(可套括号)。
 fn eval_arith(expr: &str, prec: u32) -> String {
     let e = expr.trim();
-    let e = e.strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(e);
+    let e = e
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(e);
     if let Some(i) = e.find('/') {
         let (a, b) = (e[..i].trim(), e[i + 1..].trim());
         let num = Float::from_decimal(a).expect("bad div num");

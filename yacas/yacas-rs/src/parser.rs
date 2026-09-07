@@ -167,7 +167,12 @@ impl<'a> InfixParser<'a> {
                 let op = match self.infix_lookup(&la) {
                     Some(op) => op,
                     None => {
-                        let is_sym = self.lookahead.chars().next().map(is_symbolic).unwrap_or(false);
+                        let is_sym = self
+                            .lookahead
+                            .chars()
+                            .next()
+                            .map(is_symbolic)
+                            .unwrap_or(false);
                         if !is_sym {
                             return Ok(());
                         }
@@ -378,7 +383,10 @@ pub struct LispParser<'a> {
 
 impl<'a> LispParser<'a> {
     pub fn new(env: &'a mut Environment, src: &str) -> Self {
-        LispParser { env, tok: Tokenizer::new(src) }
+        LispParser {
+            env,
+            tok: Tokenizer::new(src),
+        }
     }
 
     /// Parse one form; EOF yields the `EndOfFile` atom.
@@ -468,7 +476,10 @@ mod tests {
         let mut env = Environment::new();
         assert_eq!(ff(&mut env, "ff(aa,bb,cc)"), "(ff aa bb cc )");
         assert_eq!(ff(&mut env, "aa[bb][cc]"), "(Nth \n    (Nth aa bb )cc )");
-        assert_eq!(ff(&mut env, "{aa,{bb,cc}}"), "(List aa \n    (List bb cc ))");
+        assert_eq!(
+            ff(&mut env, "{aa,{bb,cc}}"),
+            "(List aa \n    (List bb cc ))"
+        );
         assert_eq!(ff(&mut env, "{}"), "(List )");
         assert_eq!(ff(&mut env, "aa[1]"), "(Nth aa 1 )");
     }
@@ -512,6 +523,9 @@ mod tests {
         let mut env = Environment::new();
         assert_eq!(ff(&mut env, "[aa;bb;cc;]"), "(Prog aa bb cc )");
         let mut env2 = Environment::new();
-        assert!(parse_expression(&mut env2, "[aa;bb;cc];").is_err(), "missing final ; must error");
+        assert!(
+            parse_expression(&mut env2, "[aa;bb;cc];").is_err(),
+            "missing final ; must error"
+        );
     }
 }

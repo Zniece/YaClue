@@ -32,7 +32,9 @@ impl Default for AssociationClass {
 
 impl AssociationClass {
     pub fn new() -> Self {
-        AssociationClass { pairs: Rc::new(RefCell::new(Vec::new())) }
+        AssociationClass {
+            pairs: Rc::new(RefCell::new(Vec::new())),
+        }
     }
 
     pub fn size(&self) -> usize {
@@ -41,7 +43,10 @@ impl AssociationClass {
 
     /// Index of the first pair whose key equals `key` (engine equality).
     fn find(&self, env: &Environment, key: &Rc<LispObject>) -> Option<usize> {
-        self.pairs.borrow().iter().position(|(k, _)| crate::standard::internal_equals(env, k, key))
+        self.pairs
+            .borrow()
+            .iter()
+            .position(|(k, _)| crate::standard::internal_equals(env, k, key))
     }
 
     pub fn contains(&self, env: &Environment, key: &Rc<LispObject>) -> bool {
@@ -49,12 +54,16 @@ impl AssociationClass {
     }
 
     pub fn get(&self, env: &Environment, key: &Rc<LispObject>) -> Option<Rc<LispObject>> {
-        self.find(env, key).map(|i| self.pairs.borrow()[i].1.clone())
+        self.find(env, key)
+            .map(|i| self.pairs.borrow()[i].1.clone())
     }
 
     pub fn set(&self, env: &Environment, key: &Rc<LispObject>, value: &Rc<LispObject>) {
         let mut pairs = self.pairs.borrow_mut();
-        if let Some(i) = pairs.iter().position(|(k, _)| crate::standard::internal_equals(env, k, key)) {
+        if let Some(i) = pairs
+            .iter()
+            .position(|(k, _)| crate::standard::internal_equals(env, k, key))
+        {
             pairs[i].1 = value.clone();
         } else {
             pairs.push((key.clone(), value.clone()));
@@ -63,7 +72,10 @@ impl AssociationClass {
 
     pub fn drop_key(&self, env: &Environment, key: &Rc<LispObject>) -> bool {
         let mut pairs = self.pairs.borrow_mut();
-        if let Some(i) = pairs.iter().position(|(k, _)| crate::standard::internal_equals(env, k, key)) {
+        if let Some(i) = pairs
+            .iter()
+            .position(|(k, _)| crate::standard::internal_equals(env, k, key))
+        {
             pairs.remove(i);
             true
         } else {
@@ -77,7 +89,9 @@ impl GenericClass for AssociationClass {
         "\"Association\""
     }
     fn downcast_assoc(&self) -> Option<Rc<crate::containers::AssociationClass>> {
-        Some(Rc::new(crate::containers::AssociationClass { pairs: self.pairs.clone() }))
+        Some(Rc::new(crate::containers::AssociationClass {
+            pairs: self.pairs.clone(),
+        }))
     }
     fn downcast_array(&self) -> Option<Rc<crate::containers::ArrayClass>> {
         None
@@ -125,7 +139,9 @@ impl GenericClass for ArrayClass {
         "\"Array\""
     }
     fn downcast_array(&self) -> Option<Rc<crate::containers::ArrayClass>> {
-        Some(Rc::new(crate::containers::ArrayClass { slots: self.slots.clone() }))
+        Some(Rc::new(crate::containers::ArrayClass {
+            slots: self.slots.clone(),
+        }))
     }
 }
 
