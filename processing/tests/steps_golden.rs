@@ -84,6 +84,8 @@ const CASES: &[(&str, &str, &str)] = &[
     ("I", "Sinh(x)", "x"),       // sinh-rule
     ("I", "Cosh(x)", "x"),       // cosh-rule
     ("I", "Tanh(x)", "x"),       // tanh-rule
+    ("I", "Tan(x)^3", "x"),      // tan-power-reduction-rule
+    ("I", "Sec(x)^3", "x"),      // sec-power-reduction-rule + sec-rule
     ("I", "2/Sqrt(1 - x^2)", "x"), // arcsin-rule(反正弦形)
     ("I", "1/(x^2 - 1)", "x"),    // partial-fraction-rule + sum + ln ×2
     ("I", "x/(x^2 + 3*x + 2)", "x"), // partial-fraction-rule(分子含变量)
@@ -145,6 +147,8 @@ const EXPECTED_RULES: &[&str] = &[
     "product-rule",
     "quotient-rule",
     "sin-rule",
+    "sec-power-reduction-rule",
+    "sec-rule",
     "simplify",
     "sinh-rule",
     "sqrt-diff-rule",
@@ -152,6 +156,7 @@ const EXPECTED_RULES: &[&str] = &[
     "sqrt-sum-rule",
     "sum-rule",
     "tan-rule",
+    "tan-power-reduction-rule",
     "trig-identity-rule",
     "trig-sub-back",
     "trig-sub-rule",

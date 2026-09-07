@@ -447,6 +447,48 @@ SI'CosPow(n, u) :=
 10 # SI'Diff(Cos(_u) ^ _n, _v)_(u = v And IsInteger(n) And n >= 2) <--
   SI'CosPow(n, u);
 
+/* ---------- 幂约简递推:Tan^n / Sec^n(u = v,n 整数 >= 2) ----------
+   Sec 在标准库求值后存为 (1/Cos)^n,因此规则匹配该规范形。
+   ∫Tan^n u du = Tan^(n-1)u/(n-1) - ∫Tan^(n-2)u du;
+   ∫Sec^n u du = Sec^(n-2)u*Tan(u)/(n-1)
+                  + ((n-2)/(n-1))*∫Sec^(n-2)u du。
+   两条递推均下降 2 次,分别落到 Tan/常数与 Sec/常数基本表。 */
+
+SI'TanPow(n, u) :=
+[
+  Local(steps, cur, sf);
+  steps := {{"tan-power-reduction-rule", "p", Tan(u) ^ n,
+             Tan(u) ^ (n - 1) / (n - 1) - Int(Tan(u) ^ (n - 2))}};
+  cur := Tan(u) ^ (n - 1) / (n - 1) - Int(Tan(u) ^ (n - 2));
+  sf := SI'Diff(Tan(u) ^ (n - 2), u);
+  cur := SD'Merge(cur, sf, "Int")[2];
+  steps := Concat(steps, sf[1]);
+  {steps, cur};
+];
+
+SI'SecPow(n, u) :=
+[
+  Local(steps, cur, sf);
+  steps := {{"sec-power-reduction-rule", "p", (1 / Cos(u)) ^ n,
+             (1 / Cos(u)) ^ (n - 2) * Tan(u) / (n - 1)
+               + ((n - 2) / (n - 1)) * Int((1 / Cos(u)) ^ (n - 2))}};
+  cur := (1 / Cos(u)) ^ (n - 2) * Tan(u) / (n - 1)
+           + ((n - 2) / (n - 1)) * Int((1 / Cos(u)) ^ (n - 2));
+  sf := SI'Diff((1 / Cos(u)) ^ (n - 2), u);
+  cur := SD'Merge(cur, sf, "Int")[2];
+  steps := Concat(steps, sf[1]);
+  {steps, cur};
+];
+
+/* Sec 的奇次递推落点。Sec(x) 会在进入 SI'Diff 前规范化为 1/Cos(x)。 */
+10 # SI'Diff(1 / Cos(_u), _v)_(u = v) <--
+  {{{"sec-rule", "p", 1 / Cos(u), Ln(1 / Cos(u) + Tan(u))}},
+   Ln(1 / Cos(u) + Tan(u))};
+10 # SI'Diff(Tan(_u) ^ _n, _v)_(u = v And IsInteger(n) And n >= 2) <--
+  SI'TanPow(n, u);
+10 # SI'Diff((1 / Cos(_u)) ^ _n, _v)_(u = v And IsInteger(n) And n >= 2) <--
+  SI'SecPow(n, u);
+
 /* 反正弦形:∫c/Sqrt(d - v^2) dv = c*ArcSin(v/Sqrt(d))(d 为正数常数;
    一般化自 d=1 特例)。 */
 10 # SI'Diff(_c / Sqrt(_d - _a ^ 2), _v)_(d > 0 And IsFreeOf(v, c) And a = v) <--
@@ -791,6 +833,9 @@ RuleBase("Steps'Text", {key});
 10 # Steps'Text("trig-sub-rule") <-- "三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)";
 10 # Steps'Text("trig-identity-rule") <-- "三角恒等展开";
 10 # Steps'Text("power-reduction-rule") <-- "幂约简递推: ∫Sin^n(u) du = -(Sin^(n-1)(u)*Cos(u))/n + ((n-1)/n)*∫Sin^(n-2)(u) du (Cos^n 对称)";
+10 # Steps'Text("tan-power-reduction-rule") <-- "正切幂递推: ∫Tan^n(u) du = Tan^(n-1)(u)/(n-1) - ∫Tan^(n-2)(u) du";
+10 # Steps'Text("sec-power-reduction-rule") <-- "正割幂递推: ∫Sec^n(u) du = Sec^(n-2)(u)*Tan(u)/(n-1) + ((n-2)/(n-1))*∫Sec^(n-2)(u) du";
+10 # Steps'Text("sec-rule") <-- "正割积分: ∫Sec(u) du = Ln(Sec(u) + Tan(u))";
 10 # Steps'Text("trig-sub-back") <-- "三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)";
 
 /* ---------- 两侧通用 ---------- */

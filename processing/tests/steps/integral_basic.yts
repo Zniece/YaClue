@@ -37,3 +37,15 @@ Verify(FirstRule(StepsI(1/(x^2 + 4), x)), "arctan-rule");
 TestYacas(LastStepExpr(StepsI(Sin(x)^2, x)), (x/2) - (Sin(x)*Cos(x))/2);
 TestYacas(LastStepExpr(StepsI(Cos(x)^3, x)), ((Cos(x)^2*Sin(x)) + (2*Sin(x)))/3);
 Verify(FirstRule(StepsI(Sin(x)^4, x)), "power-reduction-rule");
+
+/* Tan/Sec 幂递推。Sec 在引擎中规范化为 1/Cos。除钉住教材形结果外，
+   用求导恒等独立验证递推终式，不依赖上游积分器是否支持该高次表项。 */
+TestYacas(LastStepExpr(StepsI(Tan(x)^2, x)), Tan(x) - x);
+TestYacas(LastStepExpr(StepsI(Tan(x)^3, x)), Tan(x)^2/2 + Ln(Cos(x)));
+TestYacas(LastStepExpr(StepsI(Sec(x)^3, x)), Tan(x)/(2*Cos(x)) + Ln(1/Cos(x) + Tan(x))/2);
+Verify(FirstRule(StepsI(Tan(x)^4, x)), "tan-power-reduction-rule");
+Verify(FirstRule(StepsI(Sec(x)^4, x)), "sec-power-reduction-rule");
+TestYacas(LastStepExpr(StepsI(Tan(x)^5, x)), Tan(x)^4/4 - Tan(x)^2/2 - Ln(Cos(x)));
+TestYacas(LastStepExpr(StepsI(Sec(x)^5, x)), Tan(x)/(4*Cos(x)^3) + 3*Tan(x)/(8*Cos(x)) + 3*Ln(1/Cos(x) + Tan(x))/8);
+TestYacas(RoundTo(N(Eval(ApplyPure("Subst", {x,1/4,Deriv(x) LastStepExpr(StepsI(Tan(x)^5, x))}))), 8), RoundTo(N(Tan(1/4)^5), 8));
+TestYacas(RoundTo(N(Eval(ApplyPure("Subst", {x,1/4,Deriv(x) LastStepExpr(StepsI(Sec(x)^5, x))}))), 8), RoundTo(N(Sec(1/4)^5), 8));

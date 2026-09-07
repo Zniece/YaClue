@@ -214,6 +214,13 @@ sinh-rule	Cosh(x)	\cosh x	双曲正弦积分: ∫Sinh(x) dx = Cosh(x)
 cosh-rule	Sinh(x)	\sinh x	双曲余弦积分: ∫Cosh(x) dx = Sinh(x)
 ### I Tanh(x) @ x
 tanh-rule	Ln(Cosh(x))	\ln \cosh x	双曲正切积分: ∫Tanh(x) dx = Ln(Cosh(x))
+### I Tan(x)^3 @ x
+tan-power-reduction-rule	(((Tan(x) ^ 2) / 2) - Int(Tan(x)))	\frac{\left( \tan x\right)  ^{2}}{2}  - \mathrm{ Int }\left( \tan x\right) 	正切幂递推: ∫Tan^n(u) du = Tan^(n-1)(u)/(n-1) - ∫Tan^(n-2)(u) du
+tan-rule	(((Tan(x) ^ 2) / 2) - (- Ln(Cos(x))))	\frac{\left( \tan x\right)  ^{2}}{2}  + \ln \cos x	正切积分: ∫Tan(x) dx = -Ln(Cos(x))
+simplify	(((Tan(x) ^ 2) + (2 * Ln(Cos(x)))) / 2)	\frac{\left( \tan x\right)  ^{2} + 2 \ln \cos x}{2} 	化简
+### I Sec(x)^3 @ x
+sec-power-reduction-rule	((Tan(x) / (2 * Cos(x))) + (Int((1 / Cos(x))) / 2))	\frac{\tan x}{2 \cos x}  + \frac{\mathrm{ Int }\left( \frac{1}{\cos x} \right) }{2} 	正割幂递推: ∫Sec^n(u) du = Sec^(n-2)(u)*Tan(u)/(n-1) + ((n-2)/(n-1))*∫Sec^(n-2)(u) du
+sec-rule	((Tan(x) / (2 * Cos(x))) + (Ln(((1 / Cos(x)) + Tan(x))) / 2))	\frac{\tan x}{2 \cos x}  + \frac{\ln \left( \frac{1}{\cos x}  + \tan x\right) }{2} 	正割积分: ∫Sec(u) du = Ln(Sec(u) + Tan(u))
 ### I 2/Sqrt(1 - x^2) @ x
 arcsin-rule	(2 * ArcSin(x))	2 \arcsin x	反正弦积分: ∫c/Sqrt(a^2 - x^2) dx = c*ArcSin(x/a)
 ### I 1/(x^2 - 1) @ x
