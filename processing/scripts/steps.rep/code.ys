@@ -242,6 +242,13 @@ StepsI(expr, var) :=
   steps;
 ];
 
+/* u-sub 比例判定:rest = c*g'(c 为常数)。
+   快路径:未化简的 rest/g' 若已不含 v,直接判定(引擎 prec-100 规则
+   如 x/x -> 1 使常见形态(2x/2x 等)结构可消,零 Simplify 成本);
+   慢路径才动 Simplify(三角/根式混排的 decline 场景)。 */
+SI'PropCk(rest, g, v) :=
+  IsFreeOf(v, rest / (Deriv(v) g)) Or IsFreeOf(v, Simplify(rest / (Deriv(v) g)));
+
 /* 通用 u-substitution 机制:
    integrand = fam(g) * rest,rest = c * g'(常数倍);
    u = g,du = g' dx → ∫c*f(u) du,再回代 u → g。
@@ -510,63 +517,63 @@ SI'Parts(integrand, u, dvf, vval, var) :=
 
 /* ---------- u-substitution:带 rest 因子(∫ fam(g) * rest dx,rest = c*g') ---------- */
 
-10 # SI'Diff(Sin(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(Sin(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(Sin(g) * rest, g, Sin(g), rest, v);
-10 # SI'Diff(Cos(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(Cos(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(Cos(g) * rest, g, Cos(g), rest, v);
-10 # SI'Diff(Exp(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(Exp(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(Exp(g) * rest, g, Exp(g), rest, v);
-10 # SI'Diff(Tan(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(Tan(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(Tan(g) * rest, g, Tan(g), rest, v);
-10 # SI'Diff(Sinh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(Sinh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(Sinh(g) * rest, g, Sinh(g), rest, v);
-10 # SI'Diff(Cosh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(Cosh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(Cosh(g) * rest, g, Cosh(g), rest, v);
-10 # SI'Diff(Tanh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(Tanh(_g) * _rest, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(Tanh(g) * rest, g, Tanh(g), rest, v);
-10 # SI'Diff(_g ^ _n * _rest, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_g ^ _n * _rest, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(g ^ n * rest, g, g ^ n, rest, v);
-10 # SI'Diff(_rest / _g, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest / _g, _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest / g, g, 1 / g, rest, v);
-10 # SI'Diff(_rest / (_g ^ 2 + _d), _v)_(d = 1 And Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest / (_g ^ 2 + _d), _v)_(d = 1 And Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest / (g ^ 2 + d), g, 1 / (g ^ 2 + d), rest, v);
 
 /* ---------- u-substitution:无 rest 因子(∫ fam(g) dx,g' 为常数) ---------- */
 
-10 # SI'Diff(Sin(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+10 # SI'Diff(Sin(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(1, g, v)) <--
   SI'USub(Sin(g), g, Sin(g), 1, v);
-10 # SI'Diff(Cos(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+10 # SI'Diff(Cos(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(1, g, v)) <--
   SI'USub(Cos(g), g, Cos(g), 1, v);
-10 # SI'Diff(Exp(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+10 # SI'Diff(Exp(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(1, g, v)) <--
   SI'USub(Exp(g), g, Exp(g), 1, v);
-10 # SI'Diff(Tan(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+10 # SI'Diff(Tan(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(1, g, v)) <--
   SI'USub(Tan(g), g, Tan(g), 1, v);
-10 # SI'Diff(Sinh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+10 # SI'Diff(Sinh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(1, g, v)) <--
   SI'USub(Sinh(g), g, Sinh(g), 1, v);
-10 # SI'Diff(Cosh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+10 # SI'Diff(Cosh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(1, g, v)) <--
   SI'USub(Cosh(g), g, Cosh(g), 1, v);
-10 # SI'Diff(Tanh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+10 # SI'Diff(Tanh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(1, g, v)) <--
   SI'USub(Tanh(g), g, Tanh(g), 1, v);
-10 # SI'Diff(_g ^ _n, _v)_(IsFreeOf(v, n) And Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(1 / (Deriv(v) g)))) <--
+10 # SI'Diff(_g ^ _n, _v)_(IsFreeOf(v, n) And Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(1, g, v)) <--
   SI'USub(g ^ n, g, g ^ n, 1, v);
 
 /* ---------- u-substitution:反向因子顺序(rest * fam(g),rest = c*g') ---------- */
 
-10 # SI'Diff(_rest * Sin(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest * Sin(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest * Sin(g), g, Sin(g), rest, v);
-10 # SI'Diff(_rest * Cos(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest * Cos(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest * Cos(g), g, Cos(g), rest, v);
-10 # SI'Diff(_rest * Exp(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest * Exp(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest * Exp(g), g, Exp(g), rest, v);
-10 # SI'Diff(_rest * Tan(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest * Tan(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest * Tan(g), g, Tan(g), rest, v);
-10 # SI'Diff(_rest * Sinh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest * Sinh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest * Sinh(g), g, Sinh(g), rest, v);
-10 # SI'Diff(_rest * Cosh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest * Cosh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest * Cosh(g), g, Cosh(g), rest, v);
-10 # SI'Diff(_rest * Tanh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest * Tanh(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest * Tanh(g), g, Tanh(g), rest, v);
-10 # SI'Diff(_rest * _g ^ _n, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest * _g ^ _n, _v)_(Not(g = v) And IsFreeOf(v, n) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   SI'USub(rest * g ^ n, g, g ^ n, rest, v);
 
 
@@ -580,7 +587,7 @@ SI'Parts(integrand, u, dvf, vval, var) :=
 /* 平方根复合:∫rest/Sqrt(g) dv = 2k*Sqrt(g),k = rest/g' 为常数
    (即幂法则 n = -1/2 的复合一步式;∫x/Sqrt(x^2+a^2) 类由此接住,
    引擎对它本无解析路径) */
-10 # SI'Diff(_rest / Sqrt(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And IsFreeOf(v, Simplify(rest / (Deriv(v) g)))) <--
+10 # SI'Diff(_rest / Sqrt(_g), _v)_(Not(g = v) And Not(IsFreeOf(v, g)) And SI'PropCk(rest, g, v)) <--
   {{{"power-rule", "p", rest / Sqrt(g), 2 * (rest / (Deriv(v) g)) * Sqrt(g)}},
    2 * (rest / (Deriv(v) g)) * Sqrt(g)};
 
