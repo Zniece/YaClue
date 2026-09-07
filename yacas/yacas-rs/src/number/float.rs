@@ -297,16 +297,16 @@ impl Float {
         }
     }
 
-    /// Split into (integer-part digits, fraction non-zero?); a nonzero
-    /// tens_exp counts as an integer part.
+    /// Split the absolute value into (integer-part digits, fraction non-zero?).
     fn int_frac(&self) -> (Nat, bool) {
-        if self.tens_exp != 0 || self.scale == 0 {
-            return (self.digits.clone(), false);
+        let effective_exp = self.tens_exp - self.scale as i32;
+        if effective_exp >= 0 {
+            return (self.digits.mul_pow10(effective_exp as u32), false);
         }
-        let p10 = Nat::from_decimal("1").unwrap().mul_pow10(self.scale);
+        let p10 = Nat::from_decimal("1").unwrap().mul_pow10((-effective_exp) as u32);
         match self.digits.divrem(&p10) {
             Some((q, r)) => (q, !r.is_zero()),
-            None => (Nat::zero(), false),
+            None => (Nat::zero(), !self.digits.is_zero()),
         }
     }
 
@@ -816,5 +816,24 @@ mod tests {
         assert_eq!(f("1.5").negate().format(), "-1.5");
         // Derived 1.500 canonicalizes (trailing zeros trimmed).
         assert_eq!(f("1.5").add(&f("0.0"), DEFAULT_PREC).format(), "1.5");
+    }
+
+    #[test]
+    fn floor_and_ceil_respect_decimal_exponents() {
+        let cases = [
+            ("-0.9370247274e-1", "-1", "0"),
+            ("0.9370247274e-1", "0", "1"),
+            ("-12.75", "-13", "-12"),
+            ("12.75", "12", "13"),
+            ("1.25e2", "125", "125"),
+            ("1.25e1", "12", "13"),
+            ("-1.25e1", "-13", "-12"),
+            ("7e3", "7000", "7000"),
+            ("0", "0", "0"),
+        ];
+        for (input, floor, ceil) in cases {
+            assert_eq!(f(input).floor().format(), floor, "floor({input})");
+            assert_eq!(f(input).ceil().format(), ceil, "ceil({input})");
+        }
     }
 }
