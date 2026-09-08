@@ -1,7 +1,7 @@
 //! Bounded numerical initial-value integration for ODEs without a symbolic solution.
 
 use crate::engine::{Engine, EngineError, ErrorResponse, Expr};
-use crate::input::{validate_expression, validate_symbol};
+use crate::input::{parse_expression_tree, validate_expression, validate_symbol};
 use crate::ode::{self, InitialCondition, OdeResult, OdeStatus, MAX_ODE_ORDER};
 use serde::Serialize;
 
@@ -68,12 +68,29 @@ pub enum OdeInitialValueMode {
     Numeric,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OdeFallbackStrategy {
+    ExactFirst,
+    Auto,
+    NumericOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OdeFallbackRoute {
+    SymbolicFirst,
+    NumericGate,
+    NumericOnly,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OdeInitialValueResult {
     pub mode: OdeInitialValueMode,
     pub symbolic: Option<OdeResult>,
     pub numeric: Option<NumericOdeResult>,
     pub symbolic_error: Option<ErrorResponse>,
+    pub route: OdeFallbackRoute,
 }
 
 /// Prefer an analytic solution and use the bounded numerical integrator only
@@ -86,6 +103,56 @@ pub fn solve_with_numeric_fallback(
     initial_conditions: &[InitialCondition<'_>],
     options: NumericOdeOptions,
 ) -> Result<OdeInitialValueResult, EngineError> {
+    solve_with_numeric_fallback_strategy(
+        engine,
+        equation,
+        independent,
+        dependent,
+        initial_conditions,
+        options,
+        OdeFallbackStrategy::Auto,
+    )
+}
+
+pub fn solve_with_numeric_fallback_strategy(
+    engine: &mut dyn Engine,
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+    initial_conditions: &[InitialCondition<'_>],
+    options: NumericOdeOptions,
+    strategy: OdeFallbackStrategy,
+) -> Result<OdeInitialValueResult, EngineError> {
+    validate_expression(equation, "微分方程")?;
+    validate_symbol(independent, "自变量")?;
+    validate_symbol(dependent, "因变量")?;
+    let order = ode::equation_order(equation, dependent)?;
+    let route = match strategy {
+        OdeFallbackStrategy::NumericOnly => Some(OdeFallbackRoute::NumericOnly),
+        OdeFallbackStrategy::Auto
+            if numeric_gate(equation, independent, dependent, initial_conditions, order)? =>
+        {
+            Some(OdeFallbackRoute::NumericGate)
+        }
+        OdeFallbackStrategy::ExactFirst | OdeFallbackStrategy::Auto => None,
+    };
+    if let Some(route) = route {
+        let numeric = solve_initial_value(
+            engine,
+            equation,
+            independent,
+            dependent,
+            initial_conditions,
+            options,
+        )?;
+        return Ok(OdeInitialValueResult {
+            mode: OdeInitialValueMode::Numeric,
+            symbolic: None,
+            numeric: Some(numeric),
+            symbolic_error: None,
+            route,
+        });
+    }
     let symbolic = match ode::solve(engine, equation, independent, dependent, initial_conditions) {
         Ok(symbolic) if symbolic.status == OdeStatus::Solved => {
             return Ok(OdeInitialValueResult {
@@ -93,6 +160,7 @@ pub fn solve_with_numeric_fallback(
                 symbolic: Some(symbolic),
                 numeric: None,
                 symbolic_error: None,
+                route: OdeFallbackRoute::SymbolicFirst,
             });
         }
         Ok(symbolic) => Some(symbolic),
@@ -111,6 +179,7 @@ pub fn solve_with_numeric_fallback(
                 symbolic: None,
                 numeric: Some(numeric),
                 symbolic_error: Some(symbolic_error),
+                route: OdeFallbackRoute::SymbolicFirst,
             });
         }
         Err(error) => return Err(error),
@@ -128,7 +197,79 @@ pub fn solve_with_numeric_fallback(
         symbolic,
         numeric: Some(numeric),
         symbolic_error: None,
+        route: OdeFallbackRoute::SymbolicFirst,
     })
+}
+
+fn numeric_gate(
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+    conditions: &[InitialCondition<'_>],
+    order: u32,
+) -> Result<bool, EngineError> {
+    if order != 1
+        || conditions.len() != 1
+        || conditions[0].derivative_order != 0
+        || conditions[0].point.trim().is_empty()
+    {
+        return Ok(false);
+    }
+    let derivative = format!("{dependent}'");
+    let tree = parse_expression_tree(equation, "微分方程")?;
+    let Expr::Call { head, args } = tree else {
+        return Ok(false);
+    };
+    if !matches!(head.as_str(), "=" | "==") || args.len() != 2 {
+        return Ok(false);
+    }
+    let rhs = if args[0] == Expr::Symbol(derivative.clone()) {
+        &args[1]
+    } else if args[1] == Expr::Symbol(derivative) {
+        &args[0]
+    } else {
+        return Ok(false);
+    };
+    Ok(has_nonlinear_mixed_argument(rhs, independent, dependent))
+}
+
+fn has_nonlinear_mixed_argument(expr: &Expr, independent: &str, dependent: &str) -> bool {
+    let Expr::Call { head, args } = expr else {
+        return false;
+    };
+    if matches!(
+        head.as_str(),
+        "Sin" | "Cos" | "Tan" | "Exp" | "Ln" | "Log" | "Sqrt"
+    ) && args
+        .iter()
+        .any(|arg| has_mixed_product(arg, independent, dependent))
+    {
+        return true;
+    }
+    args.iter()
+        .any(|arg| has_nonlinear_mixed_argument(arg, independent, dependent))
+}
+
+fn has_mixed_product(expr: &Expr, independent: &str, dependent: &str) -> bool {
+    match expr {
+        Expr::Call { head, args } => {
+            (matches!(head.as_str(), "*" | "/")
+                && contains_symbol(expr, independent)
+                && contains_symbol(expr, dependent))
+                || args
+                    .iter()
+                    .any(|arg| has_mixed_product(arg, independent, dependent))
+        }
+        Expr::Number(_) | Expr::Symbol(_) => false,
+    }
+}
+
+fn contains_symbol(expr: &Expr, symbol: &str) -> bool {
+    match expr {
+        Expr::Symbol(value) => value == symbol,
+        Expr::Call { args, .. } => args.iter().any(|arg| contains_symbol(arg, symbol)),
+        Expr::Number(_) => false,
+    }
 }
 
 pub fn solve_initial_value(
@@ -669,6 +810,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(symbolic.mode, OdeInitialValueMode::Symbolic);
+        assert_eq!(symbolic.route, OdeFallbackRoute::SymbolicFirst);
         assert!(symbolic.symbolic.is_some());
         assert!(symbolic.numeric.is_none());
         assert!(symbolic.symbolic_error.is_none());
@@ -690,8 +832,47 @@ mod tests {
         )
         .unwrap();
         assert_eq!(numeric.mode, OdeInitialValueMode::Numeric);
+        assert_eq!(numeric.route, OdeFallbackRoute::NumericGate);
         assert!(numeric.symbolic.is_none());
-        assert!(numeric.symbolic_error.is_some());
+        assert!(numeric.symbolic_error.is_none());
         assert_eq!(numeric.numeric.unwrap().status, NumericOdeStatus::Completed);
+
+        let numeric_only = solve_with_numeric_fallback_strategy(
+            &mut engine,
+            "y'==y",
+            "x",
+            "y",
+            &[InitialCondition {
+                derivative_order: 0,
+                point: "0",
+                value: "1",
+            }],
+            NumericOdeOptions::default(),
+            OdeFallbackStrategy::NumericOnly,
+        )
+        .unwrap();
+        assert_eq!(numeric_only.route, OdeFallbackRoute::NumericOnly);
+        assert!(numeric_only.symbolic.is_none());
+    }
+
+    #[test]
+    fn auto_gate_is_narrow_and_preserves_known_symbolic_families() {
+        let conditions = [InitialCondition {
+            derivative_order: 0,
+            point: "0",
+            value: "1",
+        }];
+        assert!(numeric_gate("y'==Sin(x*y)", "x", "y", &conditions, 1).unwrap());
+        for equation in [
+            "y'==Sin(x)*y",
+            "y'==x*y^2",
+            "y'==Exp(x)*Exp(y)",
+            "y'==Sin(x+y)",
+        ] {
+            assert!(
+                !numeric_gate(equation, "x", "y", &conditions, 1).unwrap(),
+                "{equation}"
+            );
+        }
     }
 }

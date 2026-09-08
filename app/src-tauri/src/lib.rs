@@ -6,7 +6,7 @@ use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
 use processing::numeric::{NumericResult, RootResult, TaylorResult};
 use processing::ode::{InitialCondition, OdeResult, OdeStepResult};
-use processing::ode_numeric::{NumericOdeOptions, OdeInitialValueResult};
+use processing::ode_numeric::{NumericOdeOptions, OdeFallbackStrategy, OdeInitialValueResult};
 use processing::plot::{SampleOptions, SampledPlot};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
@@ -236,6 +236,7 @@ struct NumericOdeOptionsRequest {
     relative_tolerance: Option<f64>,
     max_steps: Option<usize>,
     max_evaluations: Option<usize>,
+    strategy: Option<String>,
 }
 
 #[tauri::command]
@@ -249,6 +250,16 @@ fn solve_ode_with_numeric_fallback(
 ) -> Result<OdeInitialValueResult, ErrorResponse> {
     let conditions = ode_conditions(&initial_conditions);
     let defaults = NumericOdeOptions::default();
+    let strategy = match options.strategy.as_deref().unwrap_or("auto") {
+        "exact_first" => OdeFallbackStrategy::ExactFirst,
+        "auto" => OdeFallbackStrategy::Auto,
+        "numeric_only" => OdeFallbackStrategy::NumericOnly,
+        _ => {
+            return Err(invalid_input(
+                "ODE 兜底策略必须是 exact_first、auto 或 numeric_only",
+            ))
+        }
+    };
     let options = NumericOdeOptions {
         end: options.end,
         initial_step: options.initial_step.unwrap_or(defaults.initial_step),
@@ -262,13 +273,14 @@ fn solve_ode_with_numeric_fallback(
         max_evaluations: options.max_evaluations.unwrap_or(defaults.max_evaluations),
     };
     let mut engine = lock_engine(&engine)?;
-    processing::ode_numeric::solve_with_numeric_fallback(
+    processing::ode_numeric::solve_with_numeric_fallback_strategy(
         &mut *engine,
         &equation,
         &independent,
         &dependent,
         &conditions,
         options,
+        strategy,
     )
     .map_err(message)
 }
