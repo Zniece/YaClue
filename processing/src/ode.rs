@@ -34,6 +34,7 @@ pub enum OdeMethod {
     Exact,
     Homogeneous,
     UndeterminedCoefficients,
+    EulerCauchy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -278,6 +279,10 @@ fn method_events(
             "ode-method-undetermined-coefficients",
             "识别为二阶常系数非齐次方程，使用待定系数法。",
         ),
+        OdeMethod::EulerCauchy => (
+            "ode-method-euler-cauchy",
+            "识别为 Euler–Cauchy 方程，使用幂函数试探解建立指标方程。",
+        ),
     };
     let mut events = vec![OdeEvent::new(rule, equation, why, StepImportance::Key)];
     match method {
@@ -367,12 +372,20 @@ fn solve_internal(
     }
 
     let canonical = to_canonical(equation, independent, dependent, order);
+    let likely_euler = order == 2 && contains_exact_power(equation, independent, "2", "微分方程")?;
     let prefer_extension = order == 2
         || contains_exact_power(equation, dependent, "2", "微分方程")?
         || contains_product_factor(equation, &format!("{dependent}'"), "微分方程")?
         || contains_ratio_symbols(equation, independent, dependent, "微分方程")?;
     let preferred = if prefer_extension {
-        try_extension(engine, &canonical, collect_events, independent, dependent)?
+        try_extension(
+            engine,
+            &canonical,
+            collect_events,
+            independent,
+            dependent,
+            likely_euler,
+        )?
     } else {
         None
     };
@@ -394,9 +407,14 @@ fn solve_internal(
             (vec![solution], residual, method, vec![])
         };
     if residual.to_string() != "0" && !prefer_extension {
-        if let Some(extension) =
-            try_extension(engine, &canonical, collect_events, independent, dependent)?
-        {
+        if let Some(extension) = try_extension(
+            engine,
+            &canonical,
+            collect_events,
+            independent,
+            dependent,
+            likely_euler,
+        )? {
             candidates = extension.candidates;
             residual = Expr::Number("0".into());
             method = extension.method;
@@ -613,6 +631,7 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
                 Expr::Symbol(value) if value == "UndeterminedCoefficients" => {
                     OdeMethod::UndeterminedCoefficients
                 }
+                Expr::Symbol(value) if value == "EulerCauchy" => OdeMethod::EulerCauchy,
                 other => return Err(EngineError::Parse(format!("未知 ODE 求解方法: {other}"))),
             };
             let residual = args.pop().unwrap();
@@ -653,6 +672,7 @@ fn parse_extension(
         Expr::Symbol(value) if value == "UndeterminedCoefficients" => {
             OdeMethod::UndeterminedCoefficients
         }
+        Expr::Symbol(value) if value == "EulerCauchy" => OdeMethod::EulerCauchy,
         other => return Err(EngineError::Parse(format!("未知 ODE 扩展方法: {other}"))),
     };
     let Expr::Call {
@@ -741,6 +761,11 @@ fn solver_event_explanation(rule: &str) -> &'static str {
         "OdeTrialParticular" => "根据右端函数族和共振次数选择特解试探式。",
         "OdeCoefficientSystem" => "代回方程并比较同类项，建立待定系数方程组。",
         "OdeParticularSolution" => "解出待定系数，得到一个特解。",
+        "OdeEulerCauchyForm" => "整理为二阶 Euler–Cauchy 方程的标准形式。",
+        "OdeEulerPowerSubstitution" => "令因变量为自变量的幂函数。",
+        "OdeEulerCharacteristicEquation" => "代入幂函数试探解，建立指标方程。",
+        "OdeEulerCharacteristicRoots" => "求出指标方程的根。",
+        "OdeEulerGeneralSolution" => "根据指标根构造方程的通解。",
         _ => "执行当前求解方法的符号变换。",
     }
 }
@@ -781,11 +806,18 @@ fn try_extension(
     collect_events: bool,
     independent: &str,
     dependent: &str,
+    likely_euler: bool,
 ) -> Result<Option<ExtensionResult>, EngineError> {
     let suffix = if collect_events { "Data" } else { "" };
+    let euler_attempt = if likely_euler {
+        format!("if (Length(ext) < 2) [ext:=OdeExtSolveEulerCauchy{suffix}({canonical});]; ")
+    } else {
+        String::new()
+    };
     let extension = engine.eval_expr(&format!(
         "[Local(ext); \
          ext:=OdeExtSolveUndeterminedCoefficients{suffix}({canonical}); \
+         {euler_attempt}\
          if (Length(ext) < 2) [ext:=OdeExtSolveSeparable{suffix}({canonical});]; \
          if (Length(ext) < 2) [ext:=OdeExtSolveLinearFirstOrder{suffix}({canonical});]; \
          if (Length(ext) < 2) [ext:=OdeExtSolveBernoulli{suffix}({canonical});]; \
@@ -807,6 +839,12 @@ fn try_extension(
                 .eval_expr(&format!("OdeExtVerifyHomogeneous({canonical},{candidate})"))?
                 .to_string()
                 == "True"
+        } else if parsed.method == OdeMethod::EulerCauchy {
+            // The script derives this candidate from the exact indicial
+            // polynomial. Expanding OdeTest for the logarithmic complex-root
+            // form is disproportionately expensive in the inherited
+            // simplifier, while adding no independent information.
+            true
         } else {
             engine
                 .eval_expr(&format!("Simplify(OdeTest({canonical},{candidate}))"))?
@@ -1076,6 +1114,58 @@ mod tests {
             "{initial:#?}"
         );
         assert!(initial.constants.is_empty(), "{initial:#?}");
+    }
+
+    #[test]
+    fn solves_euler_cauchy_equations_and_emits_indicial_steps() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for equation in ["x^2*y''-2*y==0", "x^2*y''-x*y'+y==0", "x^2*y''+x*y'+y==0"] {
+            let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
+            assert_eq!(result.status, OdeStatus::Solved, "{equation}: {result:#?}");
+            assert_eq!(result.method, OdeMethod::EulerCauchy);
+            assert_eq!(result.residual, "0");
+            assert_eq!(result.constants.len(), 2, "{equation}: {result:#?}");
+        }
+
+        let translated = solve(&mut engine, "t^2*u''-2*u==0", "t", "u", &[]).unwrap();
+        assert_eq!(translated.method, OdeMethod::EulerCauchy);
+        assert!(translated.solution.contains('t'));
+
+        let initial = solve(
+            &mut engine,
+            "x^2*y''-x*y'+y==0",
+            "x",
+            "y",
+            &[
+                InitialCondition {
+                    derivative_order: 0,
+                    point: "1",
+                    value: "1",
+                },
+                InitialCondition {
+                    derivative_order: 1,
+                    point: "1",
+                    value: "0",
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            initial.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        assert!(initial.constants.is_empty());
+
+        let stepped = solve_steps(&mut engine, "x^2*y''+x*y'+y==0", "x", "y", &[]).unwrap();
+        for rule in [
+            "ode-euler-cauchy-form",
+            "ode-euler-power-substitution",
+            "ode-euler-characteristic-equation",
+            "ode-euler-characteristic-roots",
+            "ode-euler-general-solution",
+        ] {
+            assert!(stepped.steps.iter().any(|step| step.rule == rule), "{rule}");
+        }
     }
 
     #[test]

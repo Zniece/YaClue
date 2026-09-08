@@ -204,6 +204,9 @@ OdeExtApplyAssignments(_expression, _assignments) <--
     result;
 ];
 
+OdeExtEulerPower(_exponent) <--
+    If(IsInteger(exponent) And exponent < 0, 1/x^(-exponent), x^exponent);
+
 RuleBase("OdeExtExponentialPolynomialParts", {forcing});
 10 # OdeExtExponentialPolynomialParts(Exp(_argument)) _
      (Degree(argument, x) = 1 And Coef(argument, x, 0) = 0) <--
@@ -420,6 +423,72 @@ RuleBase("OdeExtSolveUndeterminedCoefficientsPartsData", {equation, collect});
     ];
 ];
 
+/* Homogeneous second-order Euler-Cauchy equations on x>0. */
+RuleBase("OdeExtSolveEulerCauchy", {equation});
+10 # OdeExtSolveEulerCauchy(_left == _right) <--
+     OdeExtLegacy(OdeExtSolveEulerCauchyPartsData(left == right, False));
+100 # OdeExtSolveEulerCauchy(_equation) <-- {};
+
+RuleBase("OdeExtSolveEulerCauchyData", {equation});
+10 # OdeExtSolveEulerCauchyData(_left == _right) <--
+     OdeExtSolveEulerCauchyPartsData(left == right, True);
+100 # OdeExtSolveEulerCauchyData(_equation) <-- {};
+
+RuleBase("OdeExtSolveEulerCauchyPartsData", {equation, collect});
+10 # OdeExtSolveEulerCauchyPartsData(_left == _right, _collect) <--
+[
+    Local(normal, secondCoefficient, firstCoefficient, c, a, b,
+          remainder, discriminant, alpha, beta, root1, root2,
+          constants, candidate, characteristic, roots, eventData);
+    normal := Expand(left - right);
+    secondCoefficient := Simplify(Coef(normal, y'', 1));
+    firstCoefficient := Simplify(Coef(normal, y', 1));
+    c := Simplify(Coef(normal, y, 1));
+    a := Simplify(secondCoefficient/x^2);
+    b := Simplify(firstCoefficient/x);
+    remainder := Simplify(normal-secondCoefficient*y''-firstCoefficient*y'-c*y);
+    if (a = 0 Or remainder != 0 Or
+        Simplify(secondCoefficient-a*x^2) != 0 Or
+        Simplify(firstCoefficient-b*x) != 0 Or
+        Not(IsFreeOf({x, y, y', y''}, {a, b, c}))) [
+        {};
+    ] else [
+        discriminant := Simplify((b-a)^2-4*a*c);
+        alpha := Simplify((a-b)/(2*a));
+        constants := OdeExtConstantList(2);
+        characteristic := a*m*(m-1)+b*m+c == 0;
+        if (discriminant > 0) [
+            root1 := Simplify((a-b+Sqrt(discriminant))/(2*a));
+            root2 := Simplify((a-b-Sqrt(discriminant))/(2*a));
+            roots := {root1, root2};
+            candidate := constants[1]*OdeExtEulerPower(root1)+
+                         constants[2]*OdeExtEulerPower(root2);
+        ] else if (discriminant = 0) [
+            roots := {alpha, alpha};
+            candidate := x^alpha*(constants[1]+constants[2]*Ln(x));
+        ] else if (discriminant < 0) [
+            beta := Simplify(Sqrt(-discriminant)/(2*a));
+            roots := {alpha+I*beta, alpha-I*beta};
+            candidate := x^alpha*(constants[1]*Cos(beta*Ln(x))+
+                                   constants[2]*Sin(beta*Ln(x)));
+        ] else [
+            candidate := Undefined;
+            roots := {};
+        ];
+        if (candidate = Undefined) [
+            {};
+        ] else [
+            eventData := If(collect,
+              {{OdeEulerCauchyForm, a*x^2*y''+b*x*y'+c*y == 0, 2},
+               {OdeEulerPowerSubstitution, y == x^m, 2},
+               {OdeEulerCharacteristicEquation, characteristic, 2},
+               {OdeEulerCharacteristicRoots, roots, 1},
+               {OdeEulerGeneralSolution, candidate, 2}}, {});
+            {{candidate}, EulerCauchy, eventData};
+        ];
+    ];
+];
+
 /* Exact first-order equations M(x,y)+N(x,y)y'=0.  Keep the potential
    equation implicit: forcing Solve(...,y) here can discard branches. */
 RuleBase("OdeExtSolveExact", {equation});
@@ -624,6 +693,9 @@ RuleBase("OdeExtVerifyHomogeneous", {equation, solution});
 [
     Local(result);
     result := OdeExtSolveUndeterminedCoefficients(equation);
+    if (Length(result) != 2) [
+        result := OdeExtSolveEulerCauchy(equation);
+    ];
     if (Length(result) != 2) [
         result := OdeExtSolveExact(equation);
     ];

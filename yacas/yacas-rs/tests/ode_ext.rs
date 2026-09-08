@@ -172,3 +172,45 @@ fn undetermined_coefficients_handles_closed_forcing_families_and_resonance() {
         "Upstream"
     );
 }
+
+#[test]
+fn euler_cauchy_handles_all_numeric_root_cases() {
+    let mut env = boot();
+    for equation in ["x^2*y''-2*y==0", "x^2*y''-x*y'+y==0", "x^2*y''+x*y'+y==0"] {
+        assert_eq!(
+            run(
+                &mut env,
+                &format!("Length(OdeExtSolveEulerCauchy({equation}))")
+            ),
+            "2",
+            "{equation}"
+        );
+        assert_eq!(
+            run(&mut env, &format!("OdeExtSolveEulerCauchy({equation})[2]")),
+            "EulerCauchy"
+        );
+        assert_eq!(
+            run(
+                &mut env,
+                &format!("Length(OdeExtSolveEulerCauchyData({equation}))")
+            ),
+            "3",
+            "{equation}"
+        );
+        assert_eq!(
+            run(&mut env, &format!("ExtendedOdeSolve({equation})[2]")),
+            "EulerCauchy",
+            "{equation}"
+        );
+    }
+    for equation in ["x*y''+y==0", "x^2*y''+y==x", "x^2*y''+y^2==0"] {
+        assert_eq!(
+            run(
+                &mut env,
+                &format!("Length(OdeExtSolveEulerCauchy({equation}))")
+            ),
+            "0",
+            "{equation}"
+        );
+    }
+}

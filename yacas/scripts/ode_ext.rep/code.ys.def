@@ -13,3 +13,5 @@ OdeExtSolveHomogeneousData
 OdeExtVerifyHomogeneous
 OdeExtSolveUndeterminedCoefficients
 OdeExtSolveUndeterminedCoefficientsData
+OdeExtSolveEulerCauchy
+OdeExtSolveEulerCauchyData
