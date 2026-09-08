@@ -35,6 +35,7 @@ Defun(DefFileList,{}) {
     "numbers.rep/code.ys",
     "numbers.rep/nthroot.ys",
     "odesolver.rep/code.ys",
+    "ode_ext.rep/code.ys",
     "openmath.rep/code.ys",
     "orthopoly.rep/code.ys",
     "padic.rep/code.ys",
@@ -88,4 +89,3 @@ Defun(DefFileList,{}) {
     "univar.rep/sparse.ys",
     "univar.rep/sturm.ys",
 };
-

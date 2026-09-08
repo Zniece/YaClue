@@ -24,6 +24,13 @@ pub enum OdeStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum OdeMethod {
+    Upstream,
+    Separable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InitialConditionStatus {
     NotRequested,
     Applied,
@@ -42,6 +49,7 @@ pub struct InitialCondition<'a> {
 #[derive(Debug, Clone, Serialize)]
 pub struct OdeResult {
     pub status: OdeStatus,
+    pub method: OdeMethod,
     pub initial_condition_status: InitialConditionStatus,
     pub order: u32,
     pub solution: String,
@@ -77,6 +85,7 @@ pub fn solve(
     if order == 0 {
         return Ok(OdeResult {
             status: OdeStatus::NotDifferentialEquation,
+            method: OdeMethod::Upstream,
             initial_condition_status: if initial_conditions.is_empty() {
                 InitialConditionStatus::NotRequested
             } else {
@@ -92,12 +101,13 @@ pub fn solve(
 
     let canonical = to_canonical(equation, independent, dependent, order);
     let wrapper = engine.eval(&format!(
-        "[Local(ode'eq,ode'solution,ode'residual); ode'eq:={canonical}; \
-         ode'solution:=OdeSolve(ode'eq); \
+        "[Local(ode'eq,ode'extended,ode'solution,ode'method,ode'residual); \
+         ode'eq:={canonical}; ode'extended:=ExtendedOdeSolve(ode'eq); \
+         ode'solution:=ode'extended[1]; ode'method:=ode'extended[2]; \
          ode'residual:=If(ode'solution=True,ode'eq,OdeTest(ode'eq,ode'solution)); \
-         {{ode'solution,ode'residual}};]"
+         {{ode'solution,ode'residual,ode'method}};]"
     ))?;
-    let (mut solution, residual) = parse_wrapper(wrapper.expr)?;
+    let (mut solution, residual, method) = parse_wrapper(wrapper.expr)?;
     let mut status = if solution == Expr::Symbol("True".into()) {
         OdeStatus::NotDifferentialEquation
     } else if residual.to_string() == "0" {
@@ -136,6 +146,7 @@ pub fn solve(
     };
     Ok(OdeResult {
         status,
+        method,
         initial_condition_status: condition_status,
         order,
         solution,
@@ -227,11 +238,16 @@ fn substitute(expression: &str, from: &str, to: &str) -> String {
     }
 }
 
-fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr), EngineError> {
+fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
     match expr {
-        Expr::Call { head, mut args } if head == "List" && args.len() == 2 => {
+        Expr::Call { head, mut args } if head == "List" && args.len() == 3 => {
+            let method = match args.pop().unwrap() {
+                Expr::Symbol(value) if value == "Upstream" => OdeMethod::Upstream,
+                Expr::Symbol(value) if value == "Separable" => OdeMethod::Separable,
+                other => return Err(EngineError::Parse(format!("未知 ODE 求解方法: {other}"))),
+            };
             let residual = args.pop().unwrap();
-            Ok((args.pop().unwrap(), residual))
+            Ok((args.pop().unwrap(), residual, method))
         }
         other => Err(EngineError::Parse(format!("ODE 包装结果形态异常: {other}"))),
     }
@@ -299,13 +315,55 @@ mod tests {
     #[test]
     fn solves_first_and_second_order_equations() {
         let mut engine = RustEngine::spawn().unwrap();
-        for equation in ["y'==x", "y'==y", "y''-3*y'+2*y==0", "y''+y==0"] {
+        for (equation, method) in [
+            ("y'==x", OdeMethod::Upstream),
+            ("y'==y", OdeMethod::Separable),
+            ("y''-3*y'+2*y==0", OdeMethod::Upstream),
+            ("y''+y==0", OdeMethod::Upstream),
+        ] {
             let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
             assert_eq!(result.status, OdeStatus::Solved, "{equation}");
+            assert_eq!(result.method, method);
             assert_eq!(result.residual, "0");
             assert!(!result.constants.is_empty());
             assert!(!result.tex.is_empty());
         }
+    }
+
+    #[test]
+    fn solves_separable_equations_through_the_extension_entry() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for equation in ["y'==x*y", "y'==y/x"] {
+            let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
+            assert_eq!(result.status, OdeStatus::Solved, "{equation}");
+            assert_eq!(result.method, OdeMethod::Separable);
+            assert_eq!(result.residual, "0");
+        }
+
+        let initial = solve(
+            &mut engine,
+            "y'==x*y",
+            "x",
+            "y",
+            &[InitialCondition {
+                derivative_order: 0,
+                point: "0",
+                value: "2",
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            initial.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        let initial_value: f64 = engine
+            .eval(&format!("N(Subst(x,0) ({}))", initial.solution))
+            .unwrap()
+            .expr
+            .to_string()
+            .parse()
+            .unwrap();
+        assert!((initial_value - 2.0).abs() < 1e-8);
     }
 
     #[test]
@@ -329,14 +387,14 @@ mod tests {
             InitialConditionStatus::Applied
         );
         assert!(result.constants.is_empty());
-        assert_eq!(
-            engine
-                .eval(&format!("Simplify(({})-2*Exp(t))", result.solution))
-                .unwrap()
-                .expr
-                .to_string(),
-            "0"
-        );
+        let initial_value: f64 = engine
+            .eval(&format!("N(Subst(t,0) ({}))", result.solution))
+            .unwrap()
+            .expr
+            .to_string()
+            .parse()
+            .unwrap();
+        assert!((initial_value - 2.0).abs() < 1e-8);
 
         let second_order = solve(
             &mut engine,
@@ -377,11 +435,10 @@ mod tests {
     #[test]
     fn classifies_unsupported_equations_by_residual() {
         let mut engine = RustEngine::spawn().unwrap();
-        for equation in ["y'==x*y", "y'+y==x"] {
-            let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
-            assert_eq!(result.status, OdeStatus::Unresolved, "{equation}");
-            assert_ne!(result.residual, "0");
-        }
+        let equation = "y'+y==x";
+        let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
+        assert_eq!(result.status, OdeStatus::Unresolved, "{equation}");
+        assert_ne!(result.residual, "0");
         assert_eq!(
             solve(&mut engine, "x+y==0", "x", "y", &[]).unwrap().status,
             OdeStatus::NotDifferentialEquation

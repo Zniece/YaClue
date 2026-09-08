@@ -1,0 +1,58 @@
+/* Additive ODE extensions. The inherited OdeSolve entry point is unchanged. */
+
+RuleBase("OdeExtSeparableParts", {rhs});
+
+10 # OdeExtSeparableParts(_fx * _gy) _
+     (IsFreeOf(y, fx) And IsFreeOf(x, gy) And Not(IsFreeOf(y, gy)) And Degree(gy, y) = 1)
+     <-- {fx, gy};
+11 # OdeExtSeparableParts(_gy * _fx) _
+     (IsFreeOf(x, gy) And Not(IsFreeOf(y, gy)) And Degree(gy, y) = 1 And IsFreeOf(y, fx))
+     <-- {fx, gy};
+12 # OdeExtSeparableParts(_fx / _den) _
+     (IsFreeOf(y, fx) And IsFreeOf(x, den) And Not(IsFreeOf(y, den)) And Degree(den, y) = 1)
+     <-- {fx, 1 / den};
+13 # OdeExtSeparableParts(_num / _den) _
+     (IsFreeOf(x, num) And Not(IsFreeOf(y, num)) And Degree(num, y) = 1 And IsFreeOf(y, den))
+     <-- {1 / den, num};
+20 # OdeExtSeparableParts(_gy) _
+     (IsFreeOf(x, gy) And Not(IsFreeOf(y, gy)) And Degree(gy, y) = 1)
+     <-- {1, gy};
+100 # OdeExtSeparableParts(_rhs) <-- {};
+
+10 # OdeExtSolveSeparable(y' == _rhs) <-- OdeExtSolveSeparableRhs(rhs);
+100 # OdeExtSolveSeparable(_equation) <-- {};
+
+OdeExtSolveSeparableRhs(_rhs) <--
+[
+    Local(parts, leftIntegral, rightIntegral, constant, solutions, candidate);
+    parts := OdeExtSeparableParts(rhs);
+    if (Length(parts) != 2) [
+        {};
+    ] else [
+        leftIntegral := Integrate(y) (1 / parts[2]);
+        rightIntegral := Integrate(x) parts[1];
+        if (Not(IsFreeOf(Integrate, leftIntegral)) Or
+            Not(IsFreeOf(Integrate, rightIntegral))) [
+            {};
+        ] else [
+            constant := UniqueConstant();
+            solutions := Solve(leftIntegral == rightIntegral + constant, y);
+            if (Length(solutions) = 0) [
+                {};
+            ] else [
+                candidate := solutions[1][2];
+                /* The host adapter performs the single authoritative OdeTest.
+                   Repeating it here is expensive and some nonlinear identities
+                   exceed the inherited simplifier's recursion budget. */
+                {candidate, Separable};
+            ];
+        ];
+    ];
+];
+
+ExtendedOdeSolve(_equation) <--
+[
+    Local(result);
+    result := OdeExtSolveSeparable(equation);
+    If(Length(result) = 2, result, {OdeSolve(equation), Upstream});
+];

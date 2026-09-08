@@ -37,8 +37,8 @@ fn init_full_boot_state() {
     let mut env = Environment::new();
     boot_init(&mut env);
     // boot 状态抽查(全部 cyacas 实测 = golden_t5 前部)
-    // 88:steps.rep 剥离至 processing 后,packages.ys 不再登记(2026-09-06)
-    assert_eq!(run(&mut env, "Length(DefFileList())"), "88");
+    // 89: includes the additive ode_ext package; steps.rep remains in processing.
+    assert_eq!(run(&mut env, "Length(DefFileList())"), "89");
     assert_eq!(run(&mut env, "RuleBaseDefined(\"Nth\",2)"), "True");
     assert_eq!(run(&mut env, "Nth({a,b,c},2)"), "b");
     assert_eq!(run(&mut env, "if(True) 11 else 22"), "11");
