@@ -34,6 +34,7 @@ pub enum OdeMethod {
     Exact,
     Homogeneous,
     UndeterminedCoefficients,
+    VariationOfParameters,
     EulerCauchy,
 }
 
@@ -279,6 +280,10 @@ fn method_events(
             "ode-method-undetermined-coefficients",
             "识别为二阶常系数非齐次方程，使用待定系数法。",
         ),
+        OdeMethod::VariationOfParameters => (
+            "ode-method-variation-of-parameters",
+            "识别为二阶线性非齐次方程，使用参数变易法构造特解。",
+        ),
         OdeMethod::EulerCauchy => (
             "ode-method-euler-cauchy",
             "识别为 Euler–Cauchy 方程，使用幂函数试探解建立指标方程。",
@@ -372,7 +377,13 @@ fn solve_internal(
     }
 
     let canonical = to_canonical(equation, independent, dependent, order);
+    let analysis = analyze_expression(equation, "微分方程")?;
     let likely_euler = order == 2 && contains_exact_power(equation, independent, "2", "微分方程")?;
+    let likely_variation = order == 2
+        && analysis
+            .function_heads
+            .iter()
+            .any(|head| matches!(head.as_str(), "/" | "Ln" | "Log" | "Sqrt" | "Abs"));
     let prefer_extension = order == 2
         || contains_exact_power(equation, dependent, "2", "微分方程")?
         || contains_product_factor(equation, &format!("{dependent}'"), "微分方程")?
@@ -385,6 +396,7 @@ fn solve_internal(
             independent,
             dependent,
             likely_euler,
+            likely_variation,
         )?
     } else {
         None
@@ -414,6 +426,7 @@ fn solve_internal(
             independent,
             dependent,
             likely_euler,
+            likely_variation,
         )? {
             candidates = extension.candidates;
             residual = Expr::Number("0".into());
@@ -636,6 +649,9 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
                 Expr::Symbol(value) if value == "UndeterminedCoefficients" => {
                     OdeMethod::UndeterminedCoefficients
                 }
+                Expr::Symbol(value) if value == "VariationOfParameters" => {
+                    OdeMethod::VariationOfParameters
+                }
                 Expr::Symbol(value) if value == "EulerCauchy" => OdeMethod::EulerCauchy,
                 other => return Err(EngineError::Parse(format!("未知 ODE 求解方法: {other}"))),
             };
@@ -677,6 +693,7 @@ fn parse_extension(
         Expr::Symbol(value) if value == "UndeterminedCoefficients" => {
             OdeMethod::UndeterminedCoefficients
         }
+        Expr::Symbol(value) if value == "VariationOfParameters" => OdeMethod::VariationOfParameters,
         Expr::Symbol(value) if value == "EulerCauchy" => OdeMethod::EulerCauchy,
         other => return Err(EngineError::Parse(format!("未知 ODE 扩展方法: {other}"))),
     };
@@ -766,6 +783,11 @@ fn solver_event_explanation(rule: &str) -> &'static str {
         "OdeTrialParticular" => "根据右端函数族和共振次数选择特解试探式。",
         "OdeCoefficientSystem" => "代回方程并比较同类项，建立待定系数方程组。",
         "OdeParticularSolution" => "解出待定系数，得到一个特解。",
+        "OdeVariationStandardForm" => "整理为二阶线性非齐次方程的标准形式。",
+        "OdeVariationFundamentalSolutions" => "求出对应齐次方程的两组线性无关基础解。",
+        "OdeVariationWronskian" => "计算基础解的 Wronskian，确认它们线性无关。",
+        "OdeVariationParameterDerivatives" => "由参数变易公式求两个参数的导数。",
+        "OdeVariationParameterIntegrals" => "积分得到两个变化参数。",
         "OdeEulerCauchyForm" => "整理为二阶 Euler–Cauchy 方程的标准形式。",
         "OdeEulerPowerSubstitution" => "令因变量为自变量的幂函数。",
         "OdeEulerCharacteristicEquation" => "代入幂函数试探解，建立指标方程。",
@@ -812,6 +834,7 @@ fn try_extension(
     independent: &str,
     dependent: &str,
     likely_euler: bool,
+    likely_variation: bool,
 ) -> Result<Option<ExtensionResult>, EngineError> {
     let suffix = if collect_events { "Data" } else { "" };
     let euler_attempt = if likely_euler {
@@ -819,9 +842,17 @@ fn try_extension(
     } else {
         String::new()
     };
+    let variation_attempt = if likely_variation {
+        format!(
+            "if (Length(ext) < 2) [ext:=OdeExtSolveVariationOfParameters{suffix}({canonical});]; "
+        )
+    } else {
+        String::new()
+    };
     let extension = engine.eval_expr(&format!(
         "[Local(ext); \
          ext:=OdeExtSolveUndeterminedCoefficients{suffix}({canonical}); \
+         {variation_attempt}\
          {euler_attempt}\
          if (Length(ext) < 2) [ext:=OdeExtSolveSeparable{suffix}({canonical});]; \
          if (Length(ext) < 2) [ext:=OdeExtSolveLinearFirstOrder{suffix}({canonical});]; \
@@ -844,11 +875,14 @@ fn try_extension(
                 .eval_expr(&format!("OdeExtVerifyHomogeneous({canonical},{candidate})"))?
                 .to_string()
                 == "True"
-        } else if parsed.method == OdeMethod::EulerCauchy {
-            // The script derives this candidate from the exact indicial
-            // polynomial. Expanding OdeTest for the logarithmic complex-root
-            // form is disproportionately expensive in the inherited
-            // simplifier, while adding no independent information.
+        } else if matches!(
+            parsed.method,
+            OdeMethod::EulerCauchy | OdeMethod::VariationOfParameters
+        ) {
+            // These script methods already prove their candidates from the
+            // indicial polynomial or a direct operator residual. Repeating
+            // OdeTest here is disproportionately expensive for their
+            // logarithmic forms and adds no independent information.
             true
         } else {
             engine
@@ -906,20 +940,19 @@ fn apply_initial_conditions(
         }
         return Ok(InitialConditionStatus::Applied);
     }
-    let equations: Vec<String> = conditions
-        .iter()
-        .map(|condition| {
-            let value = if condition.derivative_order == 0 {
-                solution_text.clone()
-            } else {
-                format!("D(x,{}) ({solution_text})", condition.derivative_order)
-            };
-            format!(
-                "Subst(x,{}) ({value})=={}",
-                condition.point, condition.value
-            )
-        })
-        .collect();
+    let mut equations = Vec::with_capacity(conditions.len());
+    for condition in conditions {
+        let value = if condition.derivative_order == 0 {
+            solution_text.clone()
+        } else {
+            format!("D(x,{}) ({solution_text})", condition.derivative_order)
+        };
+        let residual = engine.eval_expr(&format!(
+            "Simplify(Subst(x,{}) ({value})-({}))",
+            condition.point, condition.value
+        ))?;
+        equations.push(format!("{residual}==0"));
+    }
     let equation_refs: Vec<_> = equations.iter().map(String::as_str).collect();
     let constant_refs: Vec<_> = constants.iter().map(String::as_str).collect();
     let solved = equations::solve(engine, &equation_refs, &constant_refs)?;
@@ -1168,6 +1201,59 @@ mod tests {
             "ode-euler-characteristic-equation",
             "ode-euler-characteristic-roots",
             "ode-euler-general-solution",
+        ] {
+            assert!(stepped.steps.iter().any(|step| step.rule == rule), "{rule}");
+        }
+    }
+
+    #[test]
+    fn solves_variation_of_parameters_equations_with_steps_and_initial_values() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for equation in ["y''==1/x", "y''==Ln(x)", "y''-2*y'+y==Exp(x)/x"] {
+            let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
+            assert_eq!(result.status, OdeStatus::Solved, "{equation}: {result:#?}");
+            assert_eq!(result.method, OdeMethod::VariationOfParameters);
+            assert_eq!(result.residual, "0");
+            assert_eq!(result.constants.len(), 2);
+        }
+
+        let translated = solve(&mut engine, "u''==1/t", "t", "u", &[]).unwrap();
+        assert_eq!(translated.method, OdeMethod::VariationOfParameters);
+        assert!(translated.solution.contains('t'));
+
+        let initial = solve(
+            &mut engine,
+            "y''==1/x",
+            "x",
+            "y",
+            &[
+                InitialCondition {
+                    derivative_order: 0,
+                    point: "1",
+                    value: "0",
+                },
+                InitialCondition {
+                    derivative_order: 1,
+                    point: "1",
+                    value: "0",
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            initial.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        assert!(initial.constants.is_empty());
+
+        let stepped = solve_steps(&mut engine, "y''==1/x", "x", "y", &[]).unwrap();
+        for rule in [
+            "ode-variation-standard-form",
+            "ode-variation-fundamental-solutions",
+            "ode-variation-wronskian",
+            "ode-variation-parameter-derivatives",
+            "ode-variation-parameter-integrals",
+            "ode-particular-solution",
         ] {
             assert!(stepped.steps.iter().any(|step| step.rule == rule), "{rule}");
         }

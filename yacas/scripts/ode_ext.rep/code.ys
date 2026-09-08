@@ -423,6 +423,106 @@ RuleBase("OdeExtSolveUndeterminedCoefficientsPartsData", {equation, collect});
     ];
 ];
 
+/* Variation of parameters. Keep basis construction separate so future
+   homogeneous solvers can reuse the same core. */
+OdeExtConstantCoefficientBasis(_a, _b, _c) <--
+[
+    Local(discriminant, root1, root2, alpha, beta);
+    discriminant := Simplify(b^2-4*a*c);
+    if (discriminant > 0) [
+        root1 := Simplify((-b+Sqrt(discriminant))/(2*a));
+        root2 := Simplify((-b-Sqrt(discriminant))/(2*a));
+        {Exp(root1*x), Exp(root2*x)};
+    ] else if (discriminant = 0) [
+        root1 := Simplify(-b/(2*a));
+        {Exp(root1*x), x*Exp(root1*x)};
+    ] else if (discriminant < 0) [
+        alpha := Simplify(-b/(2*a));
+        beta := Simplify(Sqrt(-discriminant)/(2*a));
+        {Exp(alpha*x)*Cos(beta*x), Exp(alpha*x)*Sin(beta*x)};
+    ] else [
+        {};
+    ];
+];
+
+OdeExtVariationFromBasis(_a, _forcing, _basis) <--
+[
+    Local(y1, y2, wronskian, u1Prime, u2Prime, u1, u2, particular);
+    if (Length(basis) != 2) [
+        {};
+    ] else [
+        y1 := basis[1];
+        y2 := basis[2];
+        wronskian := Simplify(y1*OdeExtD1(y2)-OdeExtD1(y1)*y2);
+        if (wronskian = 0) [
+            {};
+        ] else [
+            u1Prime := Simplify(-y2*forcing/(a*wronskian));
+            u2Prime := Simplify(y1*forcing/(a*wronskian));
+            u1 := Integrate(x) u1Prime;
+            u2 := Integrate(x) u2Prime;
+            if (Not(IsFreeOf(Integrate, {u1, u2})) Or
+                Not(IsFreeOf({Undefined, Infinity}, {u1, u2}))) [
+                {};
+            ] else [
+                particular := Simplify(y1*u1+y2*u2);
+                {particular, wronskian, {u1Prime, u2Prime}, {u1, u2}};
+            ];
+        ];
+    ];
+];
+
+RuleBase("OdeExtSolveVariationOfParameters", {equation});
+10 # OdeExtSolveVariationOfParameters(_left == _right) <--
+     OdeExtLegacy(OdeExtSolveVariationOfParametersPartsData(left == right, False));
+100 # OdeExtSolveVariationOfParameters(_equation) <-- {};
+
+RuleBase("OdeExtSolveVariationOfParametersData", {equation});
+10 # OdeExtSolveVariationOfParametersData(_left == _right) <--
+     OdeExtSolveVariationOfParametersPartsData(left == right, True);
+100 # OdeExtSolveVariationOfParametersData(_equation) <-- {};
+
+RuleBase("OdeExtSolveVariationOfParametersPartsData", {equation, collect});
+10 # OdeExtSolveVariationOfParametersPartsData(_left == _right, _collect) <--
+[
+    Local(normal, a, b, c, remainder, forcing, basis, variation,
+          constants, homogeneous, candidate, eventData);
+    normal := Expand(left-right);
+    a := Simplify(Coef(normal, y'', 1));
+    b := Simplify(Coef(normal, y', 1));
+    c := Simplify(Coef(normal, y, 1));
+    remainder := Simplify(normal-a*y''-b*y'-c*y);
+    forcing := Simplify(-remainder);
+    if (a = 0 Or forcing = 0 Or
+        Not(IsFreeOf({x, y, y', y''}, {a, b, c})) Or
+        Not(IsFreeOf({y, y', y''}, forcing))) [
+        {};
+    ] else [
+        basis := OdeExtConstantCoefficientBasis(a, b, c);
+        variation := OdeExtVariationFromBasis(a, forcing, basis);
+        if (Length(variation) != 4) [
+            {};
+        ] else [
+            constants := OdeExtConstantList(2);
+            homogeneous := constants[1]*basis[1]+constants[2]*basis[2];
+            candidate := Simplify(homogeneous+variation[1]);
+            if (Simplify(a*OdeExtD2(candidate)+b*OdeExtD1(candidate)+
+                         c*candidate-forcing) != 0) [
+                {};
+            ] else [
+                eventData := If(collect,
+                  {{OdeVariationStandardForm, a*y''+b*y'+c*y == forcing, 2},
+                   {OdeVariationFundamentalSolutions, basis, 2},
+                   {OdeVariationWronskian, variation[2], 2},
+                   {OdeVariationParameterDerivatives, variation[3], 1},
+                   {OdeVariationParameterIntegrals, variation[4], 1},
+                   {OdeParticularSolution, variation[1], 2}}, {});
+                {{candidate}, VariationOfParameters, eventData};
+            ];
+        ];
+    ];
+];
+
 /* Homogeneous second-order Euler-Cauchy equations on x>0. */
 RuleBase("OdeExtSolveEulerCauchy", {equation});
 10 # OdeExtSolveEulerCauchy(_left == _right) <--
@@ -693,6 +793,9 @@ RuleBase("OdeExtVerifyHomogeneous", {equation, solution});
 [
     Local(result);
     result := OdeExtSolveUndeterminedCoefficients(equation);
+    if (Length(result) != 2) [
+        result := OdeExtSolveVariationOfParameters(equation);
+    ];
     if (Length(result) != 2) [
         result := OdeExtSolveEulerCauchy(equation);
     ];

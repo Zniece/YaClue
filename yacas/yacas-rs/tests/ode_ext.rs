@@ -214,3 +214,36 @@ fn euler_cauchy_handles_all_numeric_root_cases() {
         );
     }
 }
+
+#[test]
+fn variation_of_parameters_handles_integrable_forcing() {
+    let mut env = boot();
+    for equation in ["y''==1/x", "y''==Ln(x)", "y''-2*y'+y==Exp(x)/x"] {
+        assert_eq!(
+            run(
+                &mut env,
+                &format!("Length(OdeExtSolveVariationOfParameters({equation}))")
+            ),
+            "2",
+            "{equation}"
+        );
+        assert_eq!(
+            run(
+                &mut env,
+                &format!("OdeExtSolveVariationOfParameters({equation})[2]")
+            ),
+            "VariationOfParameters",
+            "{equation}"
+        );
+    }
+    for equation in ["y''==0", "x*y''+y==1", "y''+y^2==1", "y''-y==1/x"] {
+        assert_eq!(
+            run(
+                &mut env,
+                &format!("Length(OdeExtSolveVariationOfParameters({equation}))")
+            ),
+            "0",
+            "{equation}"
+        );
+    }
+}
