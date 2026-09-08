@@ -1,8 +1,8 @@
 //! Bounded numerical initial-value integration for ODEs without a symbolic solution.
 
-use crate::engine::{Engine, EngineError, ErrorResponse, Expr};
+use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{validate_expression, validate_symbol};
-use crate::ode::{self, InitialCondition, OdeResult, OdeStatus, MAX_ODE_ORDER};
+use crate::ode::{self, InitialCondition, MAX_ODE_ORDER};
 use serde::Serialize;
 
 pub const MAX_NUMERIC_ODE_STEPS: usize = 20_000;
@@ -59,76 +59,6 @@ pub struct NumericOdeResult {
     pub rejected_steps: usize,
     pub evaluations: usize,
     pub estimated_error: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OdeInitialValueMode {
-    Symbolic,
-    Numeric,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct OdeInitialValueResult {
-    pub mode: OdeInitialValueMode,
-    pub symbolic: Option<OdeResult>,
-    pub numeric: Option<NumericOdeResult>,
-    pub symbolic_error: Option<ErrorResponse>,
-}
-
-/// Prefer an analytic solution and use the bounded numerical integrator only
-/// when the symbolic solver returns an unresolved result.
-pub fn solve_with_numeric_fallback(
-    engine: &mut dyn Engine,
-    equation: &str,
-    independent: &str,
-    dependent: &str,
-    initial_conditions: &[InitialCondition<'_>],
-    options: NumericOdeOptions,
-) -> Result<OdeInitialValueResult, EngineError> {
-    let symbolic = match ode::solve(engine, equation, independent, dependent, initial_conditions) {
-        Ok(symbolic) if symbolic.status == OdeStatus::Solved => {
-            return Ok(OdeInitialValueResult {
-                mode: OdeInitialValueMode::Symbolic,
-                symbolic: Some(symbolic),
-                numeric: None,
-                symbolic_error: None,
-            });
-        }
-        Ok(symbolic) => Some(symbolic),
-        Err(error @ (EngineError::Eval(_) | EngineError::Timeout(_))) => {
-            let symbolic_error = error.response();
-            let numeric = solve_initial_value(
-                engine,
-                equation,
-                independent,
-                dependent,
-                initial_conditions,
-                options,
-            )?;
-            return Ok(OdeInitialValueResult {
-                mode: OdeInitialValueMode::Numeric,
-                symbolic: None,
-                numeric: Some(numeric),
-                symbolic_error: Some(symbolic_error),
-            });
-        }
-        Err(error) => return Err(error),
-    };
-    let numeric = solve_initial_value(
-        engine,
-        equation,
-        independent,
-        dependent,
-        initial_conditions,
-        options,
-    )?;
-    Ok(OdeInitialValueResult {
-        mode: OdeInitialValueMode::Numeric,
-        symbolic,
-        numeric: Some(numeric),
-        symbolic_error: None,
-    })
 }
 
 pub fn solve_initial_value(
@@ -650,48 +580,5 @@ mod tests {
         .unwrap();
         assert_eq!(limited.status, NumericOdeStatus::EvaluationLimit);
         assert_eq!(limited.evaluations, 0);
-    }
-
-    #[test]
-    fn fallback_keeps_symbolic_results_distinct_from_numeric_trajectories() {
-        let mut engine = RustEngine::spawn().unwrap();
-        let symbolic = solve_with_numeric_fallback(
-            &mut engine,
-            "y'==y",
-            "x",
-            "y",
-            &[InitialCondition {
-                derivative_order: 0,
-                point: "0",
-                value: "1",
-            }],
-            NumericOdeOptions::default(),
-        )
-        .unwrap();
-        assert_eq!(symbolic.mode, OdeInitialValueMode::Symbolic);
-        assert!(symbolic.symbolic.is_some());
-        assert!(symbolic.numeric.is_none());
-        assert!(symbolic.symbolic_error.is_none());
-
-        let numeric = solve_with_numeric_fallback(
-            &mut engine,
-            "y'==Sin(x*y)",
-            "x",
-            "y",
-            &[InitialCondition {
-                derivative_order: 0,
-                point: "0",
-                value: "1",
-            }],
-            NumericOdeOptions {
-                end: 0.5,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(numeric.mode, OdeInitialValueMode::Numeric);
-        assert!(numeric.symbolic.is_none());
-        assert!(numeric.symbolic_error.is_some());
-        assert_eq!(numeric.numeric.unwrap().status, NumericOdeStatus::Completed);
     }
 }

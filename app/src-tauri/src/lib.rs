@@ -6,7 +6,7 @@ use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
 use processing::numeric::{NumericResult, RootResult, TaylorResult};
 use processing::ode::{InitialCondition, OdeResult, OdeStepResult};
-use processing::ode_numeric::{NumericOdeOptions, OdeInitialValueResult};
+use processing::ode_numeric::{NumericOdeOptions, NumericOdeResult};
 use processing::plot::{SampleOptions, SampledPlot};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
@@ -239,14 +239,14 @@ struct NumericOdeOptionsRequest {
 }
 
 #[tauri::command]
-fn solve_ode_with_numeric_fallback(
+fn solve_ode_numeric(
     equation: String,
     independent: String,
     dependent: String,
     initial_conditions: Vec<OdeInitialConditionRequest>,
     options: NumericOdeOptionsRequest,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<OdeInitialValueResult, ErrorResponse> {
+) -> Result<NumericOdeResult, ErrorResponse> {
     let conditions = ode_conditions(&initial_conditions);
     let defaults = NumericOdeOptions::default();
     let options = NumericOdeOptions {
@@ -262,7 +262,7 @@ fn solve_ode_with_numeric_fallback(
         max_evaluations: options.max_evaluations.unwrap_or(defaults.max_evaluations),
     };
     let mut engine = lock_engine(&engine)?;
-    processing::ode_numeric::solve_with_numeric_fallback(
+    processing::ode_numeric::solve_initial_value(
         &mut *engine,
         &equation,
         &independent,
@@ -419,7 +419,7 @@ pub fn run() {
             calculate_limit_steps,
             solve_ode,
             solve_ode_steps,
-            solve_ode_with_numeric_fallback,
+            solve_ode_numeric,
             approximate_numeric,
             find_numeric_root,
             calculate_taylor,
