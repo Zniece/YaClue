@@ -564,7 +564,7 @@ fn validate_conditions(
     Ok(())
 }
 
-fn equation_order(equation: &str, dependent: &str) -> Result<u32, EngineError> {
+pub(crate) fn equation_order(equation: &str, dependent: &str) -> Result<u32, EngineError> {
     let symbols = analyze_expression(equation, "微分方程")?.symbols;
     let mut order = 0;
     for symbol in symbols {
@@ -584,7 +584,12 @@ fn contains_dependent(equation: &str, dependent: &str) -> Result<bool, EngineErr
         .any(|symbol| symbol == dependent))
 }
 
-fn to_canonical(equation: &str, independent: &str, dependent: &str, order: u32) -> String {
+pub(crate) fn to_canonical(
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+    order: u32,
+) -> String {
     let mut result = equation.to_string();
     for derivative_order in (0..=order).rev() {
         result = substitute(

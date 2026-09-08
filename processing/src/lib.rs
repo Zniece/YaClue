@@ -13,6 +13,7 @@ pub mod limits;
 pub mod linear_algebra;
 pub mod numeric;
 pub mod ode;
+pub mod ode_numeric;
 pub mod plot;
 pub mod quadrature;
 pub mod steps;

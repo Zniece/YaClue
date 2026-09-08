@@ -6,6 +6,7 @@ use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
 use processing::numeric::{NumericResult, RootResult, TaylorResult};
 use processing::ode::{InitialCondition, OdeResult, OdeStepResult};
+use processing::ode_numeric::{NumericOdeOptions, OdeInitialValueResult};
 use processing::plot::{SampleOptions, SampledPlot};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
@@ -227,6 +228,51 @@ fn solve_ode_steps(
     .map_err(message)
 }
 
+#[derive(Deserialize)]
+struct NumericOdeOptionsRequest {
+    end: f64,
+    initial_step: Option<f64>,
+    absolute_tolerance: Option<f64>,
+    relative_tolerance: Option<f64>,
+    max_steps: Option<usize>,
+    max_evaluations: Option<usize>,
+}
+
+#[tauri::command]
+fn solve_ode_with_numeric_fallback(
+    equation: String,
+    independent: String,
+    dependent: String,
+    initial_conditions: Vec<OdeInitialConditionRequest>,
+    options: NumericOdeOptionsRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<OdeInitialValueResult, ErrorResponse> {
+    let conditions = ode_conditions(&initial_conditions);
+    let defaults = NumericOdeOptions::default();
+    let options = NumericOdeOptions {
+        end: options.end,
+        initial_step: options.initial_step.unwrap_or(defaults.initial_step),
+        absolute_tolerance: options
+            .absolute_tolerance
+            .unwrap_or(defaults.absolute_tolerance),
+        relative_tolerance: options
+            .relative_tolerance
+            .unwrap_or(defaults.relative_tolerance),
+        max_steps: options.max_steps.unwrap_or(defaults.max_steps),
+        max_evaluations: options.max_evaluations.unwrap_or(defaults.max_evaluations),
+    };
+    let mut engine = lock_engine(&engine)?;
+    processing::ode_numeric::solve_with_numeric_fallback(
+        &mut *engine,
+        &equation,
+        &independent,
+        &dependent,
+        &conditions,
+        options,
+    )
+    .map_err(message)
+}
+
 #[tauri::command]
 fn approximate_numeric(
     expr: String,
@@ -373,6 +419,7 @@ pub fn run() {
             calculate_limit_steps,
             solve_ode,
             solve_ode_steps,
+            solve_ode_with_numeric_fallback,
             approximate_numeric,
             find_numeric_root,
             calculate_taylor,
