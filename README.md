@@ -1,5 +1,7 @@
 # YaClue
 
+[![CI](https://github.com/Zniece/YaClue/actions/workflows/ci.yml/badge.svg)](https://github.com/Zniece/YaClue/actions/workflows/ci.yml)
+
 **Yet another clue** — an open-source, local-first, step-by-step math
 application. Enter a problem, watch the solution unfold step by step, and
 inspect *why* each step applies. Every step names the rule that produced it.
@@ -78,8 +80,14 @@ cargo test -p yacas-rs
 cargo test -p processing
 ```
 
+Contributor checks and CI/release-build details are documented in
+[CONTRIBUTING.md](CONTRIBUTING.md). GitHub Actions runs formatting, Clippy,
+workspace tests, and the frontend JavaScript check on every push and pull
+request. A separate manual workflow verifies unsigned three-platform Release
+builds without publishing a GitHub Release.
+
 The engine boots the script library through a `DefaultDirectory` +
-`Load("yacasinit.ys")` sequence (see `processing/src/engine.rs`); the step
+`Load("yacasinit.ys")` sequence (see `processing/src/engine/rust.rs`); the step
 package (`processing/scripts/steps.rep`) is loaded explicitly on top of the
 standard library.
 

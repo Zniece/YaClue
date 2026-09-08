@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "app",
+  "productName": "YaClue",
   "version": "0.1.0",
-  "identifier": "com.cas.stepcalculator",
+  "identifier": "io.github.zniece.yaclue",
   "build": {
     "frontendDist": "../src"
   },
