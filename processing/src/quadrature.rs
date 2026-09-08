@@ -108,7 +108,9 @@ pub fn adaptive_simpson(
                 evaluations: 0,
             });
         }
-        return Err(EngineError::Eval("数值积分上下限必须是有限数".into()));
+        return Err(EngineError::InvalidInput(
+            "数值积分上下限必须是有限数".into(),
+        ));
     }
     if !(options.abs_tol > 0.0
         && options.rel_tol >= 0.0
@@ -116,7 +118,7 @@ pub fn adaptive_simpson(
         && options.rel_tol.is_finite()
         && options.max_evaluations >= 5)
     {
-        return Err(EngineError::Eval("数值积分选项无效".into()));
+        return Err(EngineError::InvalidInput("数值积分选项无效".into()));
     }
 
     let (lo, hi, sign) = if a < b { (a, b, 1.0) } else { (b, a, -1.0) };

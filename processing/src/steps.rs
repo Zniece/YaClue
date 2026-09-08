@@ -154,7 +154,7 @@ pub fn derive_steps_order_with_verbosity(
     validate_expression(expr, "表达式")?;
     validate_symbol(var, "求导变量")?;
     if order == 0 {
-        return Err(EngineError::Eval("求导阶数必须 >= 1".into()));
+        return Err(EngineError::InvalidInput("求导阶数必须 >= 1".into()));
     }
     steps_from_command(
         engine,

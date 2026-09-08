@@ -1,6 +1,6 @@
 use processing::algebra::{TransformKind, TransformResult};
 use processing::assumptions::{AssumptionFact, AssumptionState};
-use processing::engine::{Engine, EngineError, RustEngineProxy};
+use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::equations::SolveResult;
 use processing::limits::{LimitDirection, LimitResult};
 use processing::plot::{SampleOptions, SampledPlot};
@@ -10,20 +10,32 @@ use std::sync::{Mutex, MutexGuard};
 
 fn lock_engine<'a>(
     state: &'a tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<MutexGuard<'a, RustEngineProxy>, String> {
-    state.lock().map_err(|error| error.to_string())
+) -> Result<MutexGuard<'a, RustEngineProxy>, ErrorResponse> {
+    state.lock().map_err(|error| ErrorResponse {
+        code: ErrorCode::Internal,
+        message: format!("引擎状态锁不可用: {error}"),
+        retryable: true,
+    })
 }
 
-fn message(error: EngineError) -> String {
-    error.to_string()
+fn message(error: EngineError) -> ErrorResponse {
+    error.response()
 }
 
-fn parse_verbosity(value: &str) -> Result<StepVerbosity, String> {
+fn invalid_input(message: impl Into<String>) -> ErrorResponse {
+    ErrorResponse {
+        code: ErrorCode::InvalidInput,
+        message: message.into(),
+        retryable: false,
+    }
+}
+
+fn parse_verbosity(value: &str) -> Result<StepVerbosity, ErrorResponse> {
     match value {
         "concise" => Ok(StepVerbosity::Concise),
         "standard" => Ok(StepVerbosity::Standard),
         "detailed" => Ok(StepVerbosity::Detailed),
-        _ => Err(format!("未知步骤粒度: {value}")),
+        _ => Err(invalid_input(format!("未知步骤粒度: {value}"))),
     }
 }
 
@@ -42,7 +54,7 @@ struct StepRequest {
 fn calculate_steps(
     request: StepRequest,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<Vec<Step>, String> {
+) -> Result<Vec<Step>, ErrorResponse> {
     let mut engine = lock_engine(&engine)?;
     let verbosity = parse_verbosity(&request.verbosity)?;
     match request.kind.as_str() {
@@ -67,7 +79,7 @@ fn calculate_steps(
             request.to.as_deref().unwrap_or("1"),
             verbosity,
         ),
-        _ => return Err(format!("未知步骤运算: {}", request.kind)),
+        _ => return Err(invalid_input(format!("未知步骤运算: {}", request.kind))),
     }
     .map_err(message)
 }
@@ -78,14 +90,14 @@ fn transform_expression(
     operation: String,
     variable: String,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<TransformResult, String> {
+) -> Result<TransformResult, ErrorResponse> {
     let kind = match operation.as_str() {
         "simplify" => TransformKind::Simplify,
         "tidy" => TransformKind::Tidy,
         "expand" => TransformKind::Expand,
         "factor" => TransformKind::Factor,
         "apart" => TransformKind::Apart,
-        _ => return Err(format!("未知代数变换: {operation}")),
+        _ => return Err(invalid_input(format!("未知代数变换: {operation}"))),
     };
     let mut engine = lock_engine(&engine)?;
     processing::algebra::transform(
@@ -102,7 +114,7 @@ fn solve_equations(
     equations: Vec<String>,
     variables: Vec<String>,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<SolveResult, String> {
+) -> Result<SolveResult, ErrorResponse> {
     let equations: Vec<_> = equations.iter().map(String::as_str).collect();
     let variables: Vec<_> = variables.iter().map(String::as_str).collect();
     let mut engine = lock_engine(&engine)?;
@@ -116,12 +128,12 @@ fn calculate_limit(
     at: String,
     direction: String,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<LimitResult, String> {
+) -> Result<LimitResult, ErrorResponse> {
     let direction = match direction.as_str() {
         "both" => LimitDirection::Both,
         "left" => LimitDirection::Left,
         "right" => LimitDirection::Right,
-        _ => return Err(format!("未知极限方向: {direction}")),
+        _ => return Err(invalid_input(format!("未知极限方向: {direction}"))),
     };
     let mut engine = lock_engine(&engine)?;
     processing::limits::limit(&mut *engine, &expr, &variable, &at, direction).map_err(message)
@@ -134,7 +146,7 @@ fn sample_plot(
     min: f64,
     max: f64,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<SampledPlot, String> {
+) -> Result<SampledPlot, ErrorResponse> {
     let mut engine = lock_engine(&engine)?;
     processing::plot::sample(
         &mut *engine,
@@ -146,14 +158,14 @@ fn sample_plot(
     .map_err(message)
 }
 
-fn parse_assumption_fact(value: &str) -> Result<AssumptionFact, String> {
+fn parse_assumption_fact(value: &str) -> Result<AssumptionFact, ErrorResponse> {
     match value {
         "real" => Ok(AssumptionFact::Real),
         "integer" => Ok(AssumptionFact::Integer),
         "positive" => Ok(AssumptionFact::Positive),
         "negative" => Ok(AssumptionFact::Negative),
         "non_zero" => Ok(AssumptionFact::NonZero),
-        _ => Err(format!("未知假设性质: {value}")),
+        _ => Err(invalid_input(format!("未知假设性质: {value}"))),
     }
 }
 
@@ -162,14 +174,16 @@ fn set_assumption(
     symbol: String,
     fact: String,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<AssumptionState, String> {
+) -> Result<AssumptionState, ErrorResponse> {
     let mut engine = lock_engine(&engine)?;
     processing::assumptions::assume(&mut *engine, &symbol, parse_assumption_fact(&fact)?)
         .map_err(message)
 }
 
 #[tauri::command]
-fn clear_assumptions(engine: tauri::State<'_, Mutex<RustEngineProxy>>) -> Result<(), String> {
+fn clear_assumptions(
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<(), ErrorResponse> {
     let mut engine = lock_engine(&engine)?;
     processing::assumptions::clear_assumptions(&mut *engine).map_err(message)
 }
@@ -184,7 +198,7 @@ struct RawResult {
 fn evaluate(
     expr: String,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
-) -> Result<RawResult, String> {
+) -> Result<RawResult, ErrorResponse> {
     let mut engine = lock_engine(&engine)?;
     let result = engine.eval(&expr).map_err(message)?;
     Ok(RawResult {

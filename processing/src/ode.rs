@@ -62,14 +62,14 @@ pub fn solve(
     validate_symbol(independent, "自变量")?;
     validate_symbol(dependent, "因变量")?;
     if independent == dependent {
-        return Err(EngineError::Eval("自变量和因变量不能相同".into()));
+        return Err(EngineError::InvalidInput("自变量和因变量不能相同".into()));
     }
     let order = equation_order(equation, dependent)?;
     if order == 0 && !contains_dependent(equation, dependent)? {
-        return Err(EngineError::Eval("方程不包含指定因变量".into()));
+        return Err(EngineError::InvalidInput("方程不包含指定因变量".into()));
     }
     if order > MAX_ODE_ORDER {
-        return Err(EngineError::Eval(format!(
+        return Err(EngineError::InvalidInput(format!(
             "当前 ODE 求解器最高支持 {MAX_ODE_ORDER} 阶方程"
         )));
     }
@@ -150,7 +150,7 @@ fn validate_conditions(
     equation_order: u32,
 ) -> Result<(), EngineError> {
     if !conditions.is_empty() && conditions.len() != equation_order as usize {
-        return Err(EngineError::Eval(format!(
+        return Err(EngineError::InvalidInput(format!(
             "{equation_order} 阶方程需要 {equation_order} 个初值条件"
         )));
     }
@@ -158,7 +158,9 @@ fn validate_conditions(
         validate_expression(condition.point, "初值点")?;
         validate_expression(condition.value, "初值")?;
         if condition.derivative_order >= equation_order.max(1) {
-            return Err(EngineError::Eval("初值导数阶数必须低于方程阶数".into()));
+            return Err(EngineError::InvalidInput(
+                "初值导数阶数必须低于方程阶数".into(),
+            ));
         }
     }
     let mut keys: Vec<_> = conditions
@@ -168,7 +170,7 @@ fn validate_conditions(
     keys.sort_unstable();
     keys.dedup();
     if keys.len() != conditions.len() {
-        return Err(EngineError::Eval("初值条件不能重复".into()));
+        return Err(EngineError::InvalidInput("初值条件不能重复".into()));
     }
     Ok(())
 }

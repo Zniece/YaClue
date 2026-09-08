@@ -345,3 +345,44 @@ fn engine_recovers_after_timeout() {
     let r = engine.eval("D(x) Sin(x)^2").expect("重启后应恢复");
     assert!(r.tex.contains("\\cos"), "TeX 异常: {}", r.tex);
 }
+
+#[test]
+fn errors_have_stable_codes_and_retry_policy() {
+    for (error, code, retryable) in [
+        (
+            EngineError::InvalidInput("bad input".into()),
+            ErrorCode::InvalidInput,
+            false,
+        ),
+        (
+            EngineError::Eval("failed".into()),
+            ErrorCode::EvaluationFailed,
+            false,
+        ),
+        (
+            EngineError::Timeout("slow".into()),
+            ErrorCode::Timeout,
+            true,
+        ),
+        (
+            EngineError::Spawn("offline".into()),
+            ErrorCode::EngineUnavailable,
+            true,
+        ),
+        (
+            EngineError::Io("closed".into()),
+            ErrorCode::EngineUnavailable,
+            true,
+        ),
+        (
+            EngineError::Parse("bad output".into()),
+            ErrorCode::Internal,
+            false,
+        ),
+    ] {
+        let response = error.response();
+        assert_eq!(response.code, code);
+        assert_eq!(response.retryable, retryable);
+        assert!(!response.message.is_empty());
+    }
+}

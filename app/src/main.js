@@ -62,7 +62,16 @@ function resetOutput() {
 }
 
 function showError(error) {
-  errorEl.textContent = typeof error === "string" ? error : JSON.stringify(error);
+  if (error && typeof error === "object" && error.message) {
+    const suffix = error.code === "timeout"
+      ? "（计算超时，可以重试）"
+      : error.retryable
+        ? "（可以重试）"
+        : "";
+    errorEl.textContent = `${error.message}${suffix}`;
+  } else {
+    errorEl.textContent = typeof error === "string" ? error : JSON.stringify(error);
+  }
   errorEl.hidden = false;
 }
 

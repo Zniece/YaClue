@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,6 +165,8 @@ pub struct EvalResult {
 
 #[derive(Debug)]
 pub enum EngineError {
+    /// Request syntax, arguments or product-level resource bounds are invalid.
+    InvalidInput(String),
     Spawn(String),
     Io(String),
     /// yacas 报告的命令错误(原始输出)
@@ -174,9 +177,51 @@ pub enum EngineError {
     Timeout(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    InvalidInput,
+    EvaluationFailed,
+    Timeout,
+    EngineUnavailable,
+    Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ErrorResponse {
+    pub code: ErrorCode,
+    pub message: String,
+    pub retryable: bool,
+}
+
+impl EngineError {
+    pub fn code(&self) -> ErrorCode {
+        match self {
+            Self::InvalidInput(_) => ErrorCode::InvalidInput,
+            Self::Eval(_) => ErrorCode::EvaluationFailed,
+            Self::Timeout(_) => ErrorCode::Timeout,
+            Self::Spawn(_) | Self::Io(_) => ErrorCode::EngineUnavailable,
+            Self::Parse(_) => ErrorCode::Internal,
+        }
+    }
+
+    pub fn retryable(&self) -> bool {
+        matches!(self, Self::Timeout(_) | Self::Spawn(_) | Self::Io(_))
+    }
+
+    pub fn response(&self) -> ErrorResponse {
+        ErrorResponse {
+            code: self.code(),
+            message: self.to_string(),
+            retryable: self.retryable(),
+        }
+    }
+}
+
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            EngineError::InvalidInput(m) => write!(f, "输入错误: {m}"),
             EngineError::Spawn(m) => write!(f, "引擎启动失败: {m}"),
             EngineError::Io(m) => write!(f, "引擎 I/O 错误: {m}"),
             EngineError::Eval(m) => write!(f, "命令错误: {m}"),

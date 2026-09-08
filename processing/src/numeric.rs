@@ -77,11 +77,13 @@ pub fn find_root(
     validate_expression(expression, "求根表达式")?;
     validate_symbol(variable, "求根变量")?;
     if !initial.is_finite() || !accuracy.is_finite() || accuracy <= 0.0 {
-        return Err(EngineError::Eval("初值必须有限，精度必须为有限正数".into()));
+        return Err(EngineError::InvalidInput(
+            "初值必须有限，精度必须为有限正数".into(),
+        ));
     }
     let command = if let Some((min, max)) = bounds {
         if !min.is_finite() || !max.is_finite() || min >= max || initial <= min || initial >= max {
-            return Err(EngineError::Eval(
+            return Err(EngineError::InvalidInput(
                 "求根区间必须有限且递增，初值必须位于区间内部".into(),
             ));
         }
@@ -119,7 +121,7 @@ pub fn taylor(
     validate_expression(point, "展开点")?;
     validate_symbol(variable, "展开变量")?;
     if degree > MAX_TAYLOR_DEGREE {
-        return Err(EngineError::Eval(format!(
+        return Err(EngineError::InvalidInput(format!(
             "Taylor 阶数不能超过 {MAX_TAYLOR_DEGREE}"
         )));
     }
@@ -139,7 +141,7 @@ fn validate_precision(precision_digits: u32) -> Result<(), EngineError> {
     if (1..=MAX_PRECISION_DIGITS).contains(&precision_digits) {
         Ok(())
     } else {
-        Err(EngineError::Eval(format!(
+        Err(EngineError::InvalidInput(format!(
             "数值精度必须在 1..={MAX_PRECISION_DIGITS} 位之间"
         )))
     }

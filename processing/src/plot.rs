@@ -70,12 +70,12 @@ pub fn sample(
 ) -> Result<SampledPlot, crate::engine::EngineError> {
     let (a, b) = range;
     if !(a.is_finite() && b.is_finite() && b > a) {
-        return Err(crate::engine::EngineError::Eval(format!(
+        return Err(crate::engine::EngineError::InvalidInput(format!(
             "invalid range ({a}, {b})"
         )));
     }
     if options.points < 2 {
-        return Err(crate::engine::EngineError::Eval(
+        return Err(crate::engine::EngineError::InvalidInput(
             "points must be >= 2".into(),
         ));
     }

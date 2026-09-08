@@ -25,8 +25,8 @@ pub fn analyze_expression(input: &str, label: &str) -> Result<ExpressionAnalysis
         yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
     });
     let tree = tree
-        .map_err(|error| EngineError::Eval(format!("{label}语法错误: {error:?}")))?
-        .ok_or_else(|| EngineError::Eval(format!("{label}为空")))?;
+        .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
+        .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
 
     let mut symbols = BTreeSet::new();
     let mut function_heads = BTreeSet::new();
@@ -48,7 +48,7 @@ pub fn validate_symbol(symbol: &str, label: &str) -> Result<(), EngineError> {
     if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         || !chars.all(|c| c.is_ascii_alphanumeric() || c == '\'')
     {
-        return Err(EngineError::Eval(format!("无效{label}: {symbol}")));
+        return Err(EngineError::InvalidInput(format!("无效{label}: {symbol}")));
     }
     Ok(())
 }
@@ -67,7 +67,9 @@ fn validate_safe_text(input: &str, label: &str) -> Result<(), EngineError> {
             .chars()
             .any(|character| matches!(character, ';' | '\n' | '\r' | ':' | '"'))
     {
-        return Err(EngineError::Eval(format!("{label}为空或包含不允许的字符")));
+        return Err(EngineError::InvalidInput(format!(
+            "{label}为空或包含不允许的字符"
+        )));
     }
     Ok(())
 }

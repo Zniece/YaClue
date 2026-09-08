@@ -5,7 +5,7 @@ mod proxy;
 mod repl;
 mod rust;
 
-pub use model::{Engine, EngineError, EvalResult, Expr};
+pub use model::{Engine, EngineError, ErrorCode, ErrorResponse, EvalResult, Expr};
 pub use proxy::RustEngineProxy;
 pub use repl::{cpp_reference_available, ReplEngine};
 pub use rust::RustEngine;

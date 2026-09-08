@@ -48,13 +48,15 @@ pub fn transform(
     let command = match kind {
         TransformKind::Apart => {
             let variable =
-                variable.ok_or_else(|| EngineError::Eval("Apart 需要指定变量".into()))?;
+                variable.ok_or_else(|| EngineError::InvalidInput("Apart 需要指定变量".into()))?;
             validate_symbol(variable, "变量")?;
             format!("Apart({input},{variable})")
         }
         _ => {
             if variable.is_some() {
-                return Err(EngineError::Eval(format!("{operation} 不接受变量参数")));
+                return Err(EngineError::InvalidInput(format!(
+                    "{operation} 不接受变量参数"
+                )));
             }
             format!("{operation}({input})")
         }

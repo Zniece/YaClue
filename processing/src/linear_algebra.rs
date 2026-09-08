@@ -57,7 +57,7 @@ pub fn compute(
         MatrixOperation::Add | MatrixOperation::Multiply | MatrixOperation::Solve
     );
     if binary != right.is_some() {
-        return Err(EngineError::Eval(if binary {
+        return Err(EngineError::InvalidInput(if binary {
             format!("{} 需要右操作数", operation.name())
         } else {
             format!("{} 不接受右操作数", operation.name())

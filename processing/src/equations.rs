@@ -57,7 +57,7 @@ pub fn solve(
     variables: &[&str],
 ) -> Result<SolveResult, EngineError> {
     if equations.is_empty() {
-        return Err(EngineError::Eval("至少需要一个方程".into()));
+        return Err(EngineError::InvalidInput("至少需要一个方程".into()));
     }
     for equation in equations {
         validate_expression(equation, "方程")?;
@@ -71,7 +71,7 @@ pub fn solve(
     let variables = if variables.is_empty() {
         inferred = infer_variables(equations)?;
         if inferred.is_empty() {
-            return Err(EngineError::Eval("方程中没有可求解变量".into()));
+            return Err(EngineError::InvalidInput("方程中没有可求解变量".into()));
         }
         inferred.iter().map(String::as_str).collect::<Vec<_>>()
     } else {
@@ -84,7 +84,7 @@ pub fn solve(
     unique.sort_unstable();
     unique.dedup();
     if unique.len() != variables.len() {
-        return Err(EngineError::Eval("求解变量不能重复".into()));
+        return Err(EngineError::InvalidInput("求解变量不能重复".into()));
     }
 
     let scalar = equations.len() == 1 && variables.len() == 1;
@@ -105,7 +105,9 @@ pub fn solve(
     let wrapper = engine.eval(&command)?.expr;
     let (raw_expr, failed, type_error) = parse_wrapper(wrapper)?;
     if type_error {
-        return Err(EngineError::Eval("Solve 拒绝了求解变量或参数类型".into()));
+        return Err(EngineError::InvalidInput(
+            "Solve 拒绝了求解变量或参数类型".into(),
+        ));
     }
     let raw = raw_expr.to_string();
     let tex = engine
