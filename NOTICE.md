@@ -20,6 +20,15 @@ Yacas sources can be consulted
 (<https://github.com/grzegorzmazur/yacas>), which are not distributed
 with this repository.
 
+## Documentation lineage
+
+`docs/yacas-language/` adapts the upstream Yacas manuals, and
+`docs/yacas-language-zh/` contains maintained translations and project
+documentation derived from that material. Both documentation trees are
+distributed under the GNU Free Documentation License 1.1. The complete
+license text and historical credits are retained in
+`docs/yacas-language/license.md` and `docs/yacas-language/credits.md`.
+
 ## Frontend
 
 - The app uses Tauri (MIT OR Apache-2.0) and KaTeX (MIT) via npm/cargo

@@ -21,6 +21,7 @@ yacas/                The CAS (yacas-rs), laid out like its upstream
 processing/           YaClue's logic layer: engine traits, step generation,
                       plotting support
 app/                  YaClue's GUI shell (Tauri + KaTeX)
+docs/                 English and Chinese Yacas scripting language documentation
 ```
 
 The kernel (`yacas/`) is self-contained and could be used by any application;
@@ -34,6 +35,7 @@ YaClue is the first one.
 | `yacas/yacas-rs/` | MIT |
 | `processing/` | MIT |
 | `app/` | MIT |
+| `docs/yacas-language/`, `docs/yacas-language-zh/` | GFDL-1.1 (adapted Yacas documentation, project additions, and translations) |
 
 Red lines kept by design:
 
