@@ -22,6 +22,26 @@ impl Assumption {
             _ => None,
         }
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Real => "Real",
+            Self::Integer => "Integer",
+            Self::Positive => "Positive",
+            Self::Negative => "Negative",
+            Self::NonZero => "NonZero",
+        }
+    }
+
+    fn sort_key(self) -> u8 {
+        match self {
+            Self::Real => 0,
+            Self::Integer => 1,
+            Self::Positive => 2,
+            Self::Negative => 3,
+            Self::NonZero => 4,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +97,20 @@ impl AssumptionContext {
     pub fn clear(&mut self) {
         self.facts.clear();
     }
+
+    pub fn all(&self) -> Vec<(String, Assumption)> {
+        let mut facts: Vec<_> = self
+            .facts
+            .iter()
+            .flat_map(|(symbol, facts)| facts.iter().map(|fact| (symbol.clone(), *fact)))
+            .collect();
+        facts.sort_by(|(left_symbol, left_fact), (right_symbol, right_fact)| {
+            left_symbol
+                .cmp(right_symbol)
+                .then_with(|| left_fact.sort_key().cmp(&right_fact.sort_key()))
+        });
+        facts
+    }
 }
 
 #[cfg(test)]
@@ -111,13 +145,20 @@ mod tests {
     fn language_commands_are_environment_local() {
         let mut first = Environment::new();
         let mut second = Environment::new();
+        assert_eq!(run(&mut first, "ListAssumptions()"), "{}");
         assert_eq!(run(&mut first, "Assume(n,Integer)"), "True");
         assert_eq!(run(&mut first, "Assume(n,Positive)"), "True");
+        assert_eq!(run(&mut first, "Assume(x,Negative)"), "True");
+        assert_eq!(
+            run(&mut first, "ListAssumptions()"),
+            "{{n,Real},{n,Integer},{n,Positive},{n,NonZero},{x,Real},{x,Negative},{x,NonZero}}"
+        );
         assert_eq!(run(&mut first, "IsAssumed(n,Real)"), "True");
         assert_eq!(run(&mut first, "Set(n,2)"), "2");
         assert_eq!(run(&mut first, "IsAssumed(n,Positive)"), "True");
         assert_eq!(run(&mut second, "IsAssumed(n,Integer)"), "False");
         assert_eq!(run(&mut first, "ClearAssumptions()"), "True");
+        assert_eq!(run(&mut first, "ListAssumptions()"), "{}");
         assert_eq!(run(&mut first, "IsAssumed(n,Integer)"), "False");
     }
 

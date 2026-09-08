@@ -182,6 +182,28 @@ pub fn cmd_clear_assumptions(
     Ok(env.true_atom())
 }
 
+pub fn cmd_list_assumptions(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
+    if arity_of(inner) != 0 {
+        return Err(YacasError::WrongNumberOfArgs);
+    }
+    let entries = env.assumptions.all();
+    let facts = entries
+        .into_iter()
+        .map(|(symbol, fact)| {
+            let pair = vec![
+                ObjectKind::Atom(env.symtab.look_up("List")),
+                ObjectKind::Atom(env.symtab.look_up(&symbol)),
+                ObjectKind::Atom(env.symtab.look_up(fact.name())),
+            ];
+            ObjectKind::Sublist(crate::value::build_list(pair).expect("assumption pair"))
+        })
+        .collect();
+    Ok(super::containers::list_of(facts, env))
+}
+
 pub fn cmd_push_assumptions(
     env: &mut Environment,
     inner: &Rc<LispObject>,

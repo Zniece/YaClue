@@ -1,6 +1,6 @@
 //! Product-facing access to an engine session's symbolic assumptions.
 
-use crate::engine::{Engine, EngineError};
+use crate::engine::{Engine, EngineError, Expr};
 use crate::input::validate_symbol;
 use serde::Serialize;
 
@@ -22,6 +22,17 @@ impl AssumptionFact {
             Self::Positive => "Positive",
             Self::Negative => "Negative",
             Self::NonZero => "NonZero",
+        }
+    }
+
+    fn from_engine_name(name: &str) -> Option<Self> {
+        match name {
+            "Real" => Some(Self::Real),
+            "Integer" => Some(Self::Integer),
+            "Positive" => Some(Self::Positive),
+            "Negative" => Some(Self::Negative),
+            "NonZero" => Some(Self::NonZero),
+            _ => None,
         }
     }
 }
@@ -74,6 +85,39 @@ pub fn clear_assumptions(engine: &mut dyn Engine) -> Result<(), EngineError> {
     Ok(())
 }
 
+pub fn list_assumptions(engine: &mut dyn Engine) -> Result<Vec<AssumptionState>, EngineError> {
+    let Expr::Call { head, args } = engine.eval_expr("ListAssumptions()")? else {
+        return Err(EngineError::Parse("假设列表不是 List".into()));
+    };
+    if head != "List" {
+        return Err(EngineError::Parse("假设列表不是 List".into()));
+    }
+    args.into_iter()
+        .map(|entry| {
+            let Expr::Call { head, args } = entry else {
+                return Err(EngineError::Parse("假设条目不是 List".into()));
+            };
+            if head != "List" || args.len() != 2 {
+                return Err(EngineError::Parse("假设条目格式无效".into()));
+            }
+            let symbol = match &args[0] {
+                Expr::Symbol(symbol) => symbol.clone(),
+                _ => return Err(EngineError::Parse("假设符号无效".into())),
+            };
+            let fact = match &args[1] {
+                Expr::Symbol(name) => AssumptionFact::from_engine_name(name),
+                _ => None,
+            }
+            .ok_or_else(|| EngineError::Parse("假设性质无效".into()))?;
+            Ok(AssumptionState {
+                symbol,
+                fact,
+                active: true,
+            })
+        })
+        .collect()
+}
+
 pub fn with_assumptions<T>(
     engine: &mut dyn Engine,
     assumptions: &[AssumptionSpec],
@@ -104,6 +148,26 @@ mod tests {
     fn assumptions_drive_simplification_and_can_be_cleared() {
         let mut engine = RustEngine::spawn().unwrap();
         assume(&mut engine, "x", AssumptionFact::Positive).unwrap();
+        assert_eq!(
+            list_assumptions(&mut engine).unwrap(),
+            vec![
+                AssumptionState {
+                    symbol: "x".into(),
+                    fact: AssumptionFact::Real,
+                    active: true
+                },
+                AssumptionState {
+                    symbol: "x".into(),
+                    fact: AssumptionFact::Positive,
+                    active: true
+                },
+                AssumptionState {
+                    symbol: "x".into(),
+                    fact: AssumptionFact::NonZero,
+                    active: true
+                },
+            ]
+        );
         assert!(is_assumed(&mut engine, "x", AssumptionFact::Real).unwrap());
         assert_eq!(
             transform(&mut engine, "Sqrt(x^2)", TransformKind::Simplify, None)
@@ -119,6 +183,7 @@ mod tests {
         );
 
         clear_assumptions(&mut engine).unwrap();
+        assert!(list_assumptions(&mut engine).unwrap().is_empty());
         assert!(!is_assumed(&mut engine, "x", AssumptionFact::Positive).unwrap());
         assert_eq!(
             transform(&mut engine, "Sqrt(x^2)", TransformKind::Simplify, None)

@@ -386,6 +386,14 @@ fn clear_assumptions(
     processing::assumptions::clear_assumptions(&mut *engine).map_err(message)
 }
 
+#[tauri::command]
+fn get_assumptions(
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<Vec<AssumptionState>, ErrorResponse> {
+    let mut engine = lock_engine(&engine)?;
+    processing::assumptions::list_assumptions(&mut *engine).map_err(message)
+}
+
 #[derive(Serialize)]
 struct RawResult {
     expression: String,
@@ -427,6 +435,7 @@ pub fn run() {
             sample_plot,
             set_assumption,
             clear_assumptions,
+            get_assumptions,
             evaluate,
         ])
         .run(tauri::generate_context!())

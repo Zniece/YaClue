@@ -31,6 +31,7 @@
               <option value="limit_steps">极限分步</option>
               <option value="ode">常微分方程</option>
               <option value="ode_steps">常微分方程分步</option>
+              <option value="ode_numeric">常微分方程数值解</option>
               <option value="approximate">任意精度近似</option>
               <option value="root">数值求根</option>
               <option value="taylor">Taylor 多项式</option>
@@ -67,10 +68,14 @@
               <option value="right">右侧</option>
             </select>
           </label>
-          <label data-for="ode ode_steps">因变量<input id="dependent" value="y" /></label>
-          <label data-for="ode ode_steps" class="wide">初值条件
+          <label data-for="ode ode_steps ode_numeric">因变量<input id="dependent" value="y" /></label>
+          <label data-for="ode ode_steps ode_numeric" class="wide">初值条件
             <input id="ode-conditions" placeholder="阶数,点,值；如 0,0,1" />
           </label>
+          <label data-for="ode_numeric">积分终点<input id="ode-end" type="number" step="any" value="1" /></label>
+          <label data-for="ode_numeric">初始步长<input id="ode-step" type="number" step="any" value="0.01" /></label>
+          <label data-for="ode_numeric">绝对容差<input id="ode-absolute-tolerance" type="number" step="any" value="1e-9" /></label>
+          <label data-for="ode_numeric">相对容差<input id="ode-relative-tolerance" type="number" step="any" value="1e-7" /></label>
           <label data-for="approximate">精度位数<input id="precision" type="number" min="1" max="1000" value="30" /></label>
           <label data-for="root">初值<input id="root-initial" type="number" step="any" value="1" /></label>
           <label data-for="root">误差<input id="root-accuracy" type="number" step="any" value="0.00000001" /></label>

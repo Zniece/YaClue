@@ -25,6 +25,7 @@ const MODES = {
   limit_steps: { title: "极限表达式", help: "展示连续洛必达、乘积/差/幂型不定式变换和参数条件。", example: "(1-Cos(x))/x^2" },
   ode: { title: "常微分方程", help: "自变量使用上方输入，另行指定因变量；初值格式为 阶数,点,值。", example: "y'==(x+y)/x" },
   ode_steps: { title: "常微分方程", help: "展示求解器实际产生的标准形、代换、积分因子和验算事件。", example: "y'+y==x" },
+  ode_numeric: { title: "常微分方程初值问题", help: "使用自适应数值积分；初值数量需要与方程阶数一致。", example: "y'+y==x" },
   approximate: { title: "数值表达式", help: "按指定十进制精度近似，最高 1000 位。", example: "Pi" },
   root: { title: "等于零的表达式", help: "Newton 数值求根；区间上下界可同时留空。", example: "Cos(x)-x" },
   taylor: { title: "待展开表达式", help: "生成指定点和次数的 Taylor 多项式。", example: "Sin(x)" },
@@ -47,8 +48,9 @@ function updateMode(setExample = true) {
   if (setExample) {
     exprEl.value = MODES[mode].example;
     variableEl.value = mode === "equation" ? "" : "x";
-    if (mode === "ode" || mode === "ode_steps") {
+    if (["ode", "ode_steps", "ode_numeric"].includes(mode)) {
       $("#dependent").value = "y";
+      if (mode === "ode_numeric") $("#ode-conditions").value = "0,0,1";
     }
   }
 }
@@ -197,6 +199,22 @@ function renderPlot(result) {
   summary("采样完成", "", [`${result.points.length} 个点`, `${result.breaks.length} 个断点`]);
 }
 
+function renderNumericOdePlot(result) {
+  renderPlot({
+    points: result.points.map((point) => ({ x: point.independent, y: point.state[0] })),
+    breaks: [],
+  });
+  summaryEl.innerHTML = "";
+  summary("数值 ODE 结果", "", [
+    `状态：${result.status}`,
+    `阶数：${result.order}`,
+    `接受 ${result.accepted_steps} 步`,
+    `拒绝 ${result.rejected_steps} 步`,
+    `${result.evaluations} 次求值`,
+    `估计误差：${result.estimated_error}`,
+  ]);
+}
+
 async function calculate() {
   const expr = exprEl.value.trim();
   if (!expr) return;
@@ -269,6 +287,23 @@ async function calculate() {
         summary("ODE 结果", result.tex, [`状态：${result.status}`, `方法：${result.method}`, `${result.solutions.length} 个分支`]);
       }
       showStructured(result);
+    } else if (mode === "ode_numeric") {
+      result = await invoke("solve_ode_numeric", {
+        equation: expr,
+        independent: variable,
+        dependent: $("#dependent").value.trim(),
+        initialConditions: parseOdeConditions($("#ode-conditions").value),
+        options: {
+          end: Number($("#ode-end").value),
+          initialStep: optionalNumber("#ode-step"),
+          absoluteTolerance: optionalNumber("#ode-absolute-tolerance"),
+          relativeTolerance: optionalNumber("#ode-relative-tolerance"),
+          maxSteps: null,
+          maxEvaluations: null,
+        },
+      });
+      renderNumericOdePlot(result);
+      showStructured(result);
     } else if (mode === "approximate") {
       result = await invoke("approximate_numeric", { expr, precisionDigits: Number($("#precision").value) });
       summary("数值近似", result.tex, [`类型：${result.kind}`, `精度：${result.precision_digits} 位`]);
@@ -311,6 +346,7 @@ async function calculate() {
       result = await invoke("evaluate", { expr });
       summary("求值结果", result.tex, [result.expression]);
       showStructured(result);
+      await refreshAssumptions();
     }
   } catch (error) {
     showError(error);
@@ -335,12 +371,18 @@ function renderAssumptions() {
   });
 }
 
+async function refreshAssumptions() {
+  const states = await invoke("get_assumptions");
+  assumptions.clear();
+  states.forEach((state) => assumptions.set(`${state.symbol}:${state.fact}`, state));
+  renderAssumptions();
+}
+
 async function addAssumption() {
   try {
     const symbol = $("#assumption-symbol").value.trim();
-    const result = await invoke("set_assumption", { symbol, fact: $("#assumption-fact").value });
-    assumptions.set(`${result.symbol}:${result.fact}`, result);
-    renderAssumptions();
+    await invoke("set_assumption", { symbol, fact: $("#assumption-fact").value });
+    await refreshAssumptions();
   } catch (error) {
     resetOutput();
     showError(error);
@@ -350,8 +392,7 @@ async function addAssumption() {
 async function clearAssumptions() {
   try {
     await invoke("clear_assumptions");
-    assumptions.clear();
-    renderAssumptions();
+    await refreshAssumptions();
   } catch (error) {
     resetOutput();
     showError(error);
@@ -366,3 +407,4 @@ exprEl.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate();
 });
 updateMode(false);
+refreshAssumptions().catch(showError);

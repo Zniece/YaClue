@@ -91,7 +91,8 @@ pub use predicates::{
     cmd_assume, cmd_clear_assumptions, cmd_is_assumed, cmd_is_assumed_value, cmd_is_atom,
     cmd_is_function, cmd_is_integer, cmd_is_list, cmd_is_negative_integer,
     cmd_is_non_negative_integer, cmd_is_non_positive_integer, cmd_is_number,
-    cmd_is_positive_integer, cmd_is_string, cmd_pop_assumptions, cmd_push_assumptions,
+    cmd_is_positive_integer, cmd_is_string, cmd_list_assumptions, cmd_pop_assumptions,
+    cmd_push_assumptions,
 };
 pub use rules::{
     cmd_def_load, cmd_def_macro_rule_base, cmd_def_macro_rule_base_listed, cmd_hold_arg,
@@ -515,6 +516,7 @@ pub fn register_core_commands(env: &mut Environment) {
     add(env, "IsAssumed", cmd_is_assumed);
     add(env, "IsAssumedValue", cmd_is_assumed_value);
     add(env, "ClearAssumptions", cmd_clear_assumptions);
+    add(env, "ListAssumptions", cmd_list_assumptions);
     add(env, "PushAssumptions", cmd_push_assumptions);
     add(env, "PopAssumptions", cmd_pop_assumptions);
     add(env, "IsList", cmd_is_list);
