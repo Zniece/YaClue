@@ -386,3 +386,21 @@ fn errors_have_stable_codes_and_retry_policy() {
         assert!(!response.message.is_empty());
     }
 }
+
+#[test]
+fn runtime_local_symbols_do_not_accumulate_between_requests() {
+    let mut engine = RustEngine::spawn().unwrap();
+    let expression = "Simplify(2*x*y+3+(x^2+4*y)*y')";
+
+    // The first request may retain bindings required by a newly lazy-loaded
+    // script. Once loaded, runtime hygienic symbols must remain request-local.
+    engine.eval_expr(expression).unwrap();
+    engine.eval_expr(expression).unwrap();
+    let globals = engine.env.globals.len();
+    let symbols = engine.env.symtab.len();
+    for _ in 0..3 {
+        engine.eval_expr(expression).unwrap();
+        assert_eq!(engine.env.globals.len(), globals);
+        assert_eq!(engine.env.symtab.len(), symbols);
+    }
+}

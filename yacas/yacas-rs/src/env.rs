@@ -562,6 +562,18 @@ impl Environment {
         self.last_unique_id
     }
 
+    /// Remove runtime `LocalSymbols` slots created after a host request began.
+    /// Script loading stays outside this lifecycle because definitions may
+    /// retain generated bindings.
+    pub fn clear_unique_globals_since(&mut self, first_id: u32) {
+        self.globals.retain(|name, _| {
+            name.strip_prefix("UniqueSymbol")
+                .and_then(|suffix| suffix.parse::<u32>().ok())
+                .is_none_or(|id| id <= first_id)
+        });
+        self.symtab.garbage_collect();
+    }
+
     /// Look up a user function by name and arity (`None` if absent).
     pub fn user_func(
         &self,

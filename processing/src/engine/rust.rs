@@ -58,6 +58,8 @@ impl RustEngine {
         command: &str,
         timeout: Duration,
     ) -> Result<EvalResult, EngineError> {
+        let first_unique_id = self.env.last_unique_id;
+        let loaded_files = loaded_def_file_count(&self.env);
         self.env.set_eval_timeout(Some(timeout));
         let response = (|| {
             let result =
@@ -78,6 +80,9 @@ impl RustEngine {
         // spent converting the result after the last evaluator clock sample.
         let expired = self.deadline_expired();
         self.env.set_eval_timeout(None);
+        if loaded_def_file_count(&self.env) == loaded_files {
+            self.env.clear_unique_globals_since(first_unique_id);
+        }
         if response.is_ok() && expired {
             Err(EngineError::Timeout("求值或 TeX 生成超过时限".into()))
         } else {
@@ -90,6 +95,8 @@ impl RustEngine {
         command: &str,
         timeout: Duration,
     ) -> Result<Expr, EngineError> {
+        let first_unique_id = self.env.last_unique_id;
+        let loaded_files = loaded_def_file_count(&self.env);
         self.env.set_eval_timeout(Some(timeout));
         let response = (|| {
             let result = eval_cmd(&mut self.env, command)
@@ -98,6 +105,9 @@ impl RustEngine {
         })();
         let expired = self.deadline_expired();
         self.env.set_eval_timeout(None);
+        if loaded_def_file_count(&self.env) == loaded_files {
+            self.env.clear_unique_globals_since(first_unique_id);
+        }
         if response.is_ok() && expired {
             Err(EngineError::Timeout("求值或结构化输出超过时限".into()))
         } else {
@@ -110,6 +120,8 @@ impl RustEngine {
         expressions: &[String],
         timeout: Duration,
     ) -> Result<Vec<String>, EngineError> {
+        let first_unique_id = self.env.last_unique_id;
+        let loaded_files = loaded_def_file_count(&self.env);
         self.env.set_eval_timeout(Some(timeout));
         let response: Result<Vec<String>, EngineError> = expressions
             .iter()
@@ -125,6 +137,9 @@ impl RustEngine {
             .collect();
         let expired = self.deadline_expired();
         self.env.set_eval_timeout(None);
+        if loaded_def_file_count(&self.env) == loaded_files {
+            self.env.clear_unique_globals_since(first_unique_id);
+        }
         if response.is_ok() && expired {
             Err(EngineError::Timeout("批量求值或 TeX 生成超过时限".into()))
         } else {
@@ -145,6 +160,14 @@ impl RustEngine {
             EngineError::Eval(format!("{stage}: {error:?}"))
         }
     }
+}
+
+fn loaded_def_file_count(env: &yacas_rs::env::Environment) -> usize {
+    env.def_files
+        .map
+        .values()
+        .filter(|file| file.is_loaded)
+        .count()
 }
 
 fn unquote_printed(printed: &str) -> String {
