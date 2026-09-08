@@ -10,6 +10,7 @@ pub mod engine;
 pub mod equations;
 pub mod input;
 pub mod limits;
+pub mod linear_algebra;
 pub mod numeric;
 pub mod plot;
 pub mod quadrature;
