@@ -106,6 +106,13 @@ pub fn limit_steps_with_verbosity(
     if head != "List" || args.is_empty() {
         return Err(EngineError::Parse("极限步骤事件形态异常".into()));
     }
+    let final_node = match args[0].to_string().as_str() {
+        "Direct" | "LHopital" if args.len() == 3 => &args[2],
+        "Transform" if args.len() == 6 => &args[5],
+        _ => &args[0],
+    };
+    let (final_value_node, final_conditions) = unpack_conditional(final_node.clone())?;
+    let final_value_override = final_value_node.to_string();
 
     let direction_suffix = match direction {
         LimitDirection::Both => "",
@@ -134,7 +141,7 @@ pub fn limit_steps_with_verbosity(
     match args[0].to_string().as_str() {
         "Direct" if args.len() == 3 => {
             let substituted = args[1].to_string();
-            let final_value = args[2].to_string();
+            let final_value = final_value_override.clone();
             let tex = engine
                 .render_tex_batch(&[substituted.clone(), final_value.clone()])?
                 .into_iter()
@@ -157,43 +164,143 @@ pub fn limit_steps_with_verbosity(
                 });
             }
         }
-        "LHopital" if args.len() == 5 => {
-            let numerator = args[1].to_string();
-            let denominator = args[2].to_string();
-            let derivative = args[3].to_string();
-            let final_value = args[4].to_string();
-            let show_indeterminate = verbosity != StepVerbosity::Concise;
-            let expressions = if show_indeterminate {
-                vec![
-                    numerator.clone(),
-                    denominator.clone(),
-                    derivative.clone(),
-                    final_value.clone(),
-                ]
-            } else {
-                vec![derivative.clone(), final_value.clone()]
+        "LHopital" if args.len() == 3 => {
+            let Expr::Call {
+                head: event_head,
+                args: event_args,
+            } = &args[1]
+            else {
+                return Err(EngineError::Parse("洛必达事件链不是列表".into()));
             };
+            if event_head != "List" || event_args.is_empty() {
+                return Err(EngineError::Parse("洛必达事件链为空".into()));
+            }
+            let mut events = Vec::with_capacity(event_args.len());
+            for event in event_args {
+                let Expr::Call { head, args: values } = event else {
+                    return Err(EngineError::Parse("洛必达事件不是列表".into()));
+                };
+                if head != "List" || values.len() != 3 {
+                    return Err(EngineError::Parse("洛必达事件形态异常".into()));
+                }
+                events.push((
+                    values[0].to_string(),
+                    values[1].to_string(),
+                    values[2].to_string(),
+                ));
+            }
+            let final_value = final_value_override.clone();
+            let show_indeterminate = verbosity != StepVerbosity::Concise;
+            let mut expressions =
+                Vec::with_capacity(events.len() * if show_indeterminate { 3 } else { 1 } + 1);
+            for (numerator, denominator, derivative) in &events {
+                if show_indeterminate {
+                    expressions.push(numerator.clone());
+                    expressions.push(denominator.clone());
+                }
+                expressions.push(derivative.clone());
+            }
+            expressions.push(final_value.clone());
+            let tex = engine
+                .render_tex_batch(&expressions)?
+                .into_iter()
+                .map(|tex| strip_tex_delimiters(&tex))
+                .collect::<Vec<_>>();
+            let mut tex_index = 0;
+            let event_count = events.len();
+            for (index, (numerator, denominator, derivative)) in events.into_iter().enumerate() {
+                if show_indeterminate {
+                    steps.push(Step {
+                        rule: "limit-indeterminate-form".into(),
+                        expr: format!("{numerator}/{denominator}"),
+                        why: format!("代入后分子与分母分别趋于 {numerator} 和 {denominator}"),
+                        tex: format!("\\frac{{{}}}{{{}}}", tex[tex_index], tex[tex_index + 1]),
+                        importance: StepImportance::Normal,
+                    });
+                    tex_index += 2;
+                }
+                steps.push(Step {
+                    rule: "limit-lhopital".into(),
+                    expr: derivative,
+                    why: if event_count == 1 {
+                        "应用洛必达法则，分别对分子和分母求导".into()
+                    } else {
+                        format!("第 {} 次应用洛必达法则", index + 1)
+                    },
+                    tex: tex[tex_index].clone(),
+                    importance: StepImportance::Key,
+                });
+                tex_index += 1;
+            }
+            steps.push(Step {
+                rule: "limit-result".into(),
+                expr: final_value,
+                why: "计算变换后的极限".into(),
+                tex: tex[tex_index].clone(),
+                importance: StepImportance::Key,
+            });
+        }
+        "Transform" if args.len() == 6 => {
+            let kind = args[1].to_string();
+            let left_limit = args[2].to_string();
+            let right_limit = args[3].to_string();
+            let transformed = args[4].to_string();
+            let final_value = final_value_override.clone();
+            let show_indeterminate = verbosity != StepVerbosity::Concise;
+            let mut expressions = if show_indeterminate {
+                vec![left_limit.clone(), right_limit.clone()]
+            } else {
+                vec![]
+            };
+            expressions.push(transformed.clone());
+            expressions.push(final_value.clone());
             let tex = engine
                 .render_tex_batch(&expressions)?
                 .into_iter()
                 .map(|tex| strip_tex_delimiters(&tex))
                 .collect::<Vec<_>>();
             let offset = if show_indeterminate {
+                let (operator, symbol) = match kind.as_str() {
+                    "Product" => ("*", "\\cdot"),
+                    "Difference" => ("-", "-"),
+                    "Power" => ("^", "^"),
+                    _ => return Err(EngineError::Parse(format!("未知极限变换类型: {kind}"))),
+                };
+                let form_tex = if kind == "Power" {
+                    format!("{{{}}}^{{{}}}", tex[0], tex[1])
+                } else {
+                    format!("{} {} {}", tex[0], symbol, tex[1])
+                };
                 steps.push(Step {
                     rule: "limit-indeterminate-form".into(),
-                    expr: format!("{numerator}/{denominator}"),
-                    why: format!("代入后分子与分母分别趋于 {numerator} 和 {denominator}"),
-                    tex: format!("\\frac{{{}}}{{{}}}", tex[0], tex[1]),
+                    expr: format!("{left_limit}{operator}{right_limit}"),
+                    why: format!("代入后得到 {left_limit} 与 {right_limit} 构成的不定式"),
+                    tex: form_tex,
                     importance: StepImportance::Normal,
                 });
                 2
             } else {
                 0
             };
+            let (rule, why) = match kind.as_str() {
+                "Product" => (
+                    "limit-transform-product",
+                    "将乘积型不定式改写为商式，再计算其极限",
+                ),
+                "Difference" => (
+                    "limit-transform-difference",
+                    "提取一个发散因子，将无穷差改写为可计算的形式",
+                ),
+                "Power" => (
+                    "limit-transform-power",
+                    "取对数，将幂型不定式化为指数中的乘积极限",
+                ),
+                _ => return Err(EngineError::Parse(format!("未知极限变换类型: {kind}"))),
+            };
             steps.push(Step {
-                rule: "limit-lhopital".into(),
-                expr: derivative,
-                why: "应用洛必达法则，分别对分子和分母求导".into(),
+                rule: rule.into(),
+                expr: transformed,
+                why: why.into(),
                 tex: tex[offset].clone(),
                 importance: StepImportance::Key,
             });
@@ -208,7 +315,63 @@ pub fn limit_steps_with_verbosity(
         method => return Err(EngineError::Parse(format!("未知极限步骤方法: {method}"))),
     }
 
+    if let Some(condition) = final_conditions.first() {
+        let condition_expr = format_condition_expression(condition);
+        let condition_tex = strip_tex_delimiters(
+            &engine
+                .render_tex_batch(std::slice::from_ref(&condition_expr))?
+                .remove(0),
+        );
+        let insert_at = steps.len().saturating_sub(1);
+        steps.insert(
+            insert_at,
+            Step {
+                rule: "limit-condition".into(),
+                expr: condition_expr,
+                why: "在此参数条件下采用对应的极限分支".into(),
+                tex: condition_tex,
+                importance: StepImportance::Normal,
+            },
+        );
+    }
+
     Ok(steps)
+}
+
+fn format_condition_expression(condition: &LimitCondition) -> String {
+    match condition {
+        LimitCondition::Property { expression, fact } => {
+            format!("ConditionProperty({expression},{fact})")
+        }
+        LimitCondition::Relation {
+            left,
+            relation,
+            right,
+        } => {
+            let operator = match relation {
+                Relation::Equal => "==",
+                Relation::GreaterThan => ">",
+                Relation::LessThan => "<",
+            };
+            format!("{left}{operator}{right}")
+        }
+        LimitCondition::All { conditions } => format!(
+            "ConditionAnd({})",
+            conditions
+                .iter()
+                .map(format_condition_expression)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        LimitCondition::Any { conditions } => format!(
+            "ConditionOr({})",
+            conditions
+                .iter()
+                .map(format_condition_expression)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
 }
 
 pub fn limit(
@@ -394,6 +557,63 @@ mod tests {
     }
 
     #[test]
+    fn explains_repeated_lhopital_without_restarting_the_limit() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let steps = limit_steps(
+            &mut engine,
+            "(1-Cos(x))/x^2",
+            "x",
+            "0",
+            LimitDirection::Both,
+        )
+        .unwrap();
+        let lhopital = steps
+            .iter()
+            .filter(|step| step.rule == "limit-lhopital")
+            .collect::<Vec<_>>();
+        assert_eq!(lhopital.len(), 2);
+        assert_eq!(lhopital[0].why, "第 1 次应用洛必达法则");
+        assert_eq!(lhopital[1].why, "第 2 次应用洛必达法则");
+        assert_eq!(steps.last().unwrap().rule, "limit-result");
+        assert_eq!(steps.last().unwrap().expr, "(1 / 2)");
+    }
+
+    #[test]
+    fn explains_product_difference_and_power_indeterminate_forms() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (expression, at, direction, rule, expected) in [
+            (
+                "x*Ln(x)",
+                "0",
+                LimitDirection::Right,
+                "limit-transform-product",
+                "0",
+            ),
+            (
+                "1/(1-x)-1/(1-x^2)",
+                "1",
+                LimitDirection::Left,
+                "limit-transform-difference",
+                "Infinity",
+            ),
+            (
+                "(1+1/x)^x",
+                "Infinity",
+                LimitDirection::Both,
+                "limit-transform-power",
+                "Exp(1)",
+            ),
+        ] {
+            let steps = limit_steps(&mut engine, expression, "x", at, direction)
+                .unwrap_or_else(|error| panic!("{expression}: {error}"));
+            assert!(steps.iter().any(|step| step.rule == rule), "{expression}");
+            assert_eq!(steps.last().unwrap().rule, "limit-result");
+            assert_eq!(steps.last().unwrap().expr, expected, "{expression}");
+            assert!(steps.iter().all(|step| !step.tex.is_empty()));
+        }
+    }
+
+    #[test]
     fn supports_infinity_and_recognizes_unresolved_results() {
         let mut engine = RustEngine::spawn().unwrap();
         let infinity = limit(
@@ -457,6 +677,26 @@ mod tests {
                 right: "0".into(),
             }
         );
+    }
+
+    #[test]
+    fn limit_steps_show_the_parameter_condition_used_by_the_solver() {
+        let mut engine = RustEngine::spawn().unwrap();
+        engine.eval("Assume(n,Positive)").unwrap();
+        let steps = limit_steps(
+            &mut engine,
+            "x^n/Ln(x)",
+            "x",
+            "Infinity",
+            LimitDirection::Both,
+        )
+        .unwrap();
+        let condition = steps
+            .iter()
+            .find(|step| step.rule == "limit-condition")
+            .unwrap_or_else(|| panic!("steps: {steps:#?}"));
+        assert_eq!(condition.expr, "n>0");
+        assert_eq!(steps.last().unwrap().expr, "Infinity");
     }
 
     #[test]

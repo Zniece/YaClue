@@ -928,7 +928,8 @@ StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var), "i");
    复用 Lim 的求值与洛必达条件，不建立第二套极限求解器。返回值只描述
    processing 渲染步骤所需的中间事实：
    {Direct, 代入值, 终值} 或
-   {LHopital, 分子极限, 分母极限, 导数商, 终值}。 */
+   {LHopital, {{分子极限,分母极限,导数商},...}, 终值}。
+   洛必达链设硬上限，避免不收敛的符号变换占满请求时限。 */
 
 StepsL'Lim(_expr, _var, _at, _dir) <--
     If(dir = Both,
@@ -938,21 +939,104 @@ StepsL'Lim(_expr, _var, _at, _dir) <--
 StepsL'Data(_expr, _var, _at, _dir) <--
 [
   Local(parts, numerator, denominator, numeratorLimit, denominatorLimit,
-        derivativeQuotient, final, substituted, indeterminate);
-  if (Type(expr) = "/") [
+        derivativeQuotient, final, substituted, indeterminate, events, rounds,
+        left, right, leftLimit, rightLimit, transformed, innerLimit);
+  if (Type(expr) = "/" And at = Infinity And
+      Type(Listify(expr)[2]) = "^" And Listify(expr)[3] = Ln(var)) [
+    substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+    final := StepsL'Lim(expr, var, at, dir);
+    {Direct, substituted, final};
+  ] else if (Type(expr) = "/") [
     parts := Listify(expr);
     numerator := parts[2];
     denominator := parts[3];
-    numeratorLimit := StepsL'Lim(numerator, var, at, dir);
-    denominatorLimit := StepsL'Lim(denominator, var, at, dir);
+    events := {};
+    rounds := 0;
+    indeterminate := True;
+    While(indeterminate And rounds < 8) [
+      numeratorLimit := StepsL'Lim(numerator, var, at, dir);
+      denominatorLimit := StepsL'Lim(denominator, var, at, dir);
+      indeterminate :=
+        Limit'IsIndeterminateQuotient(numeratorLimit, denominatorLimit);
+      if (indeterminate) [
+        numerator := ApplyPure("D", {var, numerator});
+        denominator := ApplyPure("D", {var, denominator});
+        derivativeQuotient := Simplify(numerator / denominator);
+        DestructiveAppend(events,
+                          {numeratorLimit, denominatorLimit, derivativeQuotient});
+        rounds++;
+      ];
+    ];
+    if (Length(events) > 0) [
+      final := StepsL'Lim(Simplify(numerator / denominator), var, at, dir);
+      {LHopital, events, final};
+    ] else [
+      substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+      final := StepsL'Lim(expr, var, at, dir);
+      {Direct, substituted, final};
+    ];
+  ] else if (Type(expr) = "*") [
+    parts := Listify(expr);
+    left := parts[2];
+    right := parts[3];
+    leftLimit := StepsL'Lim(left, var, at, dir);
+    rightLimit := StepsL'Lim(right, var, at, dir);
+    if ((IsZero(leftLimit) And IsInfinity(rightLimit)) Or
+        (IsInfinity(leftLimit) And IsZero(rightLimit))) [
+      transformed := If(IsZero(leftLimit),
+                        Simplify(ApplyPure("D", {var, right}) /
+                                 ApplyPure("D", {var, 1/left})),
+                        Simplify(ApplyPure("D", {var, left}) /
+                                 ApplyPure("D", {var, 1/right})));
+      final := StepsL'Lim(transformed, var, at, dir);
+      {Transform, Product, leftLimit, rightLimit, transformed, final};
+    ] else [
+      substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+      final := StepsL'Lim(expr, var, at, dir);
+      {Direct, substituted, final};
+    ];
+  ] else if (Type(expr) = "-") [
+    parts := Listify(expr);
+    if (Length(parts) = 3) [
+      left := parts[2];
+      right := parts[3];
+      leftLimit := StepsL'Lim(left, var, at, dir);
+      rightLimit := StepsL'Lim(right, var, at, dir);
+      if (((leftLimit = Infinity) And (rightLimit = Infinity)) Or
+          ((leftLimit = -Infinity) And (rightLimit = -Infinity))) [
+        transformed := If(Type(left) = "/" Or Type(right) = "/",
+                          Together(expr),
+                          If(Type(left) = "Sqrt" And Type(right) = "Sqrt",
+                          Simplify((Listify(left)[2] - Listify(right)[2]) /
+                                   (left + right)),
+                          Simplify(left * (1 - right/left))));
+        final := StepsL'Lim(transformed, var, at, dir);
+        {Transform, Difference, leftLimit, rightLimit, transformed, final};
+      ] else [
+        substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+        final := StepsL'Lim(expr, var, at, dir);
+        {Direct, substituted, final};
+      ];
+    ] else [
+      substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+      final := StepsL'Lim(expr, var, at, dir);
+      {Direct, substituted, final};
+    ];
+  ] else if (Type(expr) = "^") [
+    parts := Listify(expr);
+    left := parts[2];
+    right := parts[3];
+    leftLimit := StepsL'Lim(left, var, at, dir);
+    rightLimit := StepsL'Lim(right, var, at, dir);
     indeterminate :=
-      Limit'IsIndeterminateQuotient(numeratorLimit, denominatorLimit);
+      ((IsZero(leftLimit) And IsZero(rightLimit)) Or
+       ((leftLimit = 1) And IsInfinity(rightLimit)) Or
+       (IsInfinity(leftLimit) And IsZero(rightLimit)));
     if (indeterminate) [
-      derivativeQuotient :=
-        Simplify(ApplyPure("D", {var, numerator}) /
-                 ApplyPure("D", {var, denominator}));
-      final := StepsL'Lim(derivativeQuotient, var, at, dir);
-      {LHopital, numeratorLimit, denominatorLimit, derivativeQuotient, final};
+      transformed := Simplify(right * Ln(left));
+      innerLimit := StepsL'Lim(transformed, var, at, dir);
+      final := Exp(innerLimit);
+      {Transform, Power, leftLimit, rightLimit, transformed, final};
     ] else [
       substituted := Eval(ApplyPure("Subst", {var, at, expr}));
       final := StepsL'Lim(expr, var, at, dir);
