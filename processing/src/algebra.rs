@@ -1,6 +1,7 @@
 //! Stable processing API for common algebraic transformations.
 
 use crate::engine::{Engine, EngineError, Expr};
+use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,13 +43,13 @@ pub fn transform(
     kind: TransformKind,
     variable: Option<&str>,
 ) -> Result<TransformResult, EngineError> {
-    validate_expression(input)?;
+    validate_expression(input, "表达式")?;
     let operation = kind.name();
     let command = match kind {
         TransformKind::Apart => {
             let variable =
                 variable.ok_or_else(|| EngineError::Eval("Apart 需要指定变量".into()))?;
-            validate_variable(variable)?;
+            validate_symbol(variable, "变量")?;
             format!("Apart({input},{variable})")
         }
         _ => {
@@ -68,47 +69,10 @@ pub fn transform(
         operation: operation.into(),
         input: input.trim().into(),
         output: result.expr.to_string(),
-        tex: strip_dollars(&result.tex),
+        tex: strip_tex_delimiters(&result.tex),
         changed: result.expr != before,
         unresolved,
     })
-}
-
-fn validate_expression(input: &str) -> Result<(), EngineError> {
-    let input = input.trim();
-    if input.is_empty() {
-        return Err(EngineError::Eval("表达式为空".into()));
-    }
-    if input
-        .chars()
-        .any(|c| matches!(c, ';' | '\n' | '\r' | ':' | '"'))
-    {
-        return Err(EngineError::Eval("表达式包含不允许的字符".into()));
-    }
-    let open = input.chars().filter(|&c| c == '(').count();
-    let close = input.chars().filter(|&c| c == ')').count();
-    if open != close {
-        return Err(EngineError::Eval("表达式括号不匹配".into()));
-    }
-    Ok(())
-}
-
-fn validate_variable(variable: &str) -> Result<(), EngineError> {
-    let mut chars = variable.chars();
-    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '\'')
-    {
-        return Err(EngineError::Eval("变量名无效".into()));
-    }
-    Ok(())
-}
-
-fn strip_dollars(tex: &str) -> String {
-    let tex = tex.trim();
-    tex.strip_prefix('$')
-        .and_then(|value| value.strip_suffix('$'))
-        .unwrap_or(tex)
-        .to_string()
 }
 
 #[cfg(test)]

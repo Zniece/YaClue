@@ -1,6 +1,7 @@
 //! Structured API for finite, infinite, and one-sided limits.
 
 use crate::engine::{Engine, EngineError, Expr};
+use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -70,7 +71,7 @@ pub fn limit(
 ) -> Result<LimitResult, EngineError> {
     validate_expression(expression, "极限表达式")?;
     validate_expression(at, "趋近点")?;
-    validate_variable(variable)?;
+    validate_symbol(variable, "极限变量")?;
 
     let args = match direction {
         LimitDirection::Both => format!("{variable},{at}"),
@@ -82,9 +83,9 @@ pub fn limit(
     let value = value_expr.to_string();
     let status = classify(&value_expr, &value);
     let tex = if conditions.is_empty() {
-        strip_dollars(&result.tex)
+        strip_tex_delimiters(&result.tex)
     } else {
-        strip_dollars(&engine.eval(&value)?.tex)
+        strip_tex_delimiters(&engine.eval(&value)?.tex)
     };
     Ok(LimitResult {
         status,
@@ -176,43 +177,6 @@ fn classify(expr: &Expr, value: &str) -> LimitStatus {
     } else {
         LimitStatus::Converged
     }
-}
-
-fn validate_expression(input: &str, label: &str) -> Result<(), EngineError> {
-    let input = input.trim();
-    if input.is_empty()
-        || input
-            .chars()
-            .any(|c| matches!(c, ';' | '\n' | '\r' | ':' | '"'))
-    {
-        return Err(EngineError::Eval(format!("{label}为空或包含不允许的字符")));
-    }
-    for (open, close) in [('(', ')'), ('{', '}'), ('[', ']')] {
-        if input.chars().filter(|&c| c == open).count()
-            != input.chars().filter(|&c| c == close).count()
-        {
-            return Err(EngineError::Eval(format!("{label}括号不匹配")));
-        }
-    }
-    Ok(())
-}
-
-fn validate_variable(variable: &str) -> Result<(), EngineError> {
-    let mut chars = variable.chars();
-    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '\'')
-    {
-        return Err(EngineError::Eval(format!("无效极限变量: {variable}")));
-    }
-    Ok(())
-}
-
-fn strip_dollars(tex: &str) -> String {
-    let tex = tex.trim();
-    tex.strip_prefix('$')
-        .and_then(|value| value.strip_suffix('$'))
-        .unwrap_or(tex)
-        .to_string()
 }
 
 #[cfg(test)]

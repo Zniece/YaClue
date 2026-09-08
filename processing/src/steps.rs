@@ -5,6 +5,7 @@
 //! 本模块将其转为 `Step { rule, expr, why, tex }`。
 
 use crate::engine::{Engine, EngineError, Expr};
+use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::quadrature::{adaptive_simpson, QuadratureOptions};
 use serde::{Deserialize, Serialize};
 
@@ -37,27 +38,6 @@ pub enum StepVerbosity {
     Concise,
     Standard,
     Detailed,
-}
-
-/// 校验用户表达式输入:必须是单个表达式,拒绝可注入引擎的字符。
-/// 防护目标:命令注入(`;`/换行/`:=`/引号)、协议破坏(换行)、括号不闭合。
-fn validate_expr(expr: &str) -> Result<(), EngineError> {
-    let e = expr.trim();
-    if e.is_empty() {
-        return Err(EngineError::Eval("表达式为空".into()));
-    }
-    for bad in [';', '\n', '\r', ':', '"'] {
-        if e.contains(bad) {
-            return Err(EngineError::Eval(format!("表达式包含不允许的字符 '{bad}'")));
-        }
-    }
-    // 括号平衡
-    let open = e.chars().filter(|&c| c == '(').count();
-    let close = e.chars().filter(|&c| c == ')').count();
-    if open != close {
-        return Err(EngineError::Eval("表达式括号不匹配".into()));
-    }
-    Ok(())
 }
 
 /// 执行 StepsX'Full 命令并提取步骤(规则名 + 表达式 + 文案 + LaTeX)
@@ -128,7 +108,7 @@ fn steps_from_command(
             rule,
             expr,
             why,
-            tex: strip_dollars(&tex),
+            tex: strip_tex_delimiters(&tex),
             importance,
         })
         .collect())
@@ -149,7 +129,8 @@ pub fn derive_steps_with_verbosity(
     var: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expr(expr)?;
+    validate_expression(expr, "表达式")?;
+    validate_symbol(var, "求导变量")?;
     steps_from_command(engine, &format!("StepsD'Full({expr}, {var})"), verbosity)
 }
 
@@ -170,7 +151,8 @@ pub fn derive_steps_order_with_verbosity(
     order: u32,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expr(expr)?;
+    validate_expression(expr, "表达式")?;
+    validate_symbol(var, "求导变量")?;
     if order == 0 {
         return Err(EngineError::Eval("求导阶数必须 >= 1".into()));
     }
@@ -196,7 +178,8 @@ pub fn derive_integrals_with_verbosity(
     var: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expr(expr)?;
+    validate_expression(expr, "表达式")?;
+    validate_symbol(var, "积分变量")?;
     steps_from_command(engine, &format!("StepsI'Full({expr}, {var})"), verbosity)
 }
 
@@ -258,9 +241,10 @@ fn derive_definite_configured(
     options: &QuadratureOptions,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expr(expr)?;
-    validate_expr(from)?;
-    validate_expr(to)?;
+    validate_expression(expr, "被积表达式")?;
+    validate_expression(from, "下限")?;
+    validate_expression(to, "上限")?;
+    validate_symbol(var, "积分变量")?;
     let mut steps = steps_from_command(
         engine,
         &format!("StepsI'Def'Full({expr}, {var}, {from}, {to})"),
@@ -273,7 +257,7 @@ fn derive_definite_configured(
         let value = format_number(result.value);
         let tex = engine
             .eval(&value)
-            .map(|result| strip_dollars(&result.tex))
+            .map(|result| strip_tex_delimiters(&result.tex))
             .unwrap_or_else(|_| value.clone());
         steps.push(Step {
             rule: "numeric-integration-rule".into(),
@@ -310,16 +294,6 @@ fn numeric_scalar(
 fn format_number(value: f64) -> String {
     let text = format!("{value:.15}");
     text.trim_end_matches('0').trim_end_matches('.').to_string()
-}
-
-/// 去掉 TeXForm 输出的首尾各一个 `$`(只剥一对,不用 trim_matches)
-fn strip_dollars(tex: &str) -> String {
-    let t = tex.trim();
-    if t.len() >= 2 && t.starts_with('$') && t.ends_with('$') {
-        t[1..t.len() - 1].to_string()
-    } else {
-        t.to_string()
-    }
 }
 
 #[cfg(test)]

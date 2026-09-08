@@ -7,6 +7,14 @@ use crate::env::Environment;
 use crate::errors::YacasError;
 use crate::value::{copy_node, spine_refs, LispObject, ObjectKind};
 
+/// Names treated as language constants by syntax-only clients.
+pub fn is_constant_symbol(name: &str) -> bool {
+    matches!(
+        name,
+        "True" | "False" | "Infinity" | "Undefined" | "Pi" | "I" | "E" | "GoldenRatio"
+    )
+}
+
 // Diagnostic tracing, enabled by `YACAS_TRACE_LOAD` in the environment.
 thread_local! {
     static LOAD_STACK: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };

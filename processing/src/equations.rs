@@ -1,6 +1,9 @@
 //! Structured API for algebraic equations and systems.
 
 use crate::engine::{Engine, EngineError, Expr};
+use crate::input::{
+    analyze_expression, strip_tex_delimiters, validate_expression, validate_symbol,
+};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -57,7 +60,7 @@ pub fn solve(
         return Err(EngineError::Eval("至少需要一个方程".into()));
     }
     for equation in equations {
-        validate_expression(equation)?;
+        validate_expression(equation, "方程")?;
     }
     let variable_source = if variables.is_empty() {
         VariableSource::Inferred
@@ -66,7 +69,7 @@ pub fn solve(
     };
     let inferred;
     let variables = if variables.is_empty() {
-        inferred = infer_variables(equations);
+        inferred = infer_variables(equations)?;
         if inferred.is_empty() {
             return Err(EngineError::Eval("方程中没有可求解变量".into()));
         }
@@ -75,7 +78,7 @@ pub fn solve(
         variables.to_vec()
     };
     for variable in &variables {
-        validate_variable(variable)?;
+        validate_symbol(variable, "求解变量")?;
     }
     let mut unique = variables.clone();
     unique.sort_unstable();
@@ -107,7 +110,7 @@ pub fn solve(
     let raw = raw_expr.to_string();
     let tex = engine
         .eval(&raw)
-        .map(|result| strip_dollars(&result.tex))
+        .map(|result| strip_tex_delimiters(&result.tex))
         .unwrap_or_else(|_| raw.clone());
     if failed {
         return Ok(SolveResult {
@@ -139,12 +142,14 @@ pub fn solve(
     } else {
         SolveStatus::Solved
     };
-    let mut parameters: Vec<String> = solutions
-        .iter()
-        .flatten()
-        .flat_map(|assignment| infer_variables(&[assignment.value.as_str()]))
-        .filter(|symbol| !variables.iter().any(|variable| *variable == symbol))
-        .collect();
+    let mut parameters = Vec::new();
+    for assignment in solutions.iter().flatten() {
+        parameters.extend(
+            infer_variables(&[assignment.value.as_str()])?
+                .into_iter()
+                .filter(|symbol| !variables.iter().any(|variable| *variable == symbol)),
+        );
+    }
     parameters.sort();
     parameters.dedup();
     let completeness = if parameters.is_empty() {
@@ -164,53 +169,14 @@ pub fn solve(
     })
 }
 
-fn infer_variables(expressions: &[&str]) -> Vec<String> {
-    const CONSTANTS: &[&str] = &[
-        "True",
-        "False",
-        "Infinity",
-        "Undefined",
-        "Pi",
-        "I",
-        "E",
-        "GoldenRatio",
-    ];
+fn infer_variables(expressions: &[&str]) -> Result<Vec<String>, EngineError> {
     let mut symbols = Vec::new();
     for expression in expressions {
-        let bytes = expression.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            if !bytes[i].is_ascii_alphabetic() {
-                i += 1;
-                continue;
-            }
-            // The e in a scientific literal such as 1e10 is not a symbol.
-            if i > 0 && (bytes[i - 1].is_ascii_digit() || bytes[i - 1] == b'.') {
-                i += 1;
-                while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
-                    i += 1;
-                }
-                continue;
-            }
-            let start = i;
-            i += 1;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'\'') {
-                i += 1;
-            }
-            let symbol = &expression[start..i];
-            let mut next = i;
-            while next < bytes.len() && bytes[next].is_ascii_whitespace() {
-                next += 1;
-            }
-            let is_function = bytes.get(next) == Some(&b'(');
-            if !is_function && !CONSTANTS.contains(&symbol) {
-                symbols.push(symbol.to_string());
-            }
-        }
+        symbols.extend(analyze_expression(expression, "表达式")?.symbols);
     }
     symbols.sort();
     symbols.dedup();
-    symbols
+    Ok(symbols)
 }
 
 fn parse_wrapper(wrapper: Expr) -> Result<(Expr, bool, bool), EngineError> {
@@ -268,43 +234,6 @@ fn parse_assignment(expr: &Expr) -> Result<Assignment, EngineError> {
         }
         other => Err(EngineError::Parse(format!("Solve 解不是等式: {other}"))),
     }
-}
-
-fn validate_expression(input: &str) -> Result<(), EngineError> {
-    let input = input.trim();
-    if input.is_empty()
-        || input
-            .chars()
-            .any(|c| matches!(c, ';' | '\n' | '\r' | ':' | '"'))
-    {
-        return Err(EngineError::Eval("方程为空或包含不允许的字符".into()));
-    }
-    for (open, close) in [('(', ')'), ('{', '}'), ('[', ']')] {
-        if input.chars().filter(|&c| c == open).count()
-            != input.chars().filter(|&c| c == close).count()
-        {
-            return Err(EngineError::Eval("方程括号不匹配".into()));
-        }
-    }
-    Ok(())
-}
-
-fn validate_variable(variable: &str) -> Result<(), EngineError> {
-    let mut chars = variable.chars();
-    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '\'')
-    {
-        return Err(EngineError::Eval(format!("无效求解变量: {variable}")));
-    }
-    Ok(())
-}
-
-fn strip_dollars(tex: &str) -> String {
-    let tex = tex.trim();
-    tex.strip_prefix('$')
-        .and_then(|value| value.strip_suffix('$'))
-        .unwrap_or(tex)
-        .to_string()
 }
 
 #[cfg(test)]
@@ -373,7 +302,7 @@ mod tests {
     #[test]
     fn inference_excludes_function_names_constants_and_scientific_exponents() {
         assert_eq!(
-            infer_variables(&["Sin(x)+Pi*y==1e10"]),
+            infer_variables(&["Sin(x)+Pi*y==1e10"]).unwrap(),
             vec!["x".to_string(), "y".to_string()]
         );
     }

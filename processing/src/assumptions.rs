@@ -1,6 +1,7 @@
 //! Product-facing access to an engine session's symbolic assumptions.
 
 use crate::engine::{Engine, EngineError};
+use crate::input::validate_symbol;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -43,7 +44,7 @@ pub fn assume(
     symbol: &str,
     fact: AssumptionFact,
 ) -> Result<AssumptionState, EngineError> {
-    validate_symbol(symbol)?;
+    validate_symbol(symbol, "假设变量")?;
     engine.eval(&format!("Assume({symbol},{})", fact.engine_name()))?;
     Ok(AssumptionState {
         symbol: symbol.into(),
@@ -57,7 +58,7 @@ pub fn is_assumed(
     symbol: &str,
     fact: AssumptionFact,
 ) -> Result<bool, EngineError> {
-    validate_symbol(symbol)?;
+    validate_symbol(symbol, "假设变量")?;
     let result = engine.eval(&format!("IsAssumed({symbol},{})", fact.engine_name()))?;
     match result.expr.to_string().as_str() {
         "True" => Ok(true),
@@ -91,16 +92,6 @@ pub fn with_assumptions<T>(
         (Err(error), Ok(_)) => Err(error),
         (_, Err(error)) => Err(error),
     }
-}
-
-fn validate_symbol(symbol: &str) -> Result<(), EngineError> {
-    let mut chars = symbol.chars();
-    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '\'')
-    {
-        return Err(EngineError::Eval(format!("无效假设变量: {symbol}")));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
