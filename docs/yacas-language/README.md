@@ -4,13 +4,6 @@
 
 This directory documents the Yacas scripting language used by YaClue, its Rust evaluator, and the standard script library maintained with the project. The Yacas scripting language is a rule language for symbolic computation; `.ys` is its script extension. The current implementation lives in `yacas/yacas-rs`, and normal builds do not depend on another engine.
 
-## Terminology
-
-The formal name used throughout this documentation is **Yacas scripting
-language**. After the subject is established, **Yacas** may be used as a short
-form or adjective, as in “Yacas expression.” **YS** is not a language name;
-`.ys` refers only to the script file extension.
-
 ## Documentation layers
 
 Project-maintained documents governed by the current implementation and tests:
