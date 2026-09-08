@@ -37,12 +37,15 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage,rpm
           - name: macOS Apple Silicon
             os: macos-14
             target: aarch64-apple-darwin
+            bundles: app,dmg
           - name: Windows x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
+            bundles: nsis
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -70,7 +73,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: app
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Build and publish prerelease
         if: github.event_name == 'push'
@@ -79,7 +82,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: app
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
           tagName: ${{ github.ref_name }}
           releaseName: "YaClue ${{ github.ref_name }}"
           releaseBody: "Early development build for testing. The application and bundled Yacas scripts are versioned together."
