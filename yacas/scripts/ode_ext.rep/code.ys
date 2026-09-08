@@ -126,6 +126,65 @@ OdeExtSolveBernoulliParts(_p, _q) <--
     ];
 ];
 
+/* Exact first-order equations M(x,y)+N(x,y)y'=0.  Keep the potential
+   equation implicit: forcing Solve(...,y) here can discard branches. */
+RuleBase("OdeExtSolveExact", {equation});
+
+10 # OdeExtSolveExact(_left == _right) <-- OdeExtSolveExactExpression(left - right);
+100 # OdeExtSolveExact(_equation) <-- {};
+
+OdeExtSolveExactExpression(_expression) <--
+[
+    Local(normal, degree, m, n, mxIntegral, correction, correctionIntegral,
+          potential, constant);
+    normal := Simplify(expression);
+    degree := Degree(normal, y');
+    if (degree != 1) [
+        {};
+    ] else [
+        m := Simplify(Coef(normal, y', 0));
+        n := Simplify(Coef(normal, y', 1));
+        if (Not(IsFreeOf(y', {m, n})) Or
+            Simplify(ApplyPure("D", {y, m}) - ApplyPure("D", {x, n})) != 0) [
+            {};
+        ] else [
+            mxIntegral := Integrate(x) m;
+            correction := Simplify(n - ApplyPure("D", {y, mxIntegral}));
+            correctionIntegral := Integrate(y) correction;
+            if (Not(IsFreeOf(Integrate, {mxIntegral, correctionIntegral}))) [
+                {};
+            ] else [
+                potential := Simplify(mxIntegral + correctionIntegral);
+                /* The two checks are also the certificate consumed by the host. */
+                if (Simplify(ApplyPure("D", {x, potential}) - m) != 0 Or
+                    Simplify(ApplyPure("D", {y, potential}) - n) != 0) [
+                    {};
+                ] else [
+                    constant := UniqueConstant();
+                    {{potential == constant}, Exact};
+                ];
+            ];
+        ];
+    ];
+];
+
+RuleBase("OdeExtVerifyExact", {equation, solution});
+10 # OdeExtVerifyExact(_left == _right, _potential == _constant) _
+     (IsFreeOf({x, y}, constant)) <--
+[
+    Local(normal, m, n);
+    normal := Simplify(left - right);
+    if (Degree(normal, y') != 1) [
+        False;
+    ] else [
+        m := Simplify(Coef(normal, y', 0));
+        n := Simplify(Coef(normal, y', 1));
+        Simplify(ApplyPure("D", {x, potential}) - m) = 0 And
+            Simplify(ApplyPure("D", {y, potential}) - n) = 0;
+    ];
+];
+100 # OdeExtVerifyExact(_equation, _solution) <-- False;
+
 5 # ExtendedOdeSolve(y' == _rhs) _
     (IsFreeOf(y, rhs)) <-- {{OdeSolve(y' == rhs)}, Upstream};
 
@@ -146,6 +205,9 @@ OdeExtSolveBernoulliParts(_p, _q) <--
     if (Length(result) != 2) [
         result := OdeExtSolveBernoulli(y' + dependentTerm == rhs);
     ];
+    if (Length(result) != 2) [
+        result := OdeExtSolveExact(y' + dependentTerm == rhs);
+    ];
     If(Length(result) = 2,
        result,
        {{OdeSolve(y' + dependentTerm == rhs)}, Upstream});
@@ -154,6 +216,9 @@ OdeExtSolveBernoulliParts(_p, _q) <--
 [
     Local(result);
     result := OdeExtSolveLinearFirstOrder(y' - dependentTerm == rhs);
+    if (Length(result) != 2) [
+        result := OdeExtSolveExact(y' - dependentTerm == rhs);
+    ];
     If(Length(result) = 2,
        result,
        {{OdeSolve(y' - dependentTerm == rhs)}, Upstream});
@@ -162,9 +227,17 @@ OdeExtSolveBernoulliParts(_p, _q) <--
 [
     Local(result);
     result := OdeExtSolveLinearFirstOrder(dependentTerm + y' == rhs);
+    if (Length(result) != 2) [
+        result := OdeExtSolveExact(dependentTerm + y' == rhs);
+    ];
     If(Length(result) = 2,
        result,
        {{OdeSolve(dependentTerm + y' == rhs)}, Upstream});
 ];
 
-100 # ExtendedOdeSolve(_equation) <-- {{OdeSolve(equation)}, Upstream};
+100 # ExtendedOdeSolve(_equation) <--
+[
+    Local(result);
+    result := OdeExtSolveExact(equation);
+    If(Length(result) = 2, result, {{OdeSolve(equation)}, Upstream});
+];

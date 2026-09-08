@@ -30,6 +30,21 @@ pub enum OdeMethod {
     Separable,
     LinearFirstOrder,
     Bernoulli,
+    Exact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OdeSolutionKind {
+    Explicit,
+    Implicit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OdeSolution {
+    pub kind: OdeSolutionKind,
+    pub expression: String,
+    pub tex: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -58,6 +73,8 @@ pub struct OdeResult {
     pub solution: String,
     /// All verified branches. `solution` remains the primary branch for compatibility.
     pub solutions: Vec<String>,
+    /// Structured branches. Prefer this field when implicit solutions matter.
+    pub solution_branches: Vec<OdeSolution>,
     pub tex: String,
     /// Substitution residual returned by `OdeTest`.
     pub residual: String,
@@ -99,6 +116,11 @@ pub fn solve(
             order,
             solution: equation.trim().into(),
             solutions: vec![equation.trim().into()],
+            solution_branches: vec![OdeSolution {
+                kind: OdeSolutionKind::Implicit,
+                expression: equation.trim().into(),
+                tex: equation.trim().into(),
+            }],
             tex: equation.trim().into(),
             residual: equation.trim().into(),
             constants: vec![],
@@ -154,6 +176,7 @@ pub fn solve(
                 &mut candidate,
                 &mut candidate_constants,
                 initial_conditions,
+                method,
             )? {
                 InitialConditionStatus::Applied => {
                     applied.push(candidate);
@@ -181,8 +204,9 @@ pub fn solve(
         condition_status = InitialConditionStatus::Unresolved;
     }
 
-    let (solution, solutions, tex) = if status == OdeStatus::Solved {
+    let (solution, solutions, solution_branches, tex) = if status == OdeStatus::Solved {
         let mut rendered_solutions = Vec::new();
+        let mut branches = Vec::new();
         let mut primary_tex = String::new();
         for (index, candidate) in candidates.iter().enumerate() {
             let user_solution =
@@ -191,11 +215,22 @@ pub fn solve(
             if index == 0 {
                 primary_tex = strip_tex_delimiters(&rendered.tex);
             }
-            rendered_solutions.push(rendered.expr.to_string());
+            let expression = rendered.expr.to_string();
+            branches.push(OdeSolution {
+                kind: if method == OdeMethod::Exact {
+                    OdeSolutionKind::Implicit
+                } else {
+                    OdeSolutionKind::Explicit
+                },
+                expression: expression.clone(),
+                tex: strip_tex_delimiters(&rendered.tex),
+            });
+            rendered_solutions.push(expression);
         }
         (
             rendered_solutions[0].clone(),
             rendered_solutions,
+            branches,
             primary_tex,
         )
     } else {
@@ -203,7 +238,16 @@ pub fn solve(
         // y(1). Evaluating that residual again may try to define a user
         // function, so preserve the verified engine tree verbatim.
         let raw = solution.to_string();
-        (raw.clone(), vec![raw.clone()], raw)
+        (
+            raw.clone(),
+            vec![raw.clone()],
+            vec![OdeSolution {
+                kind: OdeSolutionKind::Implicit,
+                expression: raw.clone(),
+                tex: raw.clone(),
+            }],
+            raw,
+        )
     };
     Ok(OdeResult {
         status,
@@ -212,6 +256,7 @@ pub fn solve(
         order,
         solution,
         solutions,
+        solution_branches,
         tex,
         residual: residual.to_string(),
         constants,
@@ -308,6 +353,7 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
                 Expr::Symbol(value) if value == "Separable" => OdeMethod::Separable,
                 Expr::Symbol(value) if value == "LinearFirstOrder" => OdeMethod::LinearFirstOrder,
                 Expr::Symbol(value) if value == "Bernoulli" => OdeMethod::Bernoulli,
+                Expr::Symbol(value) if value == "Exact" => OdeMethod::Exact,
                 other => return Err(EngineError::Parse(format!("未知 ODE 求解方法: {other}"))),
             };
             let residual = args.pop().unwrap();
@@ -334,6 +380,7 @@ fn parse_extension(expr: Expr) -> Result<Option<(Vec<Expr>, OdeMethod)>, EngineE
         Expr::Symbol(value) if value == "Separable" => OdeMethod::Separable,
         Expr::Symbol(value) if value == "LinearFirstOrder" => OdeMethod::LinearFirstOrder,
         Expr::Symbol(value) if value == "Bernoulli" => OdeMethod::Bernoulli,
+        Expr::Symbol(value) if value == "Exact" => OdeMethod::Exact,
         other => return Err(EngineError::Parse(format!("未知 ODE 扩展方法: {other}"))),
     };
     let Expr::Call {
@@ -357,16 +404,26 @@ fn try_extension(
         "[Local(ext); \
          ext:=OdeExtSolveSeparable({canonical}); \
          if (Length(ext) != 2) [ext:=OdeExtSolveLinearFirstOrder({canonical});]; \
-         if (Length(ext) != 2) [ext:=OdeExtSolveBernoulli({canonical});]; ext;]"
+         if (Length(ext) != 2) [ext:=OdeExtSolveBernoulli({canonical});]; \
+         if (Length(ext) != 2) [ext:=OdeExtSolveExact({canonical});]; ext;]"
     ))?;
     let Some((raw_candidates, method)) = parse_extension(extension)? else {
         return Ok(None);
     };
     let mut verified = Vec::new();
     for candidate in raw_candidates {
-        let residual =
-            engine.eval_expr(&format!("Simplify(OdeTest({canonical},{}))", candidate))?;
-        if residual.to_string() == "0" {
+        let valid = if method == OdeMethod::Exact {
+            engine
+                .eval_expr(&format!("OdeExtVerifyExact({canonical},{candidate})"))?
+                .to_string()
+                == "True"
+        } else {
+            engine
+                .eval_expr(&format!("Simplify(OdeTest({canonical},{candidate}))"))?
+                .to_string()
+                == "0"
+        };
+        if valid {
             verified.push(candidate);
         }
     }
@@ -375,7 +432,7 @@ fn try_extension(
 
 fn solution_constants(solution: &Expr) -> Result<Vec<String>, EngineError> {
     let mut constants = analyze_expression(&solution.to_string(), "ODE 解")?.symbols;
-    constants.retain(|symbol| symbol != "x");
+    constants.retain(|symbol| symbol != "x" && symbol != "y");
     constants.sort();
     constants.dedup();
     Ok(constants)
@@ -386,7 +443,11 @@ fn apply_initial_conditions(
     solution: &mut Expr,
     constants: &mut Vec<String>,
     conditions: &[InitialCondition<'_>],
+    method: OdeMethod,
 ) -> Result<InitialConditionStatus, EngineError> {
+    if method == OdeMethod::Exact {
+        return apply_implicit_initial_condition(engine, solution, constants, conditions);
+    }
     let solution_text = solution.to_string();
     if constants.is_empty() {
         for condition in conditions {
@@ -439,6 +500,37 @@ fn apply_initial_conditions(
         SolveStatus::NoSolution => Ok(InitialConditionStatus::NoSolution),
         _ => Ok(InitialConditionStatus::Unresolved),
     }
+}
+
+fn apply_implicit_initial_condition(
+    engine: &mut dyn Engine,
+    solution: &mut Expr,
+    constants: &mut Vec<String>,
+    conditions: &[InitialCondition<'_>],
+) -> Result<InitialConditionStatus, EngineError> {
+    let [condition] = conditions else {
+        return Ok(InitialConditionStatus::Unresolved);
+    };
+    if condition.derivative_order != 0 || constants.len() != 1 {
+        return Ok(InitialConditionStatus::Unresolved);
+    }
+    let Expr::Call { head, args } = solution else {
+        return Ok(InitialConditionStatus::Unresolved);
+    };
+    if (head != "=" && head != "==") || args.len() != 2 {
+        return Ok(InitialConditionStatus::Unresolved);
+    }
+    let potential = args[0].clone();
+    let value = engine.eval_expr(&format!(
+        "Simplify(ApplyPure(\"Subst\",{{y,{},ApplyPure(\"Subst\",{{x,{},{}}})}}))",
+        condition.value, condition.point, potential
+    ))?;
+    *solution = Expr::Call {
+        head: head.clone(),
+        args: vec![potential, value],
+    };
+    constants.clear();
+    Ok(InitialConditionStatus::Applied)
 }
 
 #[cfg(test)]
@@ -576,6 +668,59 @@ mod tests {
         assert_eq!(nonzero.solutions.len(), 1);
         assert_ne!(nonzero.solutions[0], "0");
         assert_eq!(nonzero.residual, "0");
+    }
+
+    #[test]
+    fn solves_exact_equations_as_verified_implicit_solutions() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let equation = "2*x*y+3+(x^2+4*y)*y'==0";
+        let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
+        assert_eq!(result.status, OdeStatus::Solved);
+        assert_eq!(result.method, OdeMethod::Exact);
+        assert_eq!(result.residual, "0");
+        assert_eq!(result.solution_branches.len(), 1);
+        assert_eq!(result.solution_branches[0].kind, OdeSolutionKind::Implicit);
+        assert!(result.solution.contains('='));
+
+        let initial = solve(
+            &mut engine,
+            equation,
+            "x",
+            "y",
+            &[InitialCondition {
+                derivative_order: 0,
+                point: "0",
+                value: "1",
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            initial.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        assert!(initial.constants.is_empty());
+        assert!(initial.solution.contains("2"));
+        assert_ne!(initial.solution, "True");
+    }
+
+    #[test]
+    fn translates_exact_equations_and_rejects_non_exact_ones() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let translated = solve(&mut engine, "2*t*u+3+(t^2+4*u)*u'==0", "t", "u", &[]).unwrap();
+        assert_eq!(translated.method, OdeMethod::Exact);
+        assert_eq!(
+            translated.solution_branches[0].kind,
+            OdeSolutionKind::Implicit
+        );
+        assert!(translated.solution.contains('t'));
+        assert!(translated.solution.contains('u'));
+
+        assert_ne!(
+            solve(&mut engine, "y+(x*y)*y'==0", "x", "y", &[])
+                .unwrap()
+                .method,
+            OdeMethod::Exact
+        );
     }
 
     #[test]

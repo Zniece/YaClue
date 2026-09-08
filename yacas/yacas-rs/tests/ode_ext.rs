@@ -77,3 +77,19 @@ fn bernoulli_extension_keeps_the_equilibrium_branch() {
         "{Bernoulli,2,0,0}"
     );
 }
+
+#[test]
+fn exact_extension_returns_a_verified_implicit_solution() {
+    let mut env = boot();
+    assert_eq!(
+        run(
+            &mut env,
+            "[Local(r);r:=OdeExtSolveExact(2*x*y+3+(x^2+4*y)*y'==0);{r[2],OdeExtVerifyExact(2*x*y+3+(x^2+4*y)*y'==0,r[1][1])};]"
+        ),
+        "{Exact,True}"
+    );
+    assert_eq!(
+        run(&mut env, "Length(OdeExtSolveExact(y+(x*y)*y'==0))"),
+        "0"
+    );
+}

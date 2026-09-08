@@ -2,3 +2,5 @@ ExtendedOdeSolve
 OdeExtSolveSeparable
 OdeExtSolveLinearFirstOrder
 OdeExtSolveBernoulli
+OdeExtSolveExact
+OdeExtVerifyExact
