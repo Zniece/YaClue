@@ -101,14 +101,28 @@ pub fn solve(
     }
 
     let canonical = to_canonical(equation, independent, dependent, order);
-    let wrapper = engine.eval(&format!(
-        "[Local(ode'eq,ode'extended,ode'solution,ode'method,ode'residual); \
-         ode'eq:={canonical}; ode'extended:=ExtendedOdeSolve(ode'eq); \
-         ode'solution:=ode'extended[1]; ode'method:=ode'extended[2]; \
-         ode'residual:=If(ode'solution=True,ode'eq,OdeTest(ode'eq,ode'solution)); \
-         {{ode'solution,ode'residual,ode'method}};]"
+    let upstream = engine.eval(&format!(
+        "[Local(sol,res); sol:=OdeSolve({canonical}); \
+         res:=If(sol=True,{canonical},Simplify(OdeTest({canonical},sol))); \
+         {{sol,res,Upstream}};]"
     ))?;
-    let (mut solution, residual, method) = parse_wrapper(wrapper.expr)?;
+    let (mut solution, mut residual, mut method) = parse_wrapper(upstream.expr)?;
+    if residual.to_string() != "0" {
+        let extension = engine.eval(&format!(
+            "[Local(ext,sol,res); \
+             ext:=OdeExtSolveSeparable({canonical}); \
+             if (Length(ext) != 2) [ \
+                 ext:=OdeExtSolveLinearFirstOrder({canonical}); \
+             ]; \
+             if (Length(ext) = 2) [ \
+                 sol:=ext[1]; res:=Simplify(OdeTest({canonical},sol)); \
+                 {{sol,res,ext[2]}}; \
+             ] else {{}};]"
+        ))?;
+        if let Some(extended) = parse_optional_wrapper(extension.expr)? {
+            (solution, residual, method) = extended;
+        }
+    }
     let mut status = if solution == Expr::Symbol("True".into()) {
         OdeStatus::NotDifferentialEquation
     } else if residual.to_string() == "0" {
@@ -255,6 +269,14 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
     }
 }
 
+fn parse_optional_wrapper(expr: Expr) -> Result<Option<(Expr, Expr, OdeMethod)>, EngineError> {
+    if matches!(&expr, Expr::Call { head, args } if head == "List" && args.is_empty()) {
+        Ok(None)
+    } else {
+        parse_wrapper(expr).map(Some)
+    }
+}
+
 fn solution_constants(solution: &Expr) -> Result<Vec<String>, EngineError> {
     let mut constants = analyze_expression(&solution.to_string(), "ODE 解")?.symbols;
     constants.retain(|symbol| symbol != "x");
@@ -319,7 +341,7 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         for (equation, method) in [
             ("y'==x", OdeMethod::Upstream),
-            ("y'==y", OdeMethod::Separable),
+            ("y'==y", OdeMethod::Upstream),
             ("y''-3*y'+2*y==0", OdeMethod::Upstream),
             ("y''+y==0", OdeMethod::Upstream),
         ] {

@@ -93,12 +93,42 @@ OdeExtSolveLinearFirstOrderParts(_p, _q) <--
     ];
 ];
 
-ExtendedOdeSolve(_equation) <--
+5 # ExtendedOdeSolve(y' == _rhs) _
+    (IsFreeOf(y, rhs)) <-- {OdeSolve(y' == rhs), Upstream};
+
+10 # ExtendedOdeSolve(y' == _rhs) <--
 [
     Local(result);
-    result := OdeExtSolveSeparable(equation);
+    result := OdeExtSolveSeparable(y' == rhs);
     if (Length(result) != 2) [
-        result := OdeExtSolveLinearFirstOrder(equation);
+        result := OdeExtSolveLinearFirstOrder(y' == rhs);
     ];
-    If(Length(result) = 2, result, {OdeSolve(equation), Upstream});
+    If(Length(result) = 2, result, {OdeSolve(y' == rhs), Upstream});
 ];
+
+20 # ExtendedOdeSolve(y' + _dependentTerm == _rhs) <--
+[
+    Local(result);
+    result := OdeExtSolveLinearFirstOrder(y' + dependentTerm == rhs);
+    If(Length(result) = 2,
+       result,
+       {OdeSolve(y' + dependentTerm == rhs), Upstream});
+];
+21 # ExtendedOdeSolve(y' - _dependentTerm == _rhs) <--
+[
+    Local(result);
+    result := OdeExtSolveLinearFirstOrder(y' - dependentTerm == rhs);
+    If(Length(result) = 2,
+       result,
+       {OdeSolve(y' - dependentTerm == rhs), Upstream});
+];
+22 # ExtendedOdeSolve(_dependentTerm + y' == _rhs) <--
+[
+    Local(result);
+    result := OdeExtSolveLinearFirstOrder(dependentTerm + y' == rhs);
+    If(Length(result) = 2,
+       result,
+       {OdeSolve(dependentTerm + y' == rhs), Upstream});
+];
+
+100 # ExtendedOdeSolve(_equation) <-- {OdeSolve(equation), Upstream};
