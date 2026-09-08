@@ -23,6 +23,16 @@ use crate::operators::OperatorTable;
 use crate::symtab::SymbolTable;
 use crate::value::{atom_or_number, LispObject};
 
+fn local_symbol_id(name: &str) -> Option<u32> {
+    let local = name.strip_prefix('$')?;
+    let digit_start = local
+        .rfind(|character: char| !character.is_ascii_digit())
+        .map_or(0, |index| index + 1);
+    (digit_start < local.len())
+        .then(|| local[digit_start..].parse().ok())
+        .flatten()
+}
+
 /// A global variable slot with a lazy-evaluation flag.
 pub struct GlobalVariable {
     pub value: Option<Rc<LispObject>>,
@@ -566,11 +576,8 @@ impl Environment {
     /// Script loading stays outside this lifecycle because definitions may
     /// retain generated bindings.
     pub fn clear_unique_globals_since(&mut self, first_id: u32) {
-        self.globals.retain(|name, _| {
-            name.strip_prefix("UniqueSymbol")
-                .and_then(|suffix| suffix.parse::<u32>().ok())
-                .is_none_or(|id| id <= first_id)
-        });
+        self.globals
+            .retain(|name, _| local_symbol_id(name).is_none_or(|id| id <= first_id));
         self.symtab.garbage_collect();
     }
 

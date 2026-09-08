@@ -59,6 +59,13 @@ fn local_shadowing() {
 }
 
 #[test]
+fn local_symbols_use_the_language_standard_spelling_and_shared_generation() {
+    let mut env = Environment::new();
+    assert_eq!(run(&mut env, "LocalSymbols(a,b)({a,b})"), "{$a1,$b1}");
+    assert_eq!(run(&mut env, "LocalSymbols(a)(a)"), "$a2");
+}
+
+#[test]
 fn if_not_equals() {
     let mut env = Environment::new();
     boot(&mut env); // Equals(1+2,3) 需 stdarith 的 + 规则(照 cyacas 控制台序)

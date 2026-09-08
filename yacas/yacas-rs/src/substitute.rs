@@ -174,10 +174,14 @@ pub struct LocalSymbolBehaviour {
 impl LocalSymbolBehaviour {
     pub fn new(env: &mut Environment, names: &[Rc<str>]) -> Self {
         let original_names = names.to_vec();
+        // Yacas gives every name in one LocalSymbols invocation the same
+        // generation suffix: LocalSymbols(a,b) produces $aN and $bN.  Some
+        // standard scripts (notably UniqueConstant) consume this public
+        // spelling, so it is part of the language contract.
+        let id = env.gen_unique_id();
         let mut new_names = Vec::with_capacity(names.len());
-        for _ in names {
-            let id = env.gen_unique_id();
-            let new_name = env.symtab.look_up(&format!("UniqueSymbol{}", id));
+        for name in names {
+            let new_name = env.symtab.look_up(&format!("${name}{id}"));
             new_names.push(new_name);
         }
         LocalSymbolBehaviour {

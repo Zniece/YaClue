@@ -581,7 +581,9 @@ fn from_canonical(solution: &str, independent: &str, dependent: &str, order: u32
             &format!("{dependent}{}", "'".repeat(derivative_order as usize)),
         );
     }
-    result
+    // Extension solvers use bare y in implicit solutions, while the upstream
+    // solver may use y(0). Translate both representations.
+    substitute(&result, "y", dependent)
 }
 
 fn substitute(expression: &str, from: &str, to: &str) -> String {
@@ -976,6 +978,16 @@ mod tests {
             assert_eq!(result.status, OdeStatus::Solved, "{equation}");
             assert_eq!(result.method, OdeMethod::LinearFirstOrder);
             assert_eq!(result.residual, "0");
+            assert_eq!(result.constants.len(), 1, "{equation}: {result:#?}");
+            assert!(
+                result.constants[0].starts_with('C')
+                    && result.constants[0][1..]
+                        .chars()
+                        .all(|character| character.is_ascii_digit()),
+                "{equation}: {result:#?}"
+            );
+            assert!(!result.solution.contains("UniqueSymbol"), "{result:#?}");
+            assert!(!result.solution.contains("niqueSymbol"), "{result:#?}");
         }
 
         let result = solve(
@@ -1089,7 +1101,7 @@ mod tests {
             OdeSolutionKind::Implicit
         );
         assert!(translated.solution.contains('t'));
-        assert!(translated.solution.contains('u'));
+        assert!(translated.solution.contains('u'), "{translated:#?}");
 
         assert_ne!(
             solve(&mut engine, "y+(x*y)*y'==0", "x", "y", &[])
@@ -1235,6 +1247,11 @@ mod tests {
             ),
         ] {
             let stepped = solve_steps(&mut engine, equation, "x", "y", &[]).unwrap();
+            assert!(stepped
+                .steps
+                .iter()
+                .all(|step| !step.expr.contains("UniqueSymbol")
+                    && !step.expr.contains("niqueSymbol")));
             for rule in expected_rules {
                 assert!(
                     stepped.steps.iter().any(|step| step.rule == *rule),
@@ -1261,7 +1278,7 @@ mod tests {
         let translated = solve(&mut engine, "u'==(t+u)/t", "t", "u", &[]).unwrap();
         assert_eq!(translated.method, OdeMethod::Homogeneous);
         assert!(translated.solution.contains('t'));
-        assert!(translated.solution.contains('u'));
+        assert!(translated.solution.contains('u'), "{translated:#?}");
 
         assert_ne!(
             solve(&mut engine, "y'==x+y", "x", "y", &[]).unwrap().method,
