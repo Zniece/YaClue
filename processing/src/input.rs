@@ -74,6 +74,22 @@ pub fn contains_product_factor(
     Ok(has_product_factor(&tree, symbol))
 }
 
+pub fn contains_ratio_symbols(
+    input: &str,
+    first_symbol: &str,
+    second_symbol: &str,
+    label: &str,
+) -> Result<bool, EngineError> {
+    validate_safe_text(input, label)?;
+    let tree = PARSE_ENV.with(|env| {
+        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
+    });
+    let tree = tree
+        .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
+        .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
+    Ok(has_ratio_symbols(&tree, first_symbol, second_symbol))
+}
+
 pub fn validate_symbol(symbol: &str, label: &str) -> Result<(), EngineError> {
     let mut chars = symbol.chars();
     if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -180,6 +196,38 @@ fn has_product_factor(node: &Rc<LispObject>, symbol: &str) -> bool {
     nodes.iter().any(|child| has_product_factor(child, symbol))
 }
 
+fn has_ratio_symbols(node: &Rc<LispObject>, first_symbol: &str, second_symbol: &str) -> bool {
+    let ObjectKind::Sublist(first) = &node.kind else {
+        return false;
+    };
+    let nodes: Vec<_> = spine_refs(first).collect();
+    if nodes.len() == 3
+        && nodes[0]
+            .atom_string()
+            .is_some_and(|name| name.as_ref() == "/")
+        && contains_atom(node, first_symbol)
+        && contains_atom(node, second_symbol)
+    {
+        return true;
+    }
+    nodes
+        .iter()
+        .any(|child| has_ratio_symbols(child, first_symbol, second_symbol))
+}
+
+fn contains_atom(node: &Rc<LispObject>, symbol: &str) -> bool {
+    if node
+        .atom_string()
+        .is_some_and(|name| name.as_ref() == symbol)
+    {
+        return true;
+    }
+    let ObjectKind::Sublist(first) = &node.kind else {
+        return false;
+    };
+    spine_refs(first).any(|child| contains_atom(child, symbol))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +258,12 @@ mod tests {
     fn detects_symbols_used_as_product_factors_without_evaluation() {
         assert!(contains_product_factor("M+(x^2+y)*y'==0", "y'", "ODE").unwrap());
         assert!(!contains_product_factor("y'+y==x", "y'", "ODE").unwrap());
+    }
+
+    #[test]
+    fn detects_ratios_containing_both_symbols_without_evaluation() {
+        assert!(contains_ratio_symbols("y'==(x+y)/x", "x", "y", "ODE").unwrap());
+        assert!(contains_ratio_symbols("y'==(y/x)^2", "x", "y", "ODE").unwrap());
+        assert!(!contains_ratio_symbols("y'==x+y", "x", "y", "ODE").unwrap());
     }
 }

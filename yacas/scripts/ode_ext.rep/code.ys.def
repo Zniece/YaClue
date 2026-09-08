@@ -4,3 +4,5 @@ OdeExtSolveLinearFirstOrder
 OdeExtSolveBernoulli
 OdeExtSolveExact
 OdeExtVerifyExact
+OdeExtSolveHomogeneous
+OdeExtVerifyHomogeneous

@@ -8,8 +8,8 @@
 use crate::engine::{Engine, EngineError, Expr};
 use crate::equations::{self, SolveCompleteness, SolveStatus};
 use crate::input::{
-    analyze_expression, contains_exact_power, contains_product_factor, strip_tex_delimiters,
-    validate_expression, validate_symbol,
+    analyze_expression, contains_exact_power, contains_product_factor, contains_ratio_symbols,
+    strip_tex_delimiters, validate_expression, validate_symbol,
 };
 use serde::Serialize;
 
@@ -31,6 +31,7 @@ pub enum OdeMethod {
     LinearFirstOrder,
     Bernoulli,
     Exact,
+    Homogeneous,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -129,7 +130,8 @@ pub fn solve(
 
     let canonical = to_canonical(equation, independent, dependent, order);
     let prefer_extension = contains_exact_power(equation, dependent, "2", "微分方程")?
-        || contains_product_factor(equation, &format!("{dependent}'"), "微分方程")?;
+        || contains_product_factor(equation, &format!("{dependent}'"), "微分方程")?
+        || contains_ratio_symbols(equation, independent, dependent, "微分方程")?;
     let preferred = if prefer_extension {
         try_extension(engine, &canonical)?
     } else {
@@ -177,7 +179,6 @@ pub fn solve(
                 &mut candidate,
                 &mut candidate_constants,
                 initial_conditions,
-                method,
             )? {
                 InitialConditionStatus::Applied => {
                     applied.push(candidate);
@@ -218,7 +219,7 @@ pub fn solve(
             }
             let expression = rendered.expr.to_string();
             branches.push(OdeSolution {
-                kind: if method == OdeMethod::Exact {
+                kind: if is_implicit_solution(candidate) {
                     OdeSolutionKind::Implicit
                 } else {
                     OdeSolutionKind::Explicit
@@ -355,6 +356,7 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
                 Expr::Symbol(value) if value == "LinearFirstOrder" => OdeMethod::LinearFirstOrder,
                 Expr::Symbol(value) if value == "Bernoulli" => OdeMethod::Bernoulli,
                 Expr::Symbol(value) if value == "Exact" => OdeMethod::Exact,
+                Expr::Symbol(value) if value == "Homogeneous" => OdeMethod::Homogeneous,
                 other => return Err(EngineError::Parse(format!("未知 ODE 求解方法: {other}"))),
             };
             let residual = args.pop().unwrap();
@@ -382,6 +384,7 @@ fn parse_extension(expr: Expr) -> Result<Option<(Vec<Expr>, OdeMethod)>, EngineE
         Expr::Symbol(value) if value == "LinearFirstOrder" => OdeMethod::LinearFirstOrder,
         Expr::Symbol(value) if value == "Bernoulli" => OdeMethod::Bernoulli,
         Expr::Symbol(value) if value == "Exact" => OdeMethod::Exact,
+        Expr::Symbol(value) if value == "Homogeneous" => OdeMethod::Homogeneous,
         other => return Err(EngineError::Parse(format!("未知 ODE 扩展方法: {other}"))),
     };
     let Expr::Call {
@@ -406,7 +409,8 @@ fn try_extension(
          ext:=OdeExtSolveSeparable({canonical}); \
          if (Length(ext) != 2) [ext:=OdeExtSolveLinearFirstOrder({canonical});]; \
          if (Length(ext) != 2) [ext:=OdeExtSolveBernoulli({canonical});]; \
-         if (Length(ext) != 2) [ext:=OdeExtSolveExact({canonical});]; ext;]"
+         if (Length(ext) != 2) [ext:=OdeExtSolveExact({canonical});]; \
+         if (Length(ext) != 2) [ext:=OdeExtSolveHomogeneous({canonical});]; ext;]"
     ))?;
     let Some((raw_candidates, method)) = parse_extension(extension)? else {
         return Ok(None);
@@ -416,6 +420,11 @@ fn try_extension(
         let valid = if method == OdeMethod::Exact {
             engine
                 .eval_expr(&format!("OdeExtVerifyExact({canonical},{candidate})"))?
+                .to_string()
+                == "True"
+        } else if method == OdeMethod::Homogeneous && is_implicit_solution(&candidate) {
+            engine
+                .eval_expr(&format!("OdeExtVerifyHomogeneous({canonical},{candidate})"))?
                 .to_string()
                 == "True"
         } else {
@@ -439,14 +448,17 @@ fn solution_constants(solution: &Expr) -> Result<Vec<String>, EngineError> {
     Ok(constants)
 }
 
+fn is_implicit_solution(solution: &Expr) -> bool {
+    matches!(solution, Expr::Call { head, args } if (head == "=" || head == "==") && args.len() == 2)
+}
+
 fn apply_initial_conditions(
     engine: &mut dyn Engine,
     solution: &mut Expr,
     constants: &mut Vec<String>,
     conditions: &[InitialCondition<'_>],
-    method: OdeMethod,
 ) -> Result<InitialConditionStatus, EngineError> {
-    if method == OdeMethod::Exact {
+    if is_implicit_solution(solution) {
         return apply_implicit_initial_condition(engine, solution, constants, conditions);
     }
     let solution_text = solution.to_string();
@@ -721,6 +733,62 @@ mod tests {
                 .unwrap()
                 .method,
             OdeMethod::Exact
+        );
+    }
+
+    #[test]
+    fn solves_homogeneous_equations_with_implicit_and_line_branches() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = solve(&mut engine, "y'==(x+y)/x", "x", "y", &[]).unwrap();
+        assert_eq!(result.status, OdeStatus::Solved);
+        assert_eq!(result.method, OdeMethod::Homogeneous);
+        assert_eq!(result.solution_branches.len(), 1);
+        assert_eq!(result.solution_branches[0].kind, OdeSolutionKind::Implicit);
+        assert_eq!(result.residual, "0");
+
+        let initial = solve(
+            &mut engine,
+            "y'==(x+y)/x",
+            "x",
+            "y",
+            &[InitialCondition {
+                derivative_order: 0,
+                point: "1",
+                value: "2",
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            initial.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        assert!(initial.constants.is_empty());
+
+        let branches = solve(&mut engine, "y'==(y/x)^2", "x", "y", &[]).unwrap();
+        assert_eq!(branches.method, OdeMethod::Homogeneous);
+        assert_eq!(branches.solutions.len(), 3);
+        assert_eq!(
+            branches.solution_branches[0].kind,
+            OdeSolutionKind::Implicit
+        );
+        assert!(branches.solution_branches[1..]
+            .iter()
+            .all(|branch| branch.kind == OdeSolutionKind::Explicit));
+        assert!(branches.solutions.iter().any(|solution| solution == "0"));
+        assert!(branches.solutions.iter().any(|solution| solution == "x"));
+    }
+
+    #[test]
+    fn translates_homogeneous_equations_and_rejects_false_candidates() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let translated = solve(&mut engine, "u'==(t+u)/t", "t", "u", &[]).unwrap();
+        assert_eq!(translated.method, OdeMethod::Homogeneous);
+        assert!(translated.solution.contains('t'));
+        assert!(translated.solution.contains('u'));
+
+        assert_ne!(
+            solve(&mut engine, "y'==x+y", "x", "y", &[]).unwrap().method,
+            OdeMethod::Homogeneous
         );
     }
 

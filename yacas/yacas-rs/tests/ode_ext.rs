@@ -93,3 +93,26 @@ fn exact_extension_returns_a_verified_implicit_solution() {
         "0"
     );
 }
+
+#[test]
+fn homogeneous_extension_keeps_implicit_and_equilibrium_branches() {
+    let mut env = boot();
+    assert_eq!(
+        run(
+            &mut env,
+            "[Local(r);r:=OdeExtSolveHomogeneous(y'==(x+y)/x);{r[2],Length(r[1]),OdeExtVerifyHomogeneous(y'==(x+y)/x,r[1][1])};]"
+        ),
+        "{Homogeneous,1,True}"
+    );
+    assert_eq!(
+        run(
+            &mut env,
+            "[Local(r);r:=OdeExtSolveHomogeneous(y'==(y/x)^2);{r[2],Length(r[1]),OdeExtVerifyHomogeneous(y'==(y/x)^2,r[1][1]),Simplify(OdeTest(y'==(y/x)^2,r[1][2])),Simplify(OdeTest(y'==(y/x)^2,r[1][3]))};]"
+        ),
+        "{Homogeneous,3,True,0,0}"
+    );
+    assert_eq!(
+        run(&mut env, "Length(OdeExtSolveHomogeneous(y'==x+y))"),
+        "0"
+    );
+}

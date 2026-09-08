@@ -185,6 +185,70 @@ RuleBase("OdeExtVerifyExact", {equation, solution});
 ];
 100 # OdeExtVerifyExact(_equation, _solution) <-- False;
 
+/* Homogeneous first-order equations y'=F(y/x).  The v=y/x substitution
+   gives x*v'=F(v)-v.  Equilibrium slopes remain separate line solutions. */
+RuleBase("OdeExtSolveHomogeneous", {equation});
+10 # OdeExtSolveHomogeneous(y' == _rhs) <-- OdeExtSolveHomogeneousRhs(rhs);
+100 # OdeExtSolveHomogeneous(_equation) <-- {};
+
+OdeExtSolveHomogeneousRhs(_rhs) <--
+[
+    Local(transformed, denominator, integral, potential, constant,
+          rootAssignments, solutions, root, line);
+    transformed := Simplify(ApplyPure("Subst", {y/x, z, rhs}));
+    if (Not(IsFreeOf({x, y}, transformed)) Or IsFreeOf(z, transformed)) [
+        transformed := Simplify(ApplyPure("Subst", {y, z*x, rhs}));
+    ];
+    if (Not(IsFreeOf(x, transformed)) Or IsFreeOf(z, transformed)) [
+        {};
+    ] else [
+        denominator := Simplify(transformed - z);
+        if (denominator = 0) [
+            {};
+        ] else [
+            solutions := {};
+            integral := Integrate(z) (1 / denominator);
+            if (IsFreeOf(Integrate, integral)) [
+                potential := Simplify(
+                    ApplyPure("Subst", {z, y/x, integral}) - Ln(x));
+                constant := UniqueConstant();
+                DestructiveAppend(solutions, potential == constant);
+            ];
+            rootAssignments := Solve(denominator == 0, z);
+            ForEach(root, rootAssignments) [
+                if (Length(root) = 2) [
+                    line := Simplify(x * root[2]);
+                    DestructiveAppend(solutions, line);
+                ];
+            ];
+            If(Length(solutions) > 0, {solutions, Homogeneous}, {});
+        ];
+    ];
+];
+
+RuleBase("OdeExtVerifyHomogeneous", {equation, solution});
+10 # OdeExtVerifyHomogeneous(_left == _right, _potential == _constant) _
+     (IsFreeOf({x, y}, constant)) <--
+[
+    Local(normal, m, n, fx, fy, derivedRhs);
+    normal := Simplify(left - right);
+    if (Degree(normal, y') != 1) [
+        False;
+    ] else [
+        m := Simplify(Coef(normal, y', 0));
+        n := Simplify(Coef(normal, y', 1));
+        fx := ApplyPure("D", {x, potential});
+        fy := ApplyPure("D", {y, potential});
+        if (n = 0 Or fy = 0) [
+            False;
+        ] else [
+            derivedRhs := Simplify(-fx / fy);
+            Simplify(derivedRhs + m / n) = 0;
+        ];
+    ];
+];
+100 # OdeExtVerifyHomogeneous(_equation, _solution) <-- False;
+
 5 # ExtendedOdeSolve(y' == _rhs) _
     (IsFreeOf(y, rhs)) <-- {{OdeSolve(y' == rhs)}, Upstream};
 
@@ -194,6 +258,9 @@ RuleBase("OdeExtVerifyExact", {equation, solution});
     result := OdeExtSolveSeparable(y' == rhs);
     if (Length(result) != 2) [
         result := OdeExtSolveLinearFirstOrder(y' == rhs);
+    ];
+    if (Length(result) != 2) [
+        result := OdeExtSolveHomogeneous(y' == rhs);
     ];
     If(Length(result) = 2, result, {{OdeSolve(y' == rhs)}, Upstream});
 ];
@@ -239,5 +306,8 @@ RuleBase("OdeExtVerifyExact", {equation, solution});
 [
     Local(result);
     result := OdeExtSolveExact(equation);
+    if (Length(result) != 2) [
+        result := OdeExtSolveHomogeneous(equation);
+    ];
     If(Length(result) = 2, result, {{OdeSolve(equation)}, Upstream});
 ];
