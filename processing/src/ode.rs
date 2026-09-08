@@ -27,6 +27,7 @@ pub enum OdeStatus {
 pub enum OdeMethod {
     Upstream,
     Separable,
+    LinearFirstOrder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -244,6 +245,7 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
             let method = match args.pop().unwrap() {
                 Expr::Symbol(value) if value == "Upstream" => OdeMethod::Upstream,
                 Expr::Symbol(value) if value == "Separable" => OdeMethod::Separable,
+                Expr::Symbol(value) if value == "LinearFirstOrder" => OdeMethod::LinearFirstOrder,
                 other => return Err(EngineError::Parse(format!("未知 ODE 求解方法: {other}"))),
             };
             let residual = args.pop().unwrap();
@@ -367,6 +369,36 @@ mod tests {
     }
 
     #[test]
+    fn solves_nonhomogeneous_first_order_linear_equations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for equation in ["y'+y==x", "y'+2*y==x"] {
+            let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
+            assert_eq!(result.status, OdeStatus::Solved, "{equation}");
+            assert_eq!(result.method, OdeMethod::LinearFirstOrder);
+            assert_eq!(result.residual, "0");
+        }
+
+        let result = solve(
+            &mut engine,
+            "y'+y==x",
+            "x",
+            "y",
+            &[InitialCondition {
+                derivative_order: 0,
+                point: "0",
+                value: "2",
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            result.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        assert!(result.constants.is_empty());
+        assert_eq!(result.residual, "0");
+    }
+
+    #[test]
     fn translates_variables_and_applies_initial_values() {
         let mut engine = RustEngine::spawn().unwrap();
         let result = solve(
@@ -435,7 +467,7 @@ mod tests {
     #[test]
     fn classifies_unsupported_equations_by_residual() {
         let mut engine = RustEngine::spawn().unwrap();
-        let equation = "y'+y==x";
+        let equation = "y''+Sin(y)==0";
         let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
         assert_eq!(result.status, OdeStatus::Unresolved, "{equation}");
         assert_ne!(result.residual, "0");

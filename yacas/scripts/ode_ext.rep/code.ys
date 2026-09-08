@@ -50,9 +50,55 @@ OdeExtSolveSeparableRhs(_rhs) <--
     ];
 ];
 
+RuleBase("OdeExtSolveLinearFirstOrder", {equation});
+
+10 # OdeExtSolveLinearFirstOrder(y' + _dependentTerm == _rhs) _
+     (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
+     OdeExtSolveLinearFirstOrderParts(
+         Coef(dependentTerm, y, 1),
+         rhs - Coef(dependentTerm, y, 0));
+11 # OdeExtSolveLinearFirstOrder(y' - _dependentTerm == _rhs) _
+     (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
+     OdeExtSolveLinearFirstOrderParts(
+         -Coef(dependentTerm, y, 1),
+         rhs + Coef(dependentTerm, y, 0));
+12 # OdeExtSolveLinearFirstOrder(_dependentTerm + y' == _rhs) _
+     (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
+     OdeExtSolveLinearFirstOrderParts(
+         Coef(dependentTerm, y, 1),
+         rhs - Coef(dependentTerm, y, 0));
+20 # OdeExtSolveLinearFirstOrder(y' == _rhs) _
+     (Degree(rhs, y) = 1) <--
+     OdeExtSolveLinearFirstOrderParts(-Coef(rhs, y, 1), Coef(rhs, y, 0));
+100 # OdeExtSolveLinearFirstOrder(_equation) <-- {};
+
+OdeExtSolveLinearFirstOrderParts(_p, _q) <--
+[
+    Local(integratingExponent, integratingFactor, antiderivative,
+          constant, candidate);
+    if (p = 0 Or Not(IsFreeOf(y, {p, q}))) [
+        {};
+    ] else [
+        integratingExponent := Integrate(x) p;
+        integratingFactor := Exp(integratingExponent);
+        antiderivative := Integrate(x) Simplify(q * integratingFactor);
+        if (Not(IsFreeOf(Integrate, integratingExponent)) Or
+            Not(IsFreeOf(Integrate, antiderivative))) [
+            {};
+        ] else [
+            constant := UniqueConstant();
+            candidate := Simplify((antiderivative + constant) / integratingFactor);
+            {candidate, LinearFirstOrder};
+        ];
+    ];
+];
+
 ExtendedOdeSolve(_equation) <--
 [
     Local(result);
     result := OdeExtSolveSeparable(equation);
+    if (Length(result) != 2) [
+        result := OdeExtSolveLinearFirstOrder(equation);
+    ];
     If(Length(result) = 2, result, {OdeSolve(equation), Upstream});
 ];

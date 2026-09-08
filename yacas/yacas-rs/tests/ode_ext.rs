@@ -48,3 +48,20 @@ fn inherited_entry_is_unchanged_and_extended_entry_falls_back() {
         "Upstream"
     );
 }
+
+#[test]
+fn extended_entry_solves_first_order_linear_equations() {
+    let mut env = boot();
+    for equation in ["y'+y==x", "y'+2*y==x"] {
+        assert_eq!(
+            run(
+                &mut env,
+                &format!(
+                    "[Local(r);r:=ExtendedOdeSolve({equation});{{r[2],Simplify(OdeTest({equation},r[1]))}};]"
+                )
+            ),
+            "{LinearFirstOrder,0}",
+            "{equation}"
+        );
+    }
+}
