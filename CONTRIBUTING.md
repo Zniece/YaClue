@@ -5,8 +5,9 @@ root unless a command says otherwise.
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace -- --test-threads=1
+cargo clippy -p yacas-rs -p processing --all-targets -- -D warnings
+cargo test -p yacas-rs --lib
+cargo test -p processing --lib -- --test-threads=1 --skip ode::tests::
 node --check app/src/main.js
 ```
 
@@ -24,11 +25,9 @@ Review every resulting diff before committing:
 UPDATE_GOLDEN=1 cargo test -p processing --test steps_golden
 ```
 
-The `CI` workflow applies the normal checks to pushes and pull requests. The
-tests run serially because the symbolic ODE cases enforce request deadlines
-and can otherwise compete for CPU on shared runners. The
-`Release build` workflow can be started manually and also runs for alpha, beta,
-and release-candidate tags such as `v0.1.0-alpha.1`. It verifies unsigned
-Release builds on Linux, macOS Apple Silicon, and Windows. Uploading artifacts,
-creating a public GitHub Release, and building signed installers follow the
-resource-distribution milestone.
+The `CI` workflow applies fast checks to pushes and pull requests. Full
+workspace tests run before prerelease builds and use one test thread because
+the symbolic ODE cases enforce request deadlines. The `Prerelease` workflow
+can be started manually to verify packages. Alpha, beta, and release-candidate
+tags such as `v0.1.0-alpha.1` publish unsigned Linux, macOS Apple Silicon, and
+Windows packages to GitHub Releases.

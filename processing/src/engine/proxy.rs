@@ -26,6 +26,10 @@ impl RustEngineProxy {
         Self::spawn_with_initializer(RustEngine::spawn)
     }
 
+    pub fn spawn_with_scripts(scripts: String, steps: String) -> Result<Self, EngineError> {
+        Self::spawn_with_initializer(move || RustEngine::spawn_with_scripts(scripts, steps))
+    }
+
     pub(super) fn spawn_with_initializer(
         initialize: impl FnOnce() -> Result<RustEngine, EngineError> + Send + 'static,
     ) -> Result<Self, EngineError> {

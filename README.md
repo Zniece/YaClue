@@ -82,9 +82,9 @@ cargo test -p processing
 
 Contributor checks and CI/release-build details are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md). GitHub Actions runs formatting, Clippy,
-workspace tests, and the frontend JavaScript check on every push and pull
-request. A separate manual workflow verifies unsigned three-platform Release
-builds without publishing a GitHub Release.
+fast engine and processing tests, and the frontend JavaScript check on every
+push and pull request. Prerelease tags build bundled three-platform packages
+after the complete test suite passes.
 
 The engine boots the script library through a `DefaultDirectory` +
 `Load("yacasinit.ys")` sequence (see `processing/src/engine/rust.rs`); the step

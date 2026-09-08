@@ -11,6 +11,7 @@ use processing::plot::{SampleOptions, SampledPlot};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, MutexGuard};
+use tauri::Manager;
 
 fn lock_engine<'a>(
     state: &'a tauri::State<'_, Mutex<RustEngineProxy>>,
@@ -415,10 +416,26 @@ fn evaluate(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let engine = RustEngineProxy::spawn()
-        .expect("无法初始化 Rust yacas 引擎(可用 YACAS_SCRIPTS 环境变量指定脚本库)");
     tauri::Builder::default()
-        .manage(Mutex::new(engine))
+        .setup(|app| {
+            let resources = app.path().resource_dir()?;
+            let scripts = std::env::var("YACAS_SCRIPTS").unwrap_or_else(|_| {
+                resources
+                    .join("yacas/scripts")
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            let steps = std::env::var("YACAS_STEPS_SCRIPTS").unwrap_or_else(|_| {
+                resources
+                    .join("processing/scripts")
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            let engine = RustEngineProxy::spawn_with_scripts(scripts, steps)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            app.manage(Mutex::new(engine));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             calculate_steps,
             transform_expression,
