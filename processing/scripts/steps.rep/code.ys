@@ -937,6 +937,37 @@ StepsL'Lim(_expr, _var, _at, _dir) <--
        Apply("Limit", {var, at, dir, expr}));
 
 StepsL'Data(_expr, _var, _at, _dir) <--
+    If(Type(expr) = "-" And Length(Listify(expr)) = 3,
+       StepsL'DifferenceData(expr, var, at, dir),
+       StepsL'GeneralData(expr, var, at, dir));
+
+StepsL'DifferenceData(_expr, _var, _at, _dir) <--
+[
+  Local(parts, left, right, leftLimit, rightLimit, transformed, final,
+        substituted);
+  parts := Listify(expr);
+  left := parts[2];
+  right := parts[3];
+  leftLimit := StepsL'Lim(left, var, at, dir);
+  rightLimit := StepsL'Lim(right, var, at, dir);
+  if (((leftLimit = Infinity) And (rightLimit = Infinity)) Or
+      ((leftLimit = -Infinity) And (rightLimit = -Infinity))) [
+    transformed := If(Type(left) = "/" Or Type(right) = "/",
+                      Together(expr),
+                      If(Type(left) = "Sqrt" And Type(right) = "Sqrt",
+                         Simplify((Listify(left)[2] - Listify(right)[2]) /
+                                  (left + right)),
+                         Simplify(left * (1 - right/left))));
+    final := StepsL'Lim(transformed, var, at, dir);
+    {Transform, Difference, leftLimit, rightLimit, transformed, final};
+  ] else [
+    substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+    final := StepsL'Lim(expr, var, at, dir);
+    {Direct, substituted, final};
+  ];
+];
+
+StepsL'GeneralData(_expr, _var, _at, _dir) <--
 [
   Local(parts, numerator, denominator, numeratorLimit, denominatorLimit,
         derivativeQuotient, final, substituted, indeterminate, events, rounds,
@@ -990,33 +1021,6 @@ StepsL'Data(_expr, _var, _at, _dir) <--
                                  ApplyPure("D", {var, 1/right})));
       final := StepsL'Lim(transformed, var, at, dir);
       {Transform, Product, leftLimit, rightLimit, transformed, final};
-    ] else [
-      substituted := Eval(ApplyPure("Subst", {var, at, expr}));
-      final := StepsL'Lim(expr, var, at, dir);
-      {Direct, substituted, final};
-    ];
-  ] else if (Type(expr) = "-") [
-    parts := Listify(expr);
-    if (Length(parts) = 3) [
-      left := parts[2];
-      right := parts[3];
-      leftLimit := StepsL'Lim(left, var, at, dir);
-      rightLimit := StepsL'Lim(right, var, at, dir);
-      if (((leftLimit = Infinity) And (rightLimit = Infinity)) Or
-          ((leftLimit = -Infinity) And (rightLimit = -Infinity))) [
-        transformed := If(Type(left) = "/" Or Type(right) = "/",
-                          Together(expr),
-                          If(Type(left) = "Sqrt" And Type(right) = "Sqrt",
-                          Simplify((Listify(left)[2] - Listify(right)[2]) /
-                                   (left + right)),
-                          Simplify(left * (1 - right/left))));
-        final := StepsL'Lim(transformed, var, at, dir);
-        {Transform, Difference, leftLimit, rightLimit, transformed, final};
-      ] else [
-        substituted := Eval(ApplyPure("Subst", {var, at, expr}));
-        final := StepsL'Lim(expr, var, at, dir);
-        {Direct, substituted, final};
-      ];
     ] else [
       substituted := Eval(ApplyPure("Subst", {var, at, expr}));
       final := StepsL'Lim(expr, var, at, dir);
