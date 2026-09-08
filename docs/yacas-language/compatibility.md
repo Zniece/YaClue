@@ -1,6 +1,6 @@
 # Compatibility and Stability
 
-Yacas retains the basic Yacas rule-language and standard-script model, while this project owns its Rust engine, script revisions, resource limits, and product interfaces. Compatibility keeps scripts maintainable; it does not freeze historical implementation details.
+Yacas retains the basic Yacas rule-language and standard-script model, while this project owns its Rust engine, script revisions, resource limits, and product interfaces. Compatibility keeps scripts maintainable while allowing the implementation to evolve.
 
 ## Stability levels
 
@@ -9,7 +9,7 @@ Yacas retains the basic Yacas rule-language and standard-script model, while thi
 | Language syntax and evaluation | Highest; changes require specification and language-test updates |
 | Public standard-script entries | Preserve verified entries; prefer new rules or versioned entries for extensions |
 | Core commands | Preserve semantics required by standard scripts; internal Rust organization may change |
-| Low-level Rust modules | Primarily internal; no stable facade is promised yet |
+| Low-level Rust modules | Repository-internal interfaces pending the high-level facade |
 | Processing and GUI | Product APIs outside the Yacas scripting language standard |
 
 ## Order of behavioral authority
@@ -17,9 +17,9 @@ Yacas retains the basic Yacas rule-language and standard-script model, while thi
 1. Behavior explicitly documented and tested by this project;
 2. the [language specification](language-spec.md);
 3. the current Rust core and standard scripts;
-4. historical descriptions in the detailed reference.
+4. migration descriptions in the detailed reference.
 
-Output from an older implementation does not override current tests by itself. Treat a discrepancy as a compatibility defect only when it has a complete, stable reproducer and violates the current contract.
+A discrepancy qualifies as a compatibility defect when a complete, stable reproducer demonstrates a violation of the current contract. Older implementations remain useful evidence during that investigation.
 
 ## Permitted improvements
 
@@ -29,10 +29,10 @@ For an intentional observable change, document the trigger, old and new behavior
 
 ## Maintaining standard scripts
 
-Standard scripts retain public functions and executable rules. New algorithms should normally enter a clearly sourced extension package. Incremental maintenance neither preserves defects nor forbids refactoring; it requires tests and avoids accidental breakage of unrelated scripts.
+Standard scripts retain public functions and executable rules. New algorithms should normally enter a clearly sourced extension package. Tests define the maintained behavior and protect unrelated scripts during refactoring.
 
-Before moving a script algorithm into Rust, consider maintainability, performance, rule extensibility, and licensing. The fact that Rust can express the same algorithm is not sufficient reason to migrate it.
+Move a script algorithm into Rust when maintainability, measured performance, rule extensibility, and licensing together support that placement.
 
 ## Sources and attribution
 
-The programming guide, function reference, and algorithm notes originated in Yacas documentation; their licenses and contributor records remain here. They are now this project's maintenance baseline, but historical functions do not imply complete product support. The repository's `oracle` may be consulted during compatibility investigations; normal builds, tests, and releases do not depend on it.
+The programming guide, function reference, and algorithm notes originated in Yacas documentation; their licenses and contributor records remain here. They are now this project's maintenance baseline. Tests and product contracts identify supported functions. The repository's `oracle` supplies optional evidence for compatibility investigations, while the Rust implementation drives builds, tests, and releases.

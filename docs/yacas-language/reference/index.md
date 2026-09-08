@@ -1,8 +1,8 @@
 # Yacas Scripting Language Function Reference
 
-This manual documents core commands and standard-script functions callable from Yacas. Rust implements the current core, while maintained `.ys` scripts provide high-level symbolic algorithms. Shared call syntax does not imply a shared implementation layer.
+This manual documents core commands and standard-script functions callable from Yacas. Rust implements the current core, while maintained `.ys` scripts provide high-level symbolic algorithms. The reference labels each entry by its implementation layer.
 
-The manual includes historical functions that are not exposed by the product interface. See the [language specification](../language-spec.md) and [compatibility policy](../compatibility.md) for guarantees and stability boundaries.
+The manual also records historical functions for migration and implementation research. See the [language specification](../language-spec.md) and [compatibility policy](../compatibility.md) for guarantees and stability boundaries.
 
 See the [function availability audit](availability.md) for the initial comparison against the current implementation.
 

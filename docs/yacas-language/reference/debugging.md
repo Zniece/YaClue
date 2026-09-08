@@ -1,6 +1,6 @@
 # Debugging and Tracing
 
-> **Scope:** This page describes tracing implemented by the current Rust engine. Interactive commands from the historical script debugger depend on unavailable console-input hooks and are not stable entries.
+> **Scope:** This page describes the tracing facilities implemented by the current Rust engine.
 
 ## TraceExp(expr)
 
@@ -10,7 +10,7 @@
 ToString()[TraceExp(1+1);];
 ```
 
-Hosts should capture the engine output stream when consuming a trace. Trace text is not currently a stable structured product protocol.
+Hosts capture trace diagnostics from the engine output stream. Product integrations use their own structured event protocols.
 
 ## TraceRule(template, expr)
 
@@ -21,11 +21,11 @@ f(x) := x+1;
 TraceRule(f(_x), f(3));
 ```
 
-The Rust implementation emits `TrEnter` and `TrLeave` for rule calls. It applies to script functions, not core commands. The actual core interface is the two-argument `TraceRule(template, expr)`, despite historical documentation showing bodied syntax.
+The Rust implementation emits `TrEnter` and `TrLeave` for script-function rule calls. Its core interface is `TraceRule(template, expr)`.
 
 ## TraceStack(expr)
 
-The name `TraceStack` remains for script compatibility. The Rust evaluator does not retain a displayable historical call stack, so this command evaluates and returns `expr` without printing old-style frames. Do not rely on it to diagnose recursion failures until structured frame recording exists.
+`TraceStack(expr)` currently evaluates and returns `expr`. Structured frame recording is tracked as a future tracing capability.
 
 ## CustomEval
 
@@ -40,4 +40,4 @@ Debug state is reset when callbacks finish. See the [Yacas programming guide](..
 
 ## Profiling
 
-`Profile` is a standard-script call profiler built on `CustomEval` and adds substantial evaluation overhead. Measure engine hot paths, rule attempts, and numeric performance with Rust benchmarks, `YACAS_RULE_STATS`, and representative persistent sessions. Do not use trace output as a performance benchmark.
+`Profile` is a standard-script call profiler built on `CustomEval` and adds substantial evaluation overhead. Rust benchmarks, `YACAS_RULE_STATS`, and representative persistent sessions provide performance measurements for engine hot paths, rule attempts, and numeric work.

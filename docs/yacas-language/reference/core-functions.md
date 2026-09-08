@@ -1,15 +1,15 @@
 # Rust Core Functions
-> **Scope:** This page distinguishes Rust core commands, standard scripts, and historical compatibility entries. A discoverable name does not imply that every argument boundary has been validated. See the [availability audit](availability.md).
+> **Scope:** This page classifies low-level entries as Rust core commands, standard-script adapters, or migration entries. The [availability audit](availability.md) records validation evidence.
 
 ## Interface layers
 
-This page collects low-level functions used directly by standard-script authors. Rust does not register all of them as core commands. They fall into these groups:
+This page collects low-level functions used directly by standard-script authors in these groups:
 
 - **Rust core commands:** logic, comparisons, integers, basic arithmetic, `Fast*`, and shifts;
 - **standard-script numeric adapters:** `MathExp`, `MathLog`, `MathPower`, trigonometric and inverse-trigonometric functions, and `MathSqrt`;
-- **historical entries:** unavailable hyperbolic `Math*`, console timing, and prompt functions are listed only in the [availability audit](availability.md).
+- **migration entries:** earlier hyperbolic `Math*`, console timing, and prompt names are catalogued in the [availability audit](availability.md).
 
-Core commands are implemented under `yacas/yacas-rs/src/commands` and entered in the single `commands::register_core_commands` registry. Rules can extend or replace standard-script adapters. The `Math` prefix alone does not identify an implementation layer, and core commands are not automatically faster than script functions.
+Core commands are implemented under `yacas/yacas-rs/src/commands` and entered in the single `commands::register_core_commands` registry. Rules can extend or replace standard-script adapters. The registry identifies the implementation layer, while measurements determine relative performance.
 
 ## Rust logic, comparison, and integer commands
 

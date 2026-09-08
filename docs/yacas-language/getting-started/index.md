@@ -1,6 +1,6 @@
 # Getting Started
 
-The current Yacas engine is implemented in Rust and its standard scripts live in the project. Building and testing requires neither C++, CMake, Java, nor a separately installed Yacas.
+The project builds and tests with stable Rust and its bundled standard scripts.
 
 ## Build and test
 
@@ -25,7 +25,7 @@ npm install
 npm run tauri dev
 ```
 
-`cargo build -p app` builds the Rust application member directly. The current interface is a backend integration test bench, not the final GUI. Ordinary mathematical fields accept a single-expression Yacas subset, and equation systems are split by line. The direct Yacas evaluation entry uses the persistent engine session and is intended for trusted development use.
+`cargo build -p app` builds the Rust application member directly. The current interface is a backend integration test bench used before the final GUI design. Ordinary mathematical fields accept a single-expression Yacas subset, and equation systems are split by line. The direct Yacas evaluation entry uses the persistent engine session and is intended for trusted development use.
 
 ## Initialize standard scripts
 
@@ -35,7 +35,7 @@ A bare `Environment::new()` registers only the language core. A complete CAS con
 Load("yacasinit.ys");
 ```
 
-Processing performs this initialization and then loads teaching-step scripts. Embedded applications should locate packaged resources explicitly instead of relying on the working directory.
+Processing performs this initialization and then loads teaching-step scripts. Embedded applications locate scripts through their packaged resource directory.
 
 ## Write scripts
 
@@ -48,4 +48,4 @@ square(5);
 
 Packages commonly place code in `name.rep/code.ys` and register deferred functions through `.def`. See the [language specification](../language-spec.md) and [programming guide](../programming/index.md).
 
-The repository's `oracle` is used only for specific compatibility investigations. It does not participate in normal builds or determine whether intentional improvements should be reverted.
+The repository's `oracle` is an optional evidence source for specific compatibility investigations. Current contracts and regression tests govern intentional improvements.

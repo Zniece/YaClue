@@ -1,6 +1,6 @@
 # Function Availability Audit
 
-This page explains how to interpret the detailed function reference. The manual contains current core commands and standard-script entries as well as a few historical entries and package helpers. Its length is not a capability count.
+This page classifies detailed function-reference entries as core commands, standard scripts, package helpers, or migration entries. The audited counts describe documentation structure.
 
 ## Structural audit: 2026-09-09
 
@@ -11,31 +11,31 @@ The audit created an `Environment` with current `yacas-rs`, loaded `yacasinit.ys
 | Level-three reference headings | 523 |
 | Headings recognizable as functions or operators | 507 |
 | Names directly discoverable after full startup | 503 |
-| Headings not directly discovered | 4 |
+| Names available after package loading | 4 |
 
-After obsolete interfaces were removed, only four package-local names are not directly discoverable at startup.
+Four package-local names become available when their packages load.
 
-## Historical entries not provided
+## Migration entries
 
 - `Factorize`: use the standard-script `Factor` or a specific polynomial interface.
-- `ExtraInfo'Set`: historical object metadata not exposed by the current expression model.
-- `MathSinh`, `MathCosh`, `MathTanh`, and the three hyperbolic `MathArc*` functions: use public standard-script functions.
-- `IsPromptShown` and `ReadCmdLineString`: historical console hooks; the Rust host now supplies input.
-- `GetTime`: historical interpreter timing; use Rust benchmarks or host timing.
+- `ExtraInfo'Set`: migrate object metadata to structures supported by the current expression model.
+- `MathSinh`, `MathCosh`, `MathTanh`, and the three hyperbolic `MathArc*` names: use their public standard-script functions.
+- `IsPromptShown` and `ReadCmdLineString`: the Rust host supplies console interaction.
+- `GetTime`: Rust benchmarks and host timing provide elapsed-time measurement.
 
-These names remain here only as migration guidance and are not required interfaces.
+These names provide migration guidance for scripts written against earlier interfaces.
 
 ## Names available after package loading
 
 - The graph operator `->` is declared by the graph package.
 - `OrthoPoly` and `OrthoPolySum` are internal orthogonal-polynomial helpers.
-- `GetError` lives in the I/O error script but has no independent `.def` entry.
+- `GetError` loads with the I/O error script through that package's public entries.
 
-These names do not by themselves indicate a startup failure. Load the package through a registered public entry before checking its internal functions.
+Load the package through a registered public entry before checking its internal functions.
 
 ## Module comparison
 
-“Test mentions” means only that a name occurs in current `yacas/tests/*.yts`; it does not imply full argument or boundary coverage. It helps prioritize later behavioral audits.
+“Test mentions” counts textual occurrences in current `yacas/tests/*.yts`. Dedicated behavior tests record argument and boundary coverage. The count helps prioritize later audits.
 
 | Page | Function headings | Discoverable at startup | `.yts` test mentions |
 |---|---:|---:|---:|
@@ -63,15 +63,15 @@ These names do not by themselves indicate a startup failure. Load the package th
 | `solvers.md` | 12 | 12 | 9 |
 | `univariate-polynomials.md` | 14 | 12 | 9 |
 
-Pages not listed contain fewer functions and follow the same rules. Add behavioral evidence before promoting historical descriptions to stable commitments.
+Pages with fewer functions follow the same rules. Behavioral evidence promotes a description to a stable commitment.
 
-## Discoverable does not mean validated
+## Evidence levels
 
-The structural audit proves only that a name is registered by the core or scripts. Its arguments and results still require `.yts`, Rust, or product regression tests. Documentation uses these levels:
+The structural audit records names registered by the core or scripts. `.yts`, Rust, and product regression tests supply evidence for arguments and results. Documentation uses these levels:
 
 1. **Language core:** covered by Rust core tests;
 2. **Standard-script entry:** exposed through `.def` and expected to have `.yts` behavior tests;
 3. **Package helper:** guaranteed only as needed by its public package entry;
-4. **Historical entry:** migration guidance without a compatibility commitment.
+4. **Migration entry:** guidance for earlier scripts.
 
-Future audits should record test coverage and known boundaries on the relevant page instead of producing a static, implementation-independent “everything supported” list.
+Future audits record test coverage and known boundaries on each relevant page, keeping support claims tied to executable evidence.

@@ -6,7 +6,7 @@ A function is identified by name and argument count, so `f(x)` and `f(x,y)` may 
 
 ## Array
 
-A fixed-length mutable container managed by the Rust engine through `Array'Create`, `Array'Get`, `Array'Set`, and `Array'Size`. Historical interfaces classify it as a generic object.
+A fixed-length mutable container managed by the Rust engine through `Array'Create`, `Array'Get`, `Array'Set`, and `Array'Size`.
 
 ## Atom
 
@@ -24,16 +24,16 @@ Computer Algebra System. Yacas is a rule language for CAS work; `yacas-rs` evalu
 <a id="constant"></a>
 ## Constant
 
-A symbol such as `Pi` with mathematical meaning supplied by standard scripts rather than an ordinary variable binding. It can remain symbolic until `N` requests an approximation.
+A symbol such as `Pi` whose mathematical meaning is supplied by standard scripts. It can remain symbolic until `N` requests an approximation.
 
 <a id="cached-constant"></a>
 ## Cached constant
 
-An expensive constant cached at a computed precision. Scripts should use [CachedConstant](reference/numeric-programming.md#cachedconstantcache-cname-cfunc) instead of depending on internal cache names.
+An expensive constant cached at a computed precision. Scripts access this mechanism through [CachedConstant](reference/numeric-programming.md#cachedconstantcache-cname-cfunc).
 
 ## Equation
 
-`lhs == rhs` constructs a symbolic equation. `==` does not assign. Do not confuse it with `=`, which performs equality testing in applicable language contexts.
+`lhs == rhs` constructs a symbolic equation. Assignment uses `:=`, while `=` performs equality testing in applicable language contexts.
 
 ## Function
 
@@ -57,7 +57,7 @@ A nonnegative integer controlling operator binding; smaller Yacas values bind mo
 
 ## Property
 
-A migration term for historical expression metadata. The current Rust expression model does not expose `ExtraInfo'Set` as a required interface.
+A historical term for expression metadata, retained in migration documentation for scripts that used `ExtraInfo'Set`.
 
 ## Rule
 
@@ -73,7 +73,7 @@ Yacas surface syntax combines calls with configurable operators. The parser uses
 
 ## Threaded function
 
-A function for which standard scripts define element-wise list rules. Threading is rule-specific and is not automatic evaluator broadcasting.
+A function for which standard scripts define element-wise list rules. Each function activates threading through its own rules.
 
 ## Variable
 

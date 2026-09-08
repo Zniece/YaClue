@@ -6,7 +6,7 @@
 
 ## Array（数组）
 
-由 Rust 引擎管理的定长容器，通过 `Array'Create`、`Array'Get`、`Array'Set` 和 `Array'Size` 操作。数组元素可变，但长度固定。它在历史接口中被归入 generic object；当前实现不加载任意原生对象插件。
+由 Rust 引擎管理的定长容器，通过 `Array'Create`、`Array'Get`、`Array'Set` 和 `Array'Size` 操作。数组元素可变，长度固定。
 
 ## Atom（原子）
 
@@ -40,11 +40,11 @@ Computer Algebra System，即计算机代数系统。Yacas 是面向 CAS 的规�
 <a id="cached-constant"></a>
 ## Cached constant（缓存常量）
 
-计算成本较高并按已求得精度缓存的常量。脚本应通过 [CachedConstant](../yacas-language/reference/numeric-programming.md#cachedconstantcache-cname-cfunc) 使用这一机制，不直接依赖缓存的内部变量名。
+计算成本较高并按已求得精度缓存的常量。脚本通过 [CachedConstant](../yacas-language/reference/numeric-programming.md#cachedconstantcache-cname-cfunc) 使用这一机制。
 
 ## Equation（方程）
 
-`lhs == rhs` 构造符号方程。`==` 不赋值；方程可以传给 `Solve`、ODE 求解器和验证函数。`=` 在部分语言上下文中执行相等性判断，两者不能混用。
+`lhs == rhs` 构造可传给 `Solve`、ODE 求解器和验证函数的符号方程。赋值使用 `:=`，`=` 在相应语言上下文中执行相等性判断。
 
 ## Function（函数）
 
@@ -68,7 +68,7 @@ Computer Algebra System，即计算机代数系统。Yacas 是面向 CAS 的规�
 
 ## Property（属性）
 
-旧文档曾用 `ExtraInfo'Set` 给表达式附加标签。当前 Rust 表达式模型没有公开这一入口，因此 property 只作为旧脚本迁移术语保留，不属于当前必须接口。
+Property 是与历史 `ExtraInfo'Set` 表达式标签相关的迁移术语。
 
 ## Rule（规则）
 
@@ -84,7 +84,7 @@ Yacas 使用函数调用和可配置运算符组成的表面语法。解析器�
 
 ## Threaded function（逐元素函数）
 
-标准脚本可以为函数定义列表规则，使一次调用逐元素作用于列表，例如 `Cos({Pi/2,Pi/4})`。这不是求值器对所有函数自动实施的广播语义；是否 threaded 由具体脚本规则决定。
+标准脚本可以为函数定义列表规则，使一次调用逐元素作用于列表，例如 `Cos({Pi/2,Pi/4})`。每个函数通过自己的脚本规则启用 threaded 行为。
 
 ## Variable（变量）
 

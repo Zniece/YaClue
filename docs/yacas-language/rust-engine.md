@@ -19,7 +19,7 @@ The source tree and the single command registry are authoritative for the core i
 
 ## Creating an environment
 
-`Environment::new()` creates an isolated environment, registers standard operators and core commands, creates Boolean values, protects basic symbols, and establishes a local frame. It does not locate standard scripts automatically.
+`Environment::new()` creates an isolated core environment, registers standard operators and commands, creates Boolean values, protects basic symbols, and establishes a local frame. The host then configures the standard-script directory.
 
 ```rust
 use yacas_rs::{env::Environment, evaluator, parser};
@@ -35,13 +35,13 @@ Applications should configure the script directory and load `yacasinit.ys` befor
 
 ## Environments, parsing, and threads
 
-Variables, rules, assumptions, precision, loading state, and operators belong to an `Environment`; separate environments share no mutable state. Expression nodes use `Rc`, so the low-level environment is not a concurrent cross-thread object. Keep it on one worker thread and serialize requests through message passing.
+Variables, rules, assumptions, precision, loading state, and operators belong to an `Environment`. Each environment owns its mutable state. Expression nodes use `Rc`; cross-thread applications keep the environment on one worker and serialize requests through message passing.
 
-`parse_expression` parses one semicolon-terminated expression. `parse_one` reads expressions successively from a stream. Parsing depends on the current operator table. `evaluator::eval` returns an expression tree; hosts should consume that structure instead of reparsing display text.
+`parse_expression` parses one semicolon-terminated expression. `parse_one` reads expressions successively from a stream. Parsing uses the current operator table. `evaluator::eval` returns an expression tree for direct structured consumption by the host.
 
 ## Boundary for core extensions
 
-A new Rust core command should require engine internals, low-level numeric access, controlled I/O, or behavior that rules cannot implement reliably. It must define argument evaluation and scope, return structured `YacasError` values, check deadlines in long loops, use the appropriate `commands` module and central registry, and have core and dependent-script tests.
+A new Rust core command should serve engine internals, low-level numeric access, controlled I/O, or behavior whose reliable implementation requires the core. It must define argument evaluation and scope, return structured `YacasError` values, check deadlines in long loops, use the appropriate `commands` module and central registry, and have core and dependent-script tests.
 
 Readable symbolic identities and transformations normally belong in `.ys` scripts. Rust suits basic mechanisms, numeric hot paths, resource limits, and host interfaces. Processing suits product orchestration, verification, and teaching events.
 
@@ -49,8 +49,8 @@ Readable symbolic identities and transformations normally belong in `.ys` script
 
 `Environment::set_eval_timeout` sets a request deadline, while `max_eval_depth` bounds recursion. Hosts should clear deadlines at request completion and reclaim temporary unique symbols according to session policy.
 
-Yacas includes file, loading, and system-call capabilities. A public expression input is not equivalent to a trusted script interface. Products should validate a single expression and reject unnecessary constructs. Full scripts belong only to trusted packages or explicit development interfaces.
+Yacas includes file, loading, and system-call capabilities. Products expose a validated single-expression interface to users and reserve full script execution for trusted packages or explicit development interfaces.
 
 ## Rust API stability
 
-The crate currently exposes low-level modules mainly for repository-internal use. `Rc<LispObject>`, `Environment` fields, and thread protocols are not yet a stable facade. A future CAS facade will wrap sessions, evaluation, batched numeric work, and errors. Yacas compatibility does not require these Rust types to remain unchanged.
+The crate currently exposes low-level modules for repository-internal use. A future stable CAS facade will wrap sessions, evaluation, batched numeric work, and errors; `Rc<LispObject>`, `Environment` fields, and thread protocols remain implementation details.

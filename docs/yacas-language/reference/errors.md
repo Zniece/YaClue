@@ -1,5 +1,5 @@
 # Errors, Diagnostics, and Source Locations
-> **Scope:** This page distinguishes Rust core commands, standard scripts, and historical compatibility entries. A discoverable name does not imply that every argument boundary has been validated. See the [availability audit](availability.md).
+> **Scope:** This page classifies low-level entries as Rust core commands, standard-script adapters, or migration entries. The [availability audit](availability.md) records validation evidence.
 
 ## Error reporting
 

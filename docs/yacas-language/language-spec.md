@@ -1,6 +1,6 @@
 # Yacas Scripting Language Specification
 
-This document defines the Yacas scripting language maintained by YaClue. “Must” denotes behavior on which implementations and scripts may rely. Historical entries not covered here or by tests do not automatically become core language requirements.
+This document defines the Yacas scripting language maintained by YaClue. “Must” denotes behavior on which implementations and scripts may rely. This specification and executable tests identify the core language requirements.
 
 ## 1. Programs and statements
 
@@ -12,7 +12,7 @@ f(t) := t^2;
 f(x);
 ```
 
-`//` starts a line comment and `/* ... */` encloses a block comment. Identifiers are case-sensitive. Product input fields commonly accept one expression only; this product contract does not restrict `.ys` files to one statement.
+`//` starts a line comment and `/* ... */` encloses a block comment. Identifiers are case-sensitive. Product input fields commonly accept one expression, while `.ys` files support statement sequences.
 
 ## 2. Object model
 
@@ -25,7 +25,7 @@ Language values form expression trees:
 - **Lists:** `{a,b}` is surface syntax for `List(a,b)`;
 - **Containers:** arrays and associations created by core commands.
 
-An unknown symbol is a valid value. An unknown function does not cause an “undeclared function” error: its arguments are evaluated and the call is retained. Expressions can therefore serve as both data and programs.
+Unbound symbols and unresolved calls are valid values. The evaluator evaluates the arguments of an unresolved call and retains its head, allowing expressions to serve as both data and programs.
 
 ## 3. Surface syntax
 
@@ -46,7 +46,7 @@ Evaluation takes an environment and an expression tree and returns either an exp
 
 ### Atoms
 
-Numbers and strings evaluate to themselves. Symbol lookup checks local bindings before global bindings and returns the symbol itself when it is unbound. Reading an ordinary binding does not repeatedly reevaluate its stored expression. A lazy global binding is evaluated and cached on first access.
+Numbers and strings evaluate to themselves. Symbol lookup checks local bindings before global bindings and returns an unbound symbol as itself. An ordinary binding returns its stored expression directly. A lazy global binding is evaluated and cached on first access.
 
 ### Calls
 
@@ -60,9 +60,9 @@ A core command controls how its arguments are evaluated. Rule bases evaluate arg
 
 ### Held and unfinished computations
 
-`Hold(expr)` prevents further evaluation of `expr` at the current boundary; `Eval(expr)` explicitly requests evaluation. Nested holds, macro arguments, and backquoting can change evaluation counts, so rules must not assume that every argument is evaluated exactly once.
+`Hold(expr)` suspends evaluation of `expr` at the current boundary; `Eval(expr)` explicitly requests evaluation. Nested holds, macro arguments, and backquoting can change evaluation counts, so rules account for the evaluation policy of each argument.
 
-When symbolic computation cannot proceed, it normally returns an unevaluated expression. This is a valid result. Type errors, invalid arguments, parse failures, exhausted depth, and interruption are returned as errors.
+An unfinished symbolic computation returns an unevaluated expression as a valid result. Type errors, invalid arguments, parse failures, exhausted depth, and interruption are returned as errors.
 
 ## 5. Variables and scope
 
@@ -76,7 +76,7 @@ f(x) := [
 ];
 ```
 
-Use `LocalSymbols` or `TemplateFunction` when constructing expressions for later evaluation so formal parameters cannot collide with names in the caller. `Protect`, `UnProtect`, and `IsProtected` manage protected symbols.
+Use `LocalSymbols` or `TemplateFunction` when constructing expressions for later evaluation to give formal parameters collision-free names. `Protect`, `UnProtect`, and `IsProtected` manage protected symbols.
 
 ## 6. Rule system
 
@@ -111,7 +111,7 @@ DefaultDirectory("/path/to/scripts/");
 Load("yacasinit.ys");
 ```
 
-A `.def` file is an index, not an implementation. Packages commonly use `name.rep/code.ys` with a corresponding `.def`. `Load` loads a specified file, while `Use` avoids duplicate loading.
+A `.def` file indexes implementation files. Packages commonly use `name.rep/code.ys` with a corresponding `.def`. `Load` loads a specified file, while `Use` avoids duplicate loading.
 
 ## 9. Numbers, errors, and resource limits
 
