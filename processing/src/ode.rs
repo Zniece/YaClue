@@ -11,6 +11,7 @@ use crate::input::{
     analyze_expression, contains_exact_power, contains_product_factor, contains_ratio_symbols,
     strip_tex_delimiters, validate_expression, validate_symbol,
 };
+use crate::steps::{Step, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 pub const MAX_ODE_ORDER: u32 = 2;
@@ -80,6 +81,194 @@ pub struct OdeResult {
     /// Substitution residual returned by `OdeTest`.
     pub residual: String,
     pub constants: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OdeStepResult {
+    pub result: OdeResult,
+    pub steps: Vec<Step>,
+}
+
+pub fn solve_steps(
+    engine: &mut dyn Engine,
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+    initial_conditions: &[InitialCondition<'_>],
+) -> Result<OdeStepResult, EngineError> {
+    solve_steps_with_verbosity(
+        engine,
+        equation,
+        independent,
+        dependent,
+        initial_conditions,
+        StepVerbosity::Detailed,
+    )
+}
+
+pub fn solve_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+    initial_conditions: &[InitialCondition<'_>],
+    verbosity: StepVerbosity,
+) -> Result<OdeStepResult, EngineError> {
+    let result = solve(engine, equation, independent, dependent, initial_conditions)?;
+    let steps = ode_steps(engine, equation, independent, dependent, &result, verbosity)?;
+    Ok(OdeStepResult { result, steps })
+}
+
+fn ode_steps(
+    engine: &mut dyn Engine,
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+    result: &OdeResult,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    let mut events = vec![OdeEvent::new(
+        "ode-start",
+        equation,
+        "读取微分方程并确定其阶数。",
+        StepImportance::Routine,
+    )];
+    events.extend(method_events(
+        result.method,
+        equation,
+        independent,
+        dependent,
+    ));
+    if !result.constants.is_empty() {
+        events.push(OdeEvent::new(
+            "ode-constant",
+            &result.solution,
+            "引入任意常数，得到通解。",
+            StepImportance::Normal,
+        ));
+    }
+    if result.status == OdeStatus::Solved {
+        events.push(OdeEvent::new(
+            "ode-verify",
+            equation,
+            "将候选解代回原方程，残差为零。",
+            StepImportance::Routine,
+        ));
+    }
+    let final_expression = if result.solutions.len() == 1 {
+        result.solution.clone()
+    } else {
+        format!("{{{}}}", result.solutions.join(","))
+    };
+    events.push(OdeEvent::new(
+        "ode-result",
+        &final_expression,
+        if result.status == OdeStatus::Solved {
+            "得到微分方程的解。"
+        } else {
+            "当前方法未能得到经过验证的解析解。"
+        },
+        StepImportance::Key,
+    ));
+
+    let last = events.len().saturating_sub(1);
+    let events: Vec<_> = events
+        .into_iter()
+        .enumerate()
+        .filter(|(index, event)| {
+            *index == last
+                || match verbosity {
+                    StepVerbosity::Detailed => true,
+                    StepVerbosity::Standard => event.importance != StepImportance::Routine,
+                    StepVerbosity::Concise => event.importance == StepImportance::Key,
+                }
+        })
+        .map(|(_, event)| event)
+        .collect();
+    let expressions: Vec<_> = events.iter().map(|event| event.expr.clone()).collect();
+    let tex = engine.render_tex_batch(&expressions)?;
+    if tex.len() != events.len() {
+        return Err(EngineError::Parse(
+            "ODE 批量 TeX 结果数量与步骤数量不一致".into(),
+        ));
+    }
+    Ok(events
+        .into_iter()
+        .zip(tex)
+        .map(|(event, tex)| Step {
+            rule: event.rule,
+            expr: event.expr,
+            why: event.why,
+            tex: strip_tex_delimiters(&tex),
+            importance: event.importance,
+        })
+        .collect())
+}
+
+struct OdeEvent {
+    rule: String,
+    expr: String,
+    why: String,
+    importance: StepImportance,
+}
+
+impl OdeEvent {
+    fn new(rule: &str, expr: &str, why: &str, importance: StepImportance) -> Self {
+        Self {
+            rule: rule.into(),
+            expr: expr.into(),
+            why: why.into(),
+            importance,
+        }
+    }
+}
+
+fn method_events(
+    method: OdeMethod,
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+) -> Vec<OdeEvent> {
+    let (rule, why) = match method {
+        OdeMethod::Upstream => ("ode-method-upstream", "使用标准 ODE 求解规则。"),
+        OdeMethod::Separable => (
+            "ode-method-separable",
+            "识别为可分离变量方程，将两类变量分别积分。",
+        ),
+        OdeMethod::LinearFirstOrder => (
+            "ode-method-linear-first-order",
+            "识别为一阶线性方程，使用积分因子求解。",
+        ),
+        OdeMethod::Bernoulli => (
+            "ode-method-bernoulli",
+            "识别为 Bernoulli 方程，作倒数代换后化为线性方程。",
+        ),
+        OdeMethod::Exact => (
+            "ode-method-exact",
+            "识别为恰当方程，构造势函数并令其等于常数。",
+        ),
+        OdeMethod::Homogeneous => (
+            "ode-method-homogeneous",
+            "识别为一阶齐次方程，用因变量与自变量之比作代换。",
+        ),
+    };
+    let mut events = vec![OdeEvent::new(rule, equation, why, StepImportance::Key)];
+    match method {
+        OdeMethod::Bernoulli => events.push(OdeEvent::new(
+            "ode-substitute-reciprocal",
+            &format!("v==1/{dependent}"),
+            "令 v 为因变量的倒数。变换可能遗漏零解，因此在结果中单独补回。",
+            StepImportance::Normal,
+        )),
+        OdeMethod::Homogeneous => events.push(OdeEvent::new(
+            "ode-substitute-ratio",
+            &format!("v=={dependent}/{independent}"),
+            "令 v 为因变量与自变量之比，将方程化为可分离变量方程。",
+            StepImportance::Normal,
+        )),
+        _ => {}
+    }
+    events
 }
 
 pub fn solve(
@@ -776,6 +965,64 @@ mod tests {
             .all(|branch| branch.kind == OdeSolutionKind::Explicit));
         assert!(branches.solutions.iter().any(|solution| solution == "0"));
         assert!(branches.solutions.iter().any(|solution| solution == "x"));
+    }
+
+    #[test]
+    fn emits_filtered_steps_from_the_verified_ode_result() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (equation, method, method_rule) in [
+            ("y'==x*y", OdeMethod::Separable, "ode-method-separable"),
+            (
+                "y'+y==x",
+                OdeMethod::LinearFirstOrder,
+                "ode-method-linear-first-order",
+            ),
+            ("y'+y==x*y^2", OdeMethod::Bernoulli, "ode-method-bernoulli"),
+            (
+                "2*x*y+3+(x^2+4*y)*y'==0",
+                OdeMethod::Exact,
+                "ode-method-exact",
+            ),
+            (
+                "y'==(x+y)/x",
+                OdeMethod::Homogeneous,
+                "ode-method-homogeneous",
+            ),
+        ] {
+            let stepped = solve_steps_with_verbosity(
+                &mut engine,
+                equation,
+                "x",
+                "y",
+                &[],
+                StepVerbosity::Standard,
+            )
+            .unwrap();
+            assert_eq!(stepped.result.method, method, "{equation}");
+            assert!(stepped.steps.iter().any(|step| step.rule == method_rule));
+            assert_eq!(stepped.steps.last().unwrap().rule, "ode-result");
+            assert!(stepped.steps.iter().all(|step| !step.tex.is_empty()));
+            assert!(stepped
+                .steps
+                .iter()
+                .all(|step| step.importance != StepImportance::Routine));
+        }
+
+        let concise = solve_steps_with_verbosity(
+            &mut engine,
+            "y'==(y/x)^2",
+            "x",
+            "y",
+            &[],
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        assert_eq!(concise.result.solutions.len(), 3);
+        assert!(concise
+            .steps
+            .iter()
+            .all(|step| step.importance == StepImportance::Key));
+        assert!(concise.steps.last().unwrap().expr.starts_with('{'));
     }
 
     #[test]
