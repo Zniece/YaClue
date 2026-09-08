@@ -2,6 +2,7 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
+use crate::steps::{Step, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -60,6 +61,154 @@ pub struct LimitResult {
     pub tex: String,
     pub direction: LimitDirection,
     pub conditions: Vec<LimitCondition>,
+}
+
+pub fn limit_steps(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    at: &str,
+    direction: LimitDirection,
+) -> Result<Vec<Step>, EngineError> {
+    limit_steps_with_verbosity(
+        engine,
+        expression,
+        variable,
+        at,
+        direction,
+        StepVerbosity::Detailed,
+    )
+}
+
+pub fn limit_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    at: &str,
+    direction: LimitDirection,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    validate_expression(expression, "极限表达式")?;
+    validate_expression(at, "趋近点")?;
+    validate_symbol(variable, "极限变量")?;
+
+    let direction_symbol = match direction {
+        LimitDirection::Both => "Both",
+        LimitDirection::Left => "Left",
+        LimitDirection::Right => "Right",
+    };
+    let data = engine.eval_expr(&format!(
+        "StepsL'Data({expression},{variable},{at},{direction_symbol})"
+    ))?;
+    let Expr::Call { head, args } = data else {
+        return Err(EngineError::Parse("极限步骤事件不是列表".into()));
+    };
+    if head != "List" || args.is_empty() {
+        return Err(EngineError::Parse("极限步骤事件形态异常".into()));
+    }
+
+    let direction_suffix = match direction {
+        LimitDirection::Both => "",
+        LimitDirection::Left => "^{-}",
+        LimitDirection::Right => "^{+}",
+    };
+    let mut steps = Vec::new();
+    if verbosity == StepVerbosity::Detailed {
+        let rendered = engine
+            .render_tex_batch(&[expression.trim().into(), at.trim().into()])?
+            .into_iter()
+            .map(|tex| strip_tex_delimiters(&tex))
+            .collect::<Vec<_>>();
+        steps.push(Step {
+            rule: "limit-start".into(),
+            expr: format!("Limit({variable},{at})({})", expression.trim()),
+            why: "建立极限问题".into(),
+            tex: format!(
+                "\\lim_{{{} \\to {}{}}} {}",
+                variable, rendered[1], direction_suffix, rendered[0]
+            ),
+            importance: StepImportance::Routine,
+        });
+    }
+
+    match args[0].to_string().as_str() {
+        "Direct" if args.len() == 3 => {
+            let substituted = args[1].to_string();
+            let final_value = args[2].to_string();
+            let tex = engine
+                .render_tex_batch(&[substituted.clone(), final_value.clone()])?
+                .into_iter()
+                .map(|tex| strip_tex_delimiters(&tex))
+                .collect::<Vec<_>>();
+            steps.push(Step {
+                rule: "limit-direct-substitution".into(),
+                expr: substituted.clone(),
+                why: format!("直接代入 {variable} = {}", at.trim()),
+                tex: tex[0].clone(),
+                importance: StepImportance::Key,
+            });
+            if final_value != substituted {
+                steps.push(Step {
+                    rule: "limit-result".into(),
+                    expr: final_value,
+                    why: "得到极限值".into(),
+                    tex: tex[1].clone(),
+                    importance: StepImportance::Key,
+                });
+            }
+        }
+        "LHopital" if args.len() == 5 => {
+            let numerator = args[1].to_string();
+            let denominator = args[2].to_string();
+            let derivative = args[3].to_string();
+            let final_value = args[4].to_string();
+            let show_indeterminate = verbosity != StepVerbosity::Concise;
+            let expressions = if show_indeterminate {
+                vec![
+                    numerator.clone(),
+                    denominator.clone(),
+                    derivative.clone(),
+                    final_value.clone(),
+                ]
+            } else {
+                vec![derivative.clone(), final_value.clone()]
+            };
+            let tex = engine
+                .render_tex_batch(&expressions)?
+                .into_iter()
+                .map(|tex| strip_tex_delimiters(&tex))
+                .collect::<Vec<_>>();
+            let offset = if show_indeterminate {
+                steps.push(Step {
+                    rule: "limit-indeterminate-form".into(),
+                    expr: format!("{numerator}/{denominator}"),
+                    why: format!("代入后分子与分母分别趋于 {numerator} 和 {denominator}"),
+                    tex: format!("\\frac{{{}}}{{{}}}", tex[0], tex[1]),
+                    importance: StepImportance::Normal,
+                });
+                2
+            } else {
+                0
+            };
+            steps.push(Step {
+                rule: "limit-lhopital".into(),
+                expr: derivative,
+                why: "应用洛必达法则，分别对分子和分母求导".into(),
+                tex: tex[offset].clone(),
+                importance: StepImportance::Key,
+            });
+            steps.push(Step {
+                rule: "limit-result".into(),
+                expr: final_value,
+                why: "计算变换后的极限".into(),
+                tex: tex[offset + 1].clone(),
+                importance: StepImportance::Key,
+            });
+        }
+        method => return Err(EngineError::Parse(format!("未知极限步骤方法: {method}"))),
+    }
+
+    Ok(steps)
 }
 
 pub fn limit(
@@ -198,6 +347,50 @@ mod tests {
         assert_eq!(left.status, LimitStatus::NegativeInfinity, "{}", left.value);
         let both = limit(&mut engine, "1/x", "x", "0", LimitDirection::Both).unwrap();
         assert_eq!(both.status, LimitStatus::DoesNotExist);
+    }
+
+    #[test]
+    fn explains_direct_substitution_and_lhopital_limits() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let direct = limit_steps(&mut engine, "x^2+1", "x", "2", LimitDirection::Both).unwrap();
+        assert_eq!(direct.last().unwrap().rule, "limit-direct-substitution");
+        assert_eq!(direct.last().unwrap().expr, "5");
+
+        let lhopital =
+            limit_steps(&mut engine, "(x^2-4)/(x-2)", "x", "2", LimitDirection::Both).unwrap();
+        assert_eq!(
+            lhopital
+                .iter()
+                .map(|step| step.rule.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "limit-start",
+                "limit-indeterminate-form",
+                "limit-lhopital",
+                "limit-result"
+            ]
+        );
+        assert_eq!(lhopital[1].expr, "0/0");
+        assert_eq!(lhopital[2].expr, "(2 * x)");
+        assert_eq!(lhopital[3].expr, "4");
+        assert!(lhopital.iter().all(|step| !step.tex.is_empty()));
+    }
+
+    #[test]
+    fn limit_step_verbosity_filters_before_rendering() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let concise = limit_steps_with_verbosity(
+            &mut engine,
+            "(x^2-4)/(x-2)",
+            "x",
+            "2",
+            LimitDirection::Both,
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        assert_eq!(concise.len(), 2);
+        assert_eq!(concise[0].rule, "limit-lhopital");
+        assert_eq!(concise[1].rule, "limit-result");
     }
 
     #[test]

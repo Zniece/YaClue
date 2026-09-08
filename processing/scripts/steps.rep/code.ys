@@ -924,6 +924,47 @@ StepsD'Full(expr, var, order) :=
 ];
 StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var), "i");
 
+/* ---------- 极限语义事件 ----------
+   复用 Lim 的求值与洛必达条件，不建立第二套极限求解器。返回值只描述
+   processing 渲染步骤所需的中间事实：
+   {Direct, 代入值, 终值} 或
+   {LHopital, 分子极限, 分母极限, 导数商, 终值}。 */
+
+StepsL'Lim(_expr, _var, _at, _dir) <--
+    If(dir = Both,
+       Apply("Limit", {var, at, expr}),
+       Apply("Limit", {var, at, dir, expr}));
+
+StepsL'Data(_expr, _var, _at, _dir) <--
+[
+  Local(parts, numerator, denominator, numeratorLimit, denominatorLimit,
+        derivativeQuotient, final, substituted, indeterminate);
+  if (Type(expr) = "/") [
+    parts := Listify(expr);
+    numerator := parts[2];
+    denominator := parts[3];
+    numeratorLimit := StepsL'Lim(numerator, var, at, dir);
+    denominatorLimit := StepsL'Lim(denominator, var, at, dir);
+    indeterminate :=
+      Limit'IsIndeterminateQuotient(numeratorLimit, denominatorLimit);
+    if (indeterminate) [
+      derivativeQuotient :=
+        Simplify(ApplyPure("D", {var, numerator}) /
+                 ApplyPure("D", {var, denominator}));
+      final := StepsL'Lim(derivativeQuotient, var, at, dir);
+      {LHopital, numeratorLimit, denominatorLimit, derivativeQuotient, final};
+    ] else [
+      substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+      final := StepsL'Lim(expr, var, at, dir);
+      {Direct, substituted, final};
+    ];
+  ] else [
+    substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+    final := StepsL'Lim(expr, var, at, dir);
+    {Direct, substituted, final};
+  ];
+];
+
 /* ---------- 定积分 StepsI'Def:不定积分链 + 牛顿-莱布尼茨求值 ----------
    教学化引擎 IntegrateRange(Where 代限值)的思路:先走完整不定积分
    步骤链得原函数 F,再追加"代限值"步骤 F(b) - F(a) 并求值。

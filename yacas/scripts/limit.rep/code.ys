@@ -46,16 +46,20 @@
 <-- ConditionalValue(0, ConditionLess(power, 0));
 
 /*  Special limit #4:  0 / 0;  #5:  Infinity / Infinity  */
+Limit'IsIndeterminateQuotient(_lx, _ly) <--
+[
+    Local(infx, infy);
+    infx := (IsInfinity(lx) Or (IsZero(Re(lx)) And IsInfinity(Im(lx))));
+    infy := (IsInfinity(ly) Or (IsZero(Re(ly)) And IsInfinity(Im(ly))));
+    (IsZero(lx) And IsZero(ly)) Or (infx And infy);
+];
+
 300 # Lim(_var, _tar, _dir, _x / _y)_
 ( [
-    Local(lx,ly,infx,infy);
+    Local(lx,ly);
      lx := Lim(var, tar, dir, x);
      ly := Lim(var, tar, dir, y);
-     infx := (IsInfinity(lx) Or (IsZero(Re(lx)) And IsInfinity(Im(lx))));
-     infy := (IsInfinity(ly) Or (IsZero(Re(ly)) And IsInfinity(Im(ly))));
-    ((IsZero(lx) And IsZero(ly)) Or
-     (infx And infy)
-     );
+     Limit'IsIndeterminateQuotient(lx, ly);
 ] )
 <-- Lim(var, tar, dir, ApplyPure("D", {var, x})/ApplyPure("D", {var, y}));
 
