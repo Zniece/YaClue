@@ -30,7 +30,7 @@ fn extended_entry_solves_separable_equations_and_verifies_them() {
             run(
                 &mut env,
                 &format!(
-                    "[Local(r);r:=ExtendedOdeSolve({equation});{{r[2],Simplify(OdeTest({equation},r[1]))}};]"
+                    "[Local(r);r:=ExtendedOdeSolve({equation});{{r[2],Simplify(OdeTest({equation},r[1][1]))}};]"
                 )
             ),
             "{Separable,0}",
@@ -57,11 +57,23 @@ fn extended_entry_solves_first_order_linear_equations() {
             run(
                 &mut env,
                 &format!(
-                    "[Local(r);r:=ExtendedOdeSolve({equation});{{r[2],Simplify(OdeTest({equation},r[1]))}};]"
+                    "[Local(r);r:=ExtendedOdeSolve({equation});{{r[2],Simplify(OdeTest({equation},r[1][1]))}};]"
                 )
             ),
             "{LinearFirstOrder,0}",
             "{equation}"
         );
     }
+}
+
+#[test]
+fn bernoulli_extension_keeps_the_equilibrium_branch() {
+    let mut env = boot();
+    assert_eq!(
+        run(
+            &mut env,
+            "[Local(r);r:=OdeExtSolveBernoulli(y'+y==x*y^2);{r[2],Length(r[1]),Simplify(OdeTest(y'+y==x*y^2,r[1][1])),Simplify(OdeTest(y'+y==x*y^2,r[1][2]))};]"
+        ),
+        "{Bernoulli,2,0,0}"
+    );
 }

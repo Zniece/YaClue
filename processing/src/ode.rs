@@ -8,7 +8,8 @@
 use crate::engine::{Engine, EngineError, Expr};
 use crate::equations::{self, SolveCompleteness, SolveStatus};
 use crate::input::{
-    analyze_expression, strip_tex_delimiters, validate_expression, validate_symbol,
+    analyze_expression, contains_exact_power, strip_tex_delimiters, validate_expression,
+    validate_symbol,
 };
 use serde::Serialize;
 
@@ -28,6 +29,7 @@ pub enum OdeMethod {
     Upstream,
     Separable,
     LinearFirstOrder,
+    Bernoulli,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -54,6 +56,8 @@ pub struct OdeResult {
     pub initial_condition_status: InitialConditionStatus,
     pub order: u32,
     pub solution: String,
+    /// All verified branches. `solution` remains the primary branch for compatibility.
+    pub solutions: Vec<String>,
     pub tex: String,
     /// Substitution residual returned by `OdeTest`.
     pub residual: String,
@@ -94,6 +98,7 @@ pub fn solve(
             },
             order,
             solution: equation.trim().into(),
+            solutions: vec![equation.trim().into()],
             tex: equation.trim().into(),
             residual: equation.trim().into(),
             constants: vec![],
@@ -101,28 +106,31 @@ pub fn solve(
     }
 
     let canonical = to_canonical(equation, independent, dependent, order);
-    let upstream = engine.eval(&format!(
-        "[Local(sol,res); sol:=OdeSolve({canonical}); \
-         res:=If(sol=True,{canonical},Simplify(OdeTest({canonical},sol))); \
-         {{sol,res,Upstream}};]"
-    ))?;
-    let (mut solution, mut residual, mut method) = parse_wrapper(upstream.expr)?;
-    if residual.to_string() != "0" {
-        let extension = engine.eval(&format!(
-            "[Local(ext,sol,res); \
-             ext:=OdeExtSolveSeparable({canonical}); \
-             if (Length(ext) != 2) [ \
-                 ext:=OdeExtSolveLinearFirstOrder({canonical}); \
-             ]; \
-             if (Length(ext) = 2) [ \
-                 sol:=ext[1]; res:=Simplify(OdeTest({canonical},sol)); \
-                 {{sol,res,ext[2]}}; \
-             ] else {{}};]"
+    let prefer_extension = contains_exact_power(equation, dependent, "2", "微分方程")?;
+    let preferred = if prefer_extension {
+        try_extension(engine, &canonical)?
+    } else {
+        None
+    };
+    let (mut candidates, mut residual, mut method) = if let Some((solutions, method)) = preferred {
+        (solutions, Expr::Number("0".into()), method)
+    } else {
+        let upstream = engine.eval(&format!(
+            "[Local(sol,res); sol:=OdeSolve({canonical}); \
+             res:=If(sol=True,{canonical},Simplify(OdeTest({canonical},sol))); \
+             {{sol,res,Upstream}};]"
         ))?;
-        if let Some(extended) = parse_optional_wrapper(extension.expr)? {
-            (solution, residual, method) = extended;
+        let (solution, residual, method) = parse_wrapper(upstream.expr)?;
+        (vec![solution], residual, method)
+    };
+    if residual.to_string() != "0" && !prefer_extension {
+        if let Some((solutions, extension_method)) = try_extension(engine, &canonical)? {
+            candidates = solutions;
+            residual = Expr::Number("0".into());
+            method = extension_method;
         }
     }
+    let mut solution = candidates[0].clone();
     let mut status = if solution == Expr::Symbol("True".into()) {
         OdeStatus::NotDifferentialEquation
     } else if residual.to_string() == "0" {
@@ -136,7 +144,35 @@ pub fn solve(
     } else if status != OdeStatus::Solved {
         InitialConditionStatus::Unresolved
     } else {
-        apply_initial_conditions(engine, &mut solution, &mut constants, initial_conditions)?
+        let mut applied = Vec::new();
+        let mut applied_constants = Vec::new();
+        let mut saw_unresolved = false;
+        for mut candidate in candidates {
+            let mut candidate_constants = solution_constants(&candidate)?;
+            match apply_initial_conditions(
+                engine,
+                &mut candidate,
+                &mut candidate_constants,
+                initial_conditions,
+            )? {
+                InitialConditionStatus::Applied => {
+                    applied.push(candidate);
+                    applied_constants.push(candidate_constants);
+                }
+                InitialConditionStatus::Unresolved => saw_unresolved = true,
+                InitialConditionStatus::NoSolution | InitialConditionStatus::NotRequested => {}
+            }
+        }
+        candidates = applied;
+        if let Some(first) = candidates.first() {
+            solution = first.clone();
+            constants = applied_constants.remove(0);
+            InitialConditionStatus::Applied
+        } else if saw_unresolved {
+            InitialConditionStatus::Unresolved
+        } else {
+            InitialConditionStatus::NoSolution
+        }
     };
     if condition_status == InitialConditionStatus::NoSolution {
         status = OdeStatus::Unresolved;
@@ -145,19 +181,29 @@ pub fn solve(
         condition_status = InitialConditionStatus::Unresolved;
     }
 
-    let (solution, tex) = if status == OdeStatus::Solved {
-        let user_solution = from_canonical(&solution.to_string(), independent, dependent, order);
-        let rendered = engine.eval(&user_solution)?;
+    let (solution, solutions, tex) = if status == OdeStatus::Solved {
+        let mut rendered_solutions = Vec::new();
+        let mut primary_tex = String::new();
+        for (index, candidate) in candidates.iter().enumerate() {
+            let user_solution =
+                from_canonical(&candidate.to_string(), independent, dependent, order);
+            let rendered = engine.eval(&user_solution)?;
+            if index == 0 {
+                primary_tex = strip_tex_delimiters(&rendered.tex);
+            }
+            rendered_solutions.push(rendered.expr.to_string());
+        }
         (
-            rendered.expr.to_string(),
-            strip_tex_delimiters(&rendered.tex),
+            rendered_solutions[0].clone(),
+            rendered_solutions,
+            primary_tex,
         )
     } else {
         // Unsolved output can contain internal derivative placeholders such as
         // y(1). Evaluating that residual again may try to define a user
         // function, so preserve the verified engine tree verbatim.
         let raw = solution.to_string();
-        (raw.clone(), raw)
+        (raw.clone(), vec![raw.clone()], raw)
     };
     Ok(OdeResult {
         status,
@@ -165,6 +211,7 @@ pub fn solve(
         initial_condition_status: condition_status,
         order,
         solution,
+        solutions,
         tex,
         residual: residual.to_string(),
         constants,
@@ -260,6 +307,7 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
                 Expr::Symbol(value) if value == "Upstream" => OdeMethod::Upstream,
                 Expr::Symbol(value) if value == "Separable" => OdeMethod::Separable,
                 Expr::Symbol(value) if value == "LinearFirstOrder" => OdeMethod::LinearFirstOrder,
+                Expr::Symbol(value) if value == "Bernoulli" => OdeMethod::Bernoulli,
                 other => return Err(EngineError::Parse(format!("未知 ODE 求解方法: {other}"))),
             };
             let residual = args.pop().unwrap();
@@ -269,12 +317,60 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
     }
 }
 
-fn parse_optional_wrapper(expr: Expr) -> Result<Option<(Expr, Expr, OdeMethod)>, EngineError> {
-    if matches!(&expr, Expr::Call { head, args } if head == "List" && args.is_empty()) {
-        Ok(None)
-    } else {
-        parse_wrapper(expr).map(Some)
+fn parse_extension(expr: Expr) -> Result<Option<(Vec<Expr>, OdeMethod)>, EngineError> {
+    let Expr::Call { head, mut args } = expr else {
+        return Err(EngineError::Parse("ODE 扩展结果不是列表".into()));
+    };
+    if head != "List" {
+        return Err(EngineError::Parse("ODE 扩展结果不是列表".into()));
     }
+    if args.is_empty() {
+        return Ok(None);
+    }
+    if args.len() != 2 {
+        return Err(EngineError::Parse("ODE 扩展结果形态异常".into()));
+    }
+    let method = match args.pop().unwrap() {
+        Expr::Symbol(value) if value == "Separable" => OdeMethod::Separable,
+        Expr::Symbol(value) if value == "LinearFirstOrder" => OdeMethod::LinearFirstOrder,
+        Expr::Symbol(value) if value == "Bernoulli" => OdeMethod::Bernoulli,
+        other => return Err(EngineError::Parse(format!("未知 ODE 扩展方法: {other}"))),
+    };
+    let Expr::Call {
+        head,
+        args: candidates,
+    } = args.pop().unwrap()
+    else {
+        return Err(EngineError::Parse("ODE 扩展候选解不是列表".into()));
+    };
+    if head != "List" || candidates.is_empty() {
+        return Err(EngineError::Parse("ODE 扩展候选解为空".into()));
+    }
+    Ok(Some((candidates, method)))
+}
+
+fn try_extension(
+    engine: &mut dyn Engine,
+    canonical: &str,
+) -> Result<Option<(Vec<Expr>, OdeMethod)>, EngineError> {
+    let extension = engine.eval_expr(&format!(
+        "[Local(ext); \
+         ext:=OdeExtSolveSeparable({canonical}); \
+         if (Length(ext) != 2) [ext:=OdeExtSolveLinearFirstOrder({canonical});]; \
+         if (Length(ext) != 2) [ext:=OdeExtSolveBernoulli({canonical});]; ext;]"
+    ))?;
+    let Some((raw_candidates, method)) = parse_extension(extension)? else {
+        return Ok(None);
+    };
+    let mut verified = Vec::new();
+    for candidate in raw_candidates {
+        let residual =
+            engine.eval_expr(&format!("Simplify(OdeTest({canonical},{}))", candidate))?;
+        if residual.to_string() == "0" {
+            verified.push(candidate);
+        }
+    }
+    Ok((!verified.is_empty()).then_some((verified, method)))
 }
 
 fn solution_constants(solution: &Expr) -> Result<Vec<String>, EngineError> {
@@ -291,10 +387,24 @@ fn apply_initial_conditions(
     constants: &mut Vec<String>,
     conditions: &[InitialCondition<'_>],
 ) -> Result<InitialConditionStatus, EngineError> {
-    if constants.is_empty() {
-        return Ok(InitialConditionStatus::Unresolved);
-    }
     let solution_text = solution.to_string();
+    if constants.is_empty() {
+        for condition in conditions {
+            let value = if condition.derivative_order == 0 {
+                solution_text.clone()
+            } else {
+                format!("D(x,{}) ({solution_text})", condition.derivative_order)
+            };
+            let residual = engine.eval_expr(&format!(
+                "Simplify(Subst(x,{}) ({value})-({}))",
+                condition.point, condition.value
+            ))?;
+            if residual.to_string() != "0" {
+                return Ok(InitialConditionStatus::NoSolution);
+            }
+        }
+        return Ok(InitialConditionStatus::Applied);
+    }
     let equations: Vec<String> = conditions
         .iter()
         .map(|condition| {
@@ -418,6 +528,54 @@ mod tests {
         );
         assert!(result.constants.is_empty());
         assert_eq!(result.residual, "0");
+    }
+
+    #[test]
+    fn solves_bernoulli_equations_without_losing_zero_solution() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = solve(&mut engine, "y'+y==x*y^2", "x", "y", &[]).unwrap();
+        assert_eq!(result.status, OdeStatus::Solved);
+        assert_eq!(result.method, OdeMethod::Bernoulli);
+        assert_eq!(result.solutions.len(), 2);
+        assert!(result.solutions.iter().any(|solution| solution == "0"));
+
+        let zero = solve(
+            &mut engine,
+            "y'+y==x*y^2",
+            "x",
+            "y",
+            &[InitialCondition {
+                derivative_order: 0,
+                point: "0",
+                value: "0",
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            zero.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        assert_eq!(zero.solutions, vec!["0"]);
+
+        let nonzero = solve(
+            &mut engine,
+            "y'+y==x*y^2",
+            "x",
+            "y",
+            &[InitialCondition {
+                derivative_order: 0,
+                point: "0",
+                value: "1",
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            nonzero.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        assert_eq!(nonzero.solutions.len(), 1);
+        assert_ne!(nonzero.solutions[0], "0");
+        assert_eq!(nonzero.residual, "0");
     }
 
     #[test]

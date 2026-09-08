@@ -43,6 +43,22 @@ pub fn validate_expression(input: &str, label: &str) -> Result<(), EngineError> 
     analyze_expression(input, label).map(|_| ())
 }
 
+pub fn contains_exact_power(
+    input: &str,
+    symbol: &str,
+    exponent: &str,
+    label: &str,
+) -> Result<bool, EngineError> {
+    validate_safe_text(input, label)?;
+    let tree = PARSE_ENV.with(|env| {
+        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
+    });
+    let tree = tree
+        .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
+        .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
+    Ok(has_exact_power(&tree, symbol, exponent))
+}
+
 pub fn validate_symbol(symbol: &str, label: &str) -> Result<(), EngineError> {
     let mut chars = symbol.chars();
     if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -108,6 +124,27 @@ fn collect_symbols(
     }
 }
 
+fn has_exact_power(node: &Rc<LispObject>, symbol: &str, exponent: &str) -> bool {
+    let ObjectKind::Sublist(first) = &node.kind else {
+        return false;
+    };
+    let nodes: Vec<_> = spine_refs(first).collect();
+    if nodes.len() == 3
+        && nodes[0]
+            .atom_string()
+            .is_some_and(|name| name.as_ref() == "^")
+        && nodes[1]
+            .atom_string()
+            .is_some_and(|name| name.as_ref() == symbol)
+        && matches!(&nodes[2].kind, ObjectKind::Number(number) if number.string() == exponent)
+    {
+        return true;
+    }
+    nodes
+        .iter()
+        .any(|child| has_exact_power(child, symbol, exponent))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +163,11 @@ mod tests {
             assert!(validate_expression(input, "表达式").is_err(), "{input}");
         }
         assert!(validate_expression("(x+1)^2", "表达式").is_ok());
+    }
+
+    #[test]
+    fn detects_exact_symbol_powers_without_evaluation() {
+        assert!(contains_exact_power("y'+y==x*y^2", "y", "2", "ODE").unwrap());
+        assert!(!contains_exact_power("y'+y==x^2*y", "y", "2", "ODE").unwrap());
     }
 }

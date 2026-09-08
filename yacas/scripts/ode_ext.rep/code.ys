@@ -44,7 +44,7 @@ OdeExtSolveSeparableRhs(_rhs) <--
                 /* The host adapter performs the single authoritative OdeTest.
                    Repeating it here is expensive and some nonlinear identities
                    exceed the inherited simplifier's recursion budget. */
-                {candidate, Separable};
+                {{candidate}, Separable};
             ];
         ];
     ];
@@ -88,13 +88,46 @@ OdeExtSolveLinearFirstOrderParts(_p, _q) <--
         ] else [
             constant := UniqueConstant();
             candidate := Simplify((antiderivative + constant) / integratingFactor);
-            {candidate, LinearFirstOrder};
+            {{candidate}, LinearFirstOrder};
         ];
     ];
 ];
 
+RuleBase("OdeExtSolveBernoulli", {equation});
+
+5 # OdeExtSolveBernoulli(y' + y == _q * y^2) _
+    (IsFreeOf(y, q)) <-- OdeExtSolveBernoulliParts(1, q);
+5 # OdeExtSolveBernoulli(y' + y == y^2 * _q) _
+    (IsFreeOf(y, q)) <-- OdeExtSolveBernoulliParts(1, q);
+10 # OdeExtSolveBernoulli(y' + _p * y == _q * y^2) _
+     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliParts(p, q);
+10 # OdeExtSolveBernoulli(y' + y * _p == _q * y^2) _
+     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliParts(p, q);
+10 # OdeExtSolveBernoulli(y' + _p * y == y^2 * _q) _
+     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliParts(p, q);
+10 # OdeExtSolveBernoulli(y' + y * _p == y^2 * _q) _
+     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliParts(p, q);
+100 # OdeExtSolveBernoulli(_equation) <-- {};
+
+OdeExtSolveBernoulliParts(_p, _q) <--
+[
+    Local(integratingFactor, antiderivative, constant, transformed, candidate);
+    integratingFactor := Exp(-(Integrate(x) p));
+    antiderivative := Integrate(x) Simplify(-q * integratingFactor);
+    if (Not(IsFreeOf(Integrate, integratingFactor)) Or
+        Not(IsFreeOf(Integrate, antiderivative))) [
+        {};
+    ] else [
+        constant := UniqueConstant();
+        transformed := Simplify((antiderivative + constant) / integratingFactor);
+        candidate := Simplify(1 / transformed);
+        /* y=0 is lost by the v=1/y substitution and must remain explicit. */
+        {{candidate, 0}, Bernoulli};
+    ];
+];
+
 5 # ExtendedOdeSolve(y' == _rhs) _
-    (IsFreeOf(y, rhs)) <-- {OdeSolve(y' == rhs), Upstream};
+    (IsFreeOf(y, rhs)) <-- {{OdeSolve(y' == rhs)}, Upstream};
 
 10 # ExtendedOdeSolve(y' == _rhs) <--
 [
@@ -103,16 +136,19 @@ OdeExtSolveLinearFirstOrderParts(_p, _q) <--
     if (Length(result) != 2) [
         result := OdeExtSolveLinearFirstOrder(y' == rhs);
     ];
-    If(Length(result) = 2, result, {OdeSolve(y' == rhs), Upstream});
+    If(Length(result) = 2, result, {{OdeSolve(y' == rhs)}, Upstream});
 ];
 
 20 # ExtendedOdeSolve(y' + _dependentTerm == _rhs) <--
 [
     Local(result);
     result := OdeExtSolveLinearFirstOrder(y' + dependentTerm == rhs);
+    if (Length(result) != 2) [
+        result := OdeExtSolveBernoulli(y' + dependentTerm == rhs);
+    ];
     If(Length(result) = 2,
        result,
-       {OdeSolve(y' + dependentTerm == rhs), Upstream});
+       {{OdeSolve(y' + dependentTerm == rhs)}, Upstream});
 ];
 21 # ExtendedOdeSolve(y' - _dependentTerm == _rhs) <--
 [
@@ -120,7 +156,7 @@ OdeExtSolveLinearFirstOrderParts(_p, _q) <--
     result := OdeExtSolveLinearFirstOrder(y' - dependentTerm == rhs);
     If(Length(result) = 2,
        result,
-       {OdeSolve(y' - dependentTerm == rhs), Upstream});
+       {{OdeSolve(y' - dependentTerm == rhs)}, Upstream});
 ];
 22 # ExtendedOdeSolve(_dependentTerm + y' == _rhs) <--
 [
@@ -128,7 +164,7 @@ OdeExtSolveLinearFirstOrderParts(_p, _q) <--
     result := OdeExtSolveLinearFirstOrder(dependentTerm + y' == rhs);
     If(Length(result) = 2,
        result,
-       {OdeSolve(dependentTerm + y' == rhs), Upstream});
+       {{OdeSolve(dependentTerm + y' == rhs)}, Upstream});
 ];
 
-100 # ExtendedOdeSolve(_equation) <-- {OdeSolve(equation), Upstream};
+100 # ExtendedOdeSolve(_equation) <-- {{OdeSolve(equation)}, Upstream};
