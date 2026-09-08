@@ -22,11 +22,18 @@ const MODES = {
   transform: { title: "待变换表达式", help: "Apart 使用上方变量，其余变换不使用变量参数。", example: "(x+1)^2" },
   equation: { title: "方程（每行一个）", help: "方程组每行一个等式；求解变量可留空自动发现，或填写 x,y 显式指定。", example: "x+y==3\nx-y==1" },
   limit: { title: "极限表达式", help: "趋近值可填写 0、Infinity 等；支持左、右和双侧极限。", example: "Sin(x)/x" },
+  limit_steps: { title: "极限表达式", help: "展示连续洛必达、乘积/差/幂型不定式变换和参数条件。", example: "(1-Cos(x))/x^2" },
+  ode: { title: "常微分方程", help: "自变量使用上方输入，另行指定因变量；初值格式为 阶数,点,值。", example: "y'==(x+y)/x" },
+  ode_steps: { title: "常微分方程", help: "展示求解器实际产生的标准形、代换、积分因子和验算事件。", example: "y'+y==x" },
+  approximate: { title: "数值表达式", help: "按指定十进制精度近似，最高 1000 位。", example: "Pi" },
+  root: { title: "等于零的表达式", help: "Newton 数值求根；区间上下界可同时留空。", example: "Cos(x)-x" },
+  taylor: { title: "待展开表达式", help: "生成指定点和次数的 Taylor 多项式。", example: "Sin(x)" },
+  matrix: { title: "左矩阵", help: "使用 Yacas 列表矩阵语法；二元运算填写右操作数。", example: "{{1,2},{3,4}}" },
   plot: { title: "待绘制表达式", help: "使用批量采样和曲率细分；非有限点会断开曲线。", example: "Sin(x)" },
   evaluate: { title: "Yacas 表达式", help: "直接访问当前会话中的引擎，适合体验尚无专用界面的能力。", example: "Factor(x^4-1)" },
 };
 
-const STEP_MODES = new Set(["derivative", "integral", "definite"]);
+const STEP_MODES = new Set(["derivative", "integral", "definite", "limit_steps", "ode_steps"]);
 
 function updateMode(setExample = true) {
   const mode = modeEl.value;
@@ -40,6 +47,9 @@ function updateMode(setExample = true) {
   if (setExample) {
     exprEl.value = MODES[mode].example;
     variableEl.value = mode === "equation" ? "" : "x";
+    if (mode === "ode" || mode === "ode_steps") {
+      $("#dependent").value = "y";
+    }
   }
 }
 
@@ -122,6 +132,22 @@ function conditionText(condition) {
   return (condition.conditions || []).map(conditionText).join(condition.kind === "all" ? " 且 " : " 或 ");
 }
 
+function parseOdeConditions(value) {
+  if (!value.trim()) return [];
+  return value.split(/[;\n]+/).map((item) => {
+    const fields = item.split(",").map((field) => field.trim());
+    if (fields.length !== 3) throw new Error("初值条件格式应为：阶数,点,值；多项用分号分隔");
+    const derivativeOrder = Number(fields[0]);
+    if (!Number.isInteger(derivativeOrder) || derivativeOrder < 0) throw new Error("初值导数阶数必须是非负整数");
+    return { derivative_order: derivativeOrder, point: fields[1], value: fields[2] };
+  });
+}
+
+function optionalNumber(selector) {
+  const value = $(selector).value.trim();
+  return value === "" ? null : Number(value);
+}
+
 function renderPlot(result) {
   plotEl.hidden = false;
   const ratio = window.devicePixelRatio || 1;
@@ -181,7 +207,7 @@ async function calculate() {
     const mode = modeEl.value;
     const variable = variableEl.value.trim();
     let result;
-    if (STEP_MODES.has(mode)) {
+    if (["derivative", "integral", "definite"].includes(mode)) {
       result = await invoke("calculate_steps", {
         request: {
           kind: mode,
@@ -216,6 +242,66 @@ async function calculate() {
       result = await invoke("calculate_limit", { expr, variable, at: $("#at").value.trim(), direction: $("#direction").value });
       const conditions = result.conditions.map(conditionText);
       summary("极限结果", result.tex, [`状态：${result.status}`, ...conditions]);
+      showStructured(result);
+    } else if (mode === "limit_steps") {
+      result = await invoke("calculate_limit_steps", {
+        expr,
+        variable,
+        at: $("#at").value.trim(),
+        direction: $("#direction").value,
+        verbosity: $("#verbosity").value,
+      });
+      renderSteps(result);
+      showStructured(result);
+    } else if (mode === "ode" || mode === "ode_steps") {
+      const request = {
+        equation: expr,
+        independent: variable,
+        dependent: $("#dependent").value.trim(),
+        initialConditions: parseOdeConditions($("#ode-conditions").value),
+      };
+      if (mode === "ode_steps") {
+        result = await invoke("solve_ode_steps", { ...request, verbosity: $("#verbosity").value });
+        summary("ODE 结果", result.result.tex, [`状态：${result.result.status}`, `方法：${result.result.method}`, `${result.result.solutions.length} 个分支`]);
+        renderSteps(result.steps);
+      } else {
+        result = await invoke("solve_ode", request);
+        summary("ODE 结果", result.tex, [`状态：${result.status}`, `方法：${result.method}`, `${result.solutions.length} 个分支`]);
+      }
+      showStructured(result);
+    } else if (mode === "approximate") {
+      result = await invoke("approximate_numeric", { expr, precisionDigits: Number($("#precision").value) });
+      summary("数值近似", result.tex, [`类型：${result.kind}`, `精度：${result.precision_digits} 位`]);
+      showStructured(result);
+    } else if (mode === "root") {
+      result = await invoke("find_numeric_root", {
+        expr,
+        variable,
+        initial: Number($("#root-initial").value),
+        accuracy: Number($("#root-accuracy").value),
+        min: optionalNumber("#root-min"),
+        max: optionalNumber("#root-max"),
+      });
+      summary("数值根", result.tex, [`状态：${result.status}`]);
+      showStructured(result);
+    } else if (mode === "taylor") {
+      result = await invoke("calculate_taylor", {
+        expr,
+        variable,
+        point: $("#taylor-point").value.trim(),
+        degree: Number($("#taylor-degree").value),
+      });
+      summary("Taylor 多项式", result.tex, [`次数：${result.degree}`, result.unresolved ? "未完成" : "已完成"]);
+      showStructured(result);
+    } else if (mode === "matrix") {
+      const operation = $("#matrix-operation").value;
+      const binary = ["add", "multiply", "solve"].includes(operation);
+      result = await invoke("calculate_matrix", {
+        left: expr,
+        operation,
+        right: binary ? $("#matrix-right").value.trim() : null,
+      });
+      summary("线性代数结果", result.tex, [`运算：${result.operation}`, result.unresolved ? "未完成" : "已完成"]);
       showStructured(result);
     } else if (mode === "plot") {
       result = await invoke("sample_plot", { expr, variable, min: Number($("#plot-min").value), max: Number($("#plot-max").value) });

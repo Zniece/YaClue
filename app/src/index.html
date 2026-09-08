@@ -28,11 +28,18 @@
               <option value="transform">代数变换</option>
               <option value="equation">方程 / 方程组</option>
               <option value="limit">极限</option>
+              <option value="limit_steps">极限分步</option>
+              <option value="ode">常微分方程</option>
+              <option value="ode_steps">常微分方程分步</option>
+              <option value="approximate">任意精度近似</option>
+              <option value="root">数值求根</option>
+              <option value="taylor">Taylor 多项式</option>
+              <option value="matrix">线性代数</option>
               <option value="plot">函数绘图</option>
               <option value="evaluate">直接求值</option>
             </select>
           </label>
-          <label>变量<input id="variable" value="x" /></label>
+          <label>变量 / 自变量<input id="variable" value="x" /></label>
           <label data-for="steps">步骤粒度
             <select id="verbosity">
               <option value="standard">标准</option>
@@ -52,14 +59,37 @@
           </label>
           <label data-for="definite">下限<input id="from" value="0" /></label>
           <label data-for="definite">上限<input id="to" value="Pi" /></label>
-          <label data-for="limit">趋近值<input id="at" value="0" /></label>
-          <label data-for="limit">方向
+          <label data-for="limit limit_steps">趋近值<input id="at" value="0" /></label>
+          <label data-for="limit limit_steps">方向
             <select id="direction">
               <option value="both">双侧</option>
               <option value="left">左侧</option>
               <option value="right">右侧</option>
             </select>
           </label>
+          <label data-for="ode ode_steps">因变量<input id="dependent" value="y" /></label>
+          <label data-for="ode ode_steps" class="wide">初值条件
+            <input id="ode-conditions" placeholder="阶数,点,值；如 0,0,1" />
+          </label>
+          <label data-for="approximate">精度位数<input id="precision" type="number" min="1" max="1000" value="30" /></label>
+          <label data-for="root">初值<input id="root-initial" type="number" step="any" value="1" /></label>
+          <label data-for="root">误差<input id="root-accuracy" type="number" step="any" value="0.00000001" /></label>
+          <label data-for="root">区间下界<input id="root-min" type="number" step="any" placeholder="可留空" /></label>
+          <label data-for="root">区间上界<input id="root-max" type="number" step="any" placeholder="可留空" /></label>
+          <label data-for="taylor">展开点<input id="taylor-point" value="0" /></label>
+          <label data-for="taylor">次数<input id="taylor-degree" type="number" min="0" max="64" value="6" /></label>
+          <label data-for="matrix">矩阵运算
+            <select id="matrix-operation">
+              <option value="add">相加</option>
+              <option value="multiply">相乘</option>
+              <option value="transpose">转置</option>
+              <option value="determinant">行列式</option>
+              <option value="inverse">逆矩阵</option>
+              <option value="solve">解线性方程组</option>
+              <option value="eigenvalues">特征值</option>
+            </select>
+          </label>
+          <label data-for="matrix" class="wide">右操作数<input id="matrix-right" value="{{5,6},{7,8}}" /></label>
           <label data-for="plot">横轴最小值<input id="plot-min" type="number" value="-6.28" step="any" /></label>
           <label data-for="plot">横轴最大值<input id="plot-max" type="number" value="6.28" step="any" /></label>
         </div>

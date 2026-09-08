@@ -3,6 +3,9 @@ use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::equations::SolveResult;
 use processing::limits::{LimitDirection, LimitResult};
+use processing::linear_algebra::{MatrixOperation, MatrixResult};
+use processing::numeric::{NumericResult, RootResult, TaylorResult};
+use processing::ode::{InitialCondition, OdeResult, OdeStepResult};
 use processing::plot::{SampleOptions, SampledPlot};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
@@ -129,14 +132,163 @@ fn calculate_limit(
     direction: String,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
 ) -> Result<LimitResult, ErrorResponse> {
-    let direction = match direction.as_str() {
-        "both" => LimitDirection::Both,
-        "left" => LimitDirection::Left,
-        "right" => LimitDirection::Right,
-        _ => return Err(invalid_input(format!("未知极限方向: {direction}"))),
-    };
+    let direction = parse_limit_direction(&direction)?;
     let mut engine = lock_engine(&engine)?;
     processing::limits::limit(&mut *engine, &expr, &variable, &at, direction).map_err(message)
+}
+
+fn parse_limit_direction(direction: &str) -> Result<LimitDirection, ErrorResponse> {
+    match direction {
+        "both" => Ok(LimitDirection::Both),
+        "left" => Ok(LimitDirection::Left),
+        "right" => Ok(LimitDirection::Right),
+        _ => Err(invalid_input(format!("未知极限方向: {direction}"))),
+    }
+}
+
+#[tauri::command]
+fn calculate_limit_steps(
+    expr: String,
+    variable: String,
+    at: String,
+    direction: String,
+    verbosity: String,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<Vec<Step>, ErrorResponse> {
+    let mut engine = lock_engine(&engine)?;
+    processing::limits::limit_steps_with_verbosity(
+        &mut *engine,
+        &expr,
+        &variable,
+        &at,
+        parse_limit_direction(&direction)?,
+        parse_verbosity(&verbosity)?,
+    )
+    .map_err(message)
+}
+
+#[derive(Deserialize)]
+struct OdeInitialConditionRequest {
+    derivative_order: u32,
+    point: String,
+    value: String,
+}
+
+fn ode_conditions(requests: &[OdeInitialConditionRequest]) -> Vec<InitialCondition<'_>> {
+    requests
+        .iter()
+        .map(|condition| InitialCondition {
+            derivative_order: condition.derivative_order,
+            point: &condition.point,
+            value: &condition.value,
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn solve_ode(
+    equation: String,
+    independent: String,
+    dependent: String,
+    initial_conditions: Vec<OdeInitialConditionRequest>,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<OdeResult, ErrorResponse> {
+    let conditions = ode_conditions(&initial_conditions);
+    let mut engine = lock_engine(&engine)?;
+    processing::ode::solve(
+        &mut *engine,
+        &equation,
+        &independent,
+        &dependent,
+        &conditions,
+    )
+    .map_err(message)
+}
+
+#[tauri::command]
+fn solve_ode_steps(
+    equation: String,
+    independent: String,
+    dependent: String,
+    initial_conditions: Vec<OdeInitialConditionRequest>,
+    verbosity: String,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<OdeStepResult, ErrorResponse> {
+    let conditions = ode_conditions(&initial_conditions);
+    let mut engine = lock_engine(&engine)?;
+    processing::ode::solve_steps_with_verbosity(
+        &mut *engine,
+        &equation,
+        &independent,
+        &dependent,
+        &conditions,
+        parse_verbosity(&verbosity)?,
+    )
+    .map_err(message)
+}
+
+#[tauri::command]
+fn approximate_numeric(
+    expr: String,
+    precision_digits: u32,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<NumericResult, ErrorResponse> {
+    let mut engine = lock_engine(&engine)?;
+    processing::numeric::approximate(&mut *engine, &expr, precision_digits).map_err(message)
+}
+
+#[tauri::command]
+fn find_numeric_root(
+    expr: String,
+    variable: String,
+    initial: f64,
+    accuracy: f64,
+    min: Option<f64>,
+    max: Option<f64>,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<RootResult, ErrorResponse> {
+    let bounds = match (min, max) {
+        (Some(min), Some(max)) => Some((min, max)),
+        (None, None) => None,
+        _ => return Err(invalid_input("求根区间必须同时填写上下界")),
+    };
+    let mut engine = lock_engine(&engine)?;
+    processing::numeric::find_root(&mut *engine, &expr, &variable, initial, accuracy, bounds)
+        .map_err(message)
+}
+
+#[tauri::command]
+fn calculate_taylor(
+    expr: String,
+    variable: String,
+    point: String,
+    degree: u32,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<TaylorResult, ErrorResponse> {
+    let mut engine = lock_engine(&engine)?;
+    processing::numeric::taylor(&mut *engine, &expr, &variable, &point, degree).map_err(message)
+}
+
+#[tauri::command]
+fn calculate_matrix(
+    left: String,
+    operation: String,
+    right: Option<String>,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<MatrixResult, ErrorResponse> {
+    let operation = match operation.as_str() {
+        "add" => MatrixOperation::Add,
+        "multiply" => MatrixOperation::Multiply,
+        "transpose" => MatrixOperation::Transpose,
+        "determinant" => MatrixOperation::Determinant,
+        "inverse" => MatrixOperation::Inverse,
+        "solve" => MatrixOperation::Solve,
+        "eigenvalues" => MatrixOperation::Eigenvalues,
+        _ => return Err(invalid_input(format!("未知矩阵运算: {operation}"))),
+    };
+    let mut engine = lock_engine(&engine)?;
+    processing::linear_algebra::compute(&mut *engine, &left, operation, right.as_deref())
+        .map_err(message)
 }
 
 #[tauri::command]
@@ -218,6 +370,13 @@ pub fn run() {
             transform_expression,
             solve_equations,
             calculate_limit,
+            calculate_limit_steps,
+            solve_ode,
+            solve_ode_steps,
+            approximate_numeric,
+            find_numeric_root,
+            calculate_taylor,
+            calculate_matrix,
             sample_plot,
             set_assumption,
             clear_assumptions,
