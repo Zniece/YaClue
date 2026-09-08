@@ -8,8 +8,8 @@
 use crate::engine::{Engine, EngineError, Expr};
 use crate::equations::{self, SolveCompleteness, SolveStatus};
 use crate::input::{
-    analyze_expression, contains_exact_power, strip_tex_delimiters, validate_expression,
-    validate_symbol,
+    analyze_expression, contains_exact_power, contains_product_factor, strip_tex_delimiters,
+    validate_expression, validate_symbol,
 };
 use serde::Serialize;
 
@@ -128,7 +128,8 @@ pub fn solve(
     }
 
     let canonical = to_canonical(equation, independent, dependent, order);
-    let prefer_extension = contains_exact_power(equation, dependent, "2", "微分方程")?;
+    let prefer_extension = contains_exact_power(equation, dependent, "2", "微分方程")?
+        || contains_product_factor(equation, &format!("{dependent}'"), "微分方程")?;
     let preferred = if prefer_extension {
         try_extension(engine, &canonical)?
     } else {
@@ -137,12 +138,12 @@ pub fn solve(
     let (mut candidates, mut residual, mut method) = if let Some((solutions, method)) = preferred {
         (solutions, Expr::Number("0".into()), method)
     } else {
-        let upstream = engine.eval(&format!(
+        let upstream = engine.eval_expr(&format!(
             "[Local(sol,res); sol:=OdeSolve({canonical}); \
              res:=If(sol=True,{canonical},Simplify(OdeTest({canonical},sol))); \
              {{sol,res,Upstream}};]"
         ))?;
-        let (solution, residual, method) = parse_wrapper(upstream.expr)?;
+        let (solution, residual, method) = parse_wrapper(upstream)?;
         (vec![solution], residual, method)
     };
     if residual.to_string() != "0" && !prefer_extension {
