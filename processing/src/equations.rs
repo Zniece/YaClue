@@ -12,6 +12,21 @@ pub enum SolveStatus {
     Unresolved,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VariableSource {
+    Explicit,
+    Inferred,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SolveCompleteness {
+    Complete,
+    Parametric,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Assignment {
     pub variable: String,
@@ -25,6 +40,12 @@ pub struct SolveResult {
     pub solutions: Vec<Vec<Assignment>>,
     pub raw: String,
     pub tex: String,
+    /// Variables actually passed to Solve.
+    pub variables: Vec<String>,
+    pub variable_source: VariableSource,
+    /// Symbols left in solved values, interpreted as parameters.
+    pub parameters: Vec<String>,
+    pub completeness: SolveCompleteness,
 }
 
 pub fn solve(
@@ -35,16 +56,28 @@ pub fn solve(
     if equations.is_empty() {
         return Err(EngineError::Eval("至少需要一个方程".into()));
     }
-    if variables.is_empty() {
-        return Err(EngineError::Eval("至少需要一个求解变量".into()));
-    }
     for equation in equations {
         validate_expression(equation)?;
     }
-    for variable in variables {
+    let variable_source = if variables.is_empty() {
+        VariableSource::Inferred
+    } else {
+        VariableSource::Explicit
+    };
+    let inferred;
+    let variables = if variables.is_empty() {
+        inferred = infer_variables(equations);
+        if inferred.is_empty() {
+            return Err(EngineError::Eval("方程中没有可求解变量".into()));
+        }
+        inferred.iter().map(String::as_str).collect::<Vec<_>>()
+    } else {
+        variables.to_vec()
+    };
+    for variable in &variables {
         validate_variable(variable)?;
     }
-    let mut unique = variables.to_vec();
+    let mut unique = variables.clone();
     unique.sort_unstable();
     unique.dedup();
     if unique.len() != variables.len() {
@@ -82,6 +115,10 @@ pub fn solve(
             solutions: vec![],
             raw,
             tex,
+            variables: variables.iter().map(|value| (*value).to_string()).collect(),
+            variable_source,
+            parameters: vec![],
+            completeness: SolveCompleteness::Unknown,
         });
     }
 
@@ -102,12 +139,78 @@ pub fn solve(
     } else {
         SolveStatus::Solved
     };
+    let mut parameters: Vec<String> = solutions
+        .iter()
+        .flatten()
+        .flat_map(|assignment| infer_variables(&[assignment.value.as_str()]))
+        .filter(|symbol| !variables.iter().any(|variable| *variable == symbol))
+        .collect();
+    parameters.sort();
+    parameters.dedup();
+    let completeness = if parameters.is_empty() {
+        SolveCompleteness::Complete
+    } else {
+        SolveCompleteness::Parametric
+    };
     Ok(SolveResult {
         status,
         solutions,
         raw,
         tex,
+        variables: variables.iter().map(|value| (*value).to_string()).collect(),
+        variable_source,
+        parameters,
+        completeness,
     })
+}
+
+fn infer_variables(expressions: &[&str]) -> Vec<String> {
+    const CONSTANTS: &[&str] = &[
+        "True",
+        "False",
+        "Infinity",
+        "Undefined",
+        "Pi",
+        "I",
+        "E",
+        "GoldenRatio",
+    ];
+    let mut symbols = Vec::new();
+    for expression in expressions {
+        let bytes = expression.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if !bytes[i].is_ascii_alphabetic() {
+                i += 1;
+                continue;
+            }
+            // The e in a scientific literal such as 1e10 is not a symbol.
+            if i > 0 && (bytes[i - 1].is_ascii_digit() || bytes[i - 1] == b'.') {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
+                    i += 1;
+                }
+                continue;
+            }
+            let start = i;
+            i += 1;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'\'') {
+                i += 1;
+            }
+            let symbol = &expression[start..i];
+            let mut next = i;
+            while next < bytes.len() && bytes[next].is_ascii_whitespace() {
+                next += 1;
+            }
+            let is_function = bytes.get(next) == Some(&b'(');
+            if !is_function && !CONSTANTS.contains(&symbol) {
+                symbols.push(symbol.to_string());
+            }
+        }
+    }
+    symbols.sort();
+    symbols.dedup();
+    symbols
 }
 
 fn parse_wrapper(wrapper: Expr) -> Result<(Expr, bool, bool), EngineError> {
@@ -243,6 +346,36 @@ mod tests {
         assert_eq!(result.status, SolveStatus::Solved);
         assert_eq!(result.solutions.len(), 2);
         assert!(result.solutions.iter().all(|solution| solution.len() == 2));
+    }
+
+    #[test]
+    fn infers_system_variables_and_marks_explicit_parameters() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let inferred = solve(&mut engine, &["x+y==3", "x-y==1"], &[]).unwrap();
+        assert_eq!(inferred.status, SolveStatus::Solved);
+        assert_eq!(inferred.variable_source, VariableSource::Inferred);
+        assert_eq!(inferred.completeness, SolveCompleteness::Complete);
+        assert_eq!(inferred.variables, ["x", "y"]);
+        assert!(inferred.parameters.is_empty());
+        assert_eq!(inferred.solutions.len(), 1);
+        assert_eq!(inferred.solutions[0].len(), 2);
+
+        let explicit_subset = solve(&mut engine, &["x+y==3", "x-y==1"], &["x"]).unwrap();
+        assert_eq!(explicit_subset.completeness, SolveCompleteness::Parametric);
+        assert_eq!(explicit_subset.parameters, ["y"]);
+
+        let parameterized = solve(&mut engine, &["a+x*y==z"], &["x"]).unwrap();
+        assert_eq!(parameterized.variable_source, VariableSource::Explicit);
+        assert_eq!(parameterized.completeness, SolveCompleteness::Parametric);
+        assert_eq!(parameterized.parameters, ["a", "y", "z"]);
+    }
+
+    #[test]
+    fn inference_excludes_function_names_constants_and_scientific_exponents() {
+        assert_eq!(
+            infer_variables(&["Sin(x)+Pi*y==1e10"]),
+            vec!["x".to_string(), "y".to_string()]
+        );
     }
 
     #[test]

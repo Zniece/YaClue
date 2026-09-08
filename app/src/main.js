@@ -20,7 +20,7 @@ const MODES = {
   integral: { title: "被积表达式", help: "展示换元、分部积分、部分分式和三角积分等已有步骤。", example: "x*Exp(x)" },
   definite: { title: "被积表达式", help: "解析积分失败时会尝试自适应辛普森数值积分。", example: "Sin(x)" },
   transform: { title: "待变换表达式", help: "Apart 使用上方变量，其余变换不使用变量参数。", example: "(x+1)^2" },
-  equation: { title: "方程（每行一个）", help: "方程组每行一个等式；变量栏可填写 x,y。", example: "x+y==3\nx-y==1" },
+  equation: { title: "方程（每行一个）", help: "方程组每行一个等式；求解变量可留空自动发现，或填写 x,y 显式指定。", example: "x+y==3\nx-y==1" },
   limit: { title: "极限表达式", help: "趋近值可填写 0、Infinity 等；支持左、右和双侧极限。", example: "Sin(x)/x" },
   plot: { title: "待绘制表达式", help: "使用批量采样和曲率细分；非有限点会断开曲线。", example: "Sin(x)" },
   evaluate: { title: "Yacas 表达式", help: "直接访问当前会话中的引擎，适合体验尚无专用界面的能力。", example: "Factor(x^4-1)" },
@@ -36,7 +36,11 @@ function updateMode(setExample = true) {
   });
   $("#expression-title").textContent = MODES[mode].title;
   $("#input-help").textContent = MODES[mode].help;
-  if (setExample) exprEl.value = MODES[mode].example;
+  variableEl.placeholder = mode === "equation" ? "自动发现（如 x,y）" : "x";
+  if (setExample) {
+    exprEl.value = MODES[mode].example;
+    variableEl.value = mode === "equation" ? "" : "x";
+  }
 }
 
 function setBusy(busy) {
@@ -189,7 +193,15 @@ async function calculate() {
       const equations = expr.split(/\n+/).map((line) => line.trim()).filter(Boolean);
       const variables = variable.split(",").map((item) => item.trim()).filter(Boolean);
       result = await invoke("solve_equations", { equations, variables });
-      summary("方程结果", result.tex, [`状态：${result.status}`, `${result.solutions.length} 组解`]);
+      const source = result.variable_source === "inferred" ? "自动发现" : "显式指定";
+      const details = [
+        `状态：${result.status}`,
+        `完整性：${result.completeness}`,
+        `求解变量：${result.variables.join(", ")}（${source}）`,
+        `${result.solutions.length} 组解`,
+      ];
+      if (result.parameters.length) details.push(`参数化结果：${result.parameters.join(", ")}`);
+      summary("方程结果", result.tex, details);
       showStructured(result);
     } else if (mode === "limit") {
       result = await invoke("calculate_limit", { expr, variable, at: $("#at").value.trim(), direction: $("#direction").value });
