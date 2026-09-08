@@ -204,13 +204,20 @@ fn oversized_numeric_product_is_rejected_before_multiplication() {
 }
 
 #[test]
-#[ignore = "D2: N() does not numerically evaluate a rational passed through a function parameter"]
 fn d2_n_through_parameter() {
     let mut env = Environment::new();
     boot(&mut env);
     assert_eq!(run(&mut env, "N(1/2)"), "0.5");
     assert_eq!(run(&mut env, "d2numeric(y) := N(y)"), "True");
     assert_eq!(run(&mut env, "d2numeric(1/2)"), "0.5");
+    assert_eq!(run(&mut env, "d2counter := 0"), "0");
+    assert_eq!(
+        run(&mut env, "d2side() := [d2counter := d2counter+1; 1/2;]"),
+        "True"
+    );
+    assert_eq!(run(&mut env, "N(d2side())"), "0.5");
+    assert_eq!(run(&mut env, "d2counter"), "1");
+    assert_eq!(run(&mut env, "N(x+1/2)"), "x+0.5");
 }
 
 #[test]

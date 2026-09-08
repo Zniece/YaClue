@@ -85,7 +85,11 @@ LocalSymbols(Numeric) [
       Set(prev'Numeric,Numeric);
       Set(Numeric, True);
       Set(errorString,"");
-      TrapError(Set(numeric'result, @expr),Set(errorString,GetCoreError()));
+      // A macro argument inside an ordinary function may still be the local
+      // parameter atom here. Resolve that binding after numeric mode is set;
+      // this keeps numeric evaluation at the requested precision while making
+      // f(x) := N(x) behave like a direct N(value) call.
+      TrapError(Set(numeric'result, Eval(@expr)),Set(errorString,GetCoreError()));
       Set(Numeric,prev'Numeric);
       If(Not Numeric,[
           // clear constants
@@ -196,4 +200,3 @@ RuleBase("else",{ifthen,otherwise});
 HoldArg("else",ifthen);
 HoldArg("else",otherwise);
 UnFence("else",2);
-
