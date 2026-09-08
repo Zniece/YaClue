@@ -114,8 +114,23 @@ pub fn solve_steps_with_verbosity(
     initial_conditions: &[InitialCondition<'_>],
     verbosity: StepVerbosity,
 ) -> Result<OdeStepResult, EngineError> {
-    let result = solve(engine, equation, independent, dependent, initial_conditions)?;
-    let steps = ode_steps(engine, equation, independent, dependent, &result, verbosity)?;
+    let (result, solver_events) = solve_internal(
+        engine,
+        equation,
+        independent,
+        dependent,
+        initial_conditions,
+        true,
+    )?;
+    let steps = ode_steps(
+        engine,
+        equation,
+        independent,
+        dependent,
+        &result,
+        solver_events,
+        verbosity,
+    )?;
     Ok(OdeStepResult { result, steps })
 }
 
@@ -125,6 +140,7 @@ fn ode_steps(
     independent: &str,
     dependent: &str,
     result: &OdeResult,
+    solver_events: Vec<OdeEvent>,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
     let mut events = vec![OdeEvent::new(
@@ -133,12 +149,12 @@ fn ode_steps(
         "读取微分方程并确定其阶数。",
         StepImportance::Routine,
     )];
-    events.extend(method_events(
-        result.method,
-        equation,
-        independent,
-        dependent,
-    ));
+    let mut method = method_events(result.method, equation, independent, dependent);
+    if !solver_events.is_empty() {
+        method.truncate(1);
+    }
+    events.extend(method);
+    events.extend(solver_events);
     if !result.constants.is_empty() {
         events.push(OdeEvent::new(
             "ode-constant",
@@ -212,6 +228,12 @@ struct OdeEvent {
     importance: StepImportance,
 }
 
+struct ExtensionResult {
+    candidates: Vec<Expr>,
+    method: OdeMethod,
+    events: Vec<OdeEvent>,
+}
+
 impl OdeEvent {
     fn new(rule: &str, expr: &str, why: &str, importance: StepImportance) -> Self {
         Self {
@@ -278,6 +300,25 @@ pub fn solve(
     dependent: &str,
     initial_conditions: &[InitialCondition<'_>],
 ) -> Result<OdeResult, EngineError> {
+    solve_internal(
+        engine,
+        equation,
+        independent,
+        dependent,
+        initial_conditions,
+        false,
+    )
+    .map(|(result, _)| result)
+}
+
+fn solve_internal(
+    engine: &mut dyn Engine,
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+    initial_conditions: &[InitialCondition<'_>],
+    collect_events: bool,
+) -> Result<(OdeResult, Vec<OdeEvent>), EngineError> {
     validate_expression(equation, "微分方程")?;
     validate_symbol(independent, "自变量")?;
     validate_symbol(dependent, "因变量")?;
@@ -295,26 +336,29 @@ pub fn solve(
     }
     validate_conditions(initial_conditions, order)?;
     if order == 0 {
-        return Ok(OdeResult {
-            status: OdeStatus::NotDifferentialEquation,
-            method: OdeMethod::Upstream,
-            initial_condition_status: if initial_conditions.is_empty() {
-                InitialConditionStatus::NotRequested
-            } else {
-                InitialConditionStatus::Unresolved
-            },
-            order,
-            solution: equation.trim().into(),
-            solutions: vec![equation.trim().into()],
-            solution_branches: vec![OdeSolution {
-                kind: OdeSolutionKind::Implicit,
-                expression: equation.trim().into(),
+        return Ok((
+            OdeResult {
+                status: OdeStatus::NotDifferentialEquation,
+                method: OdeMethod::Upstream,
+                initial_condition_status: if initial_conditions.is_empty() {
+                    InitialConditionStatus::NotRequested
+                } else {
+                    InitialConditionStatus::Unresolved
+                },
+                order,
+                solution: equation.trim().into(),
+                solutions: vec![equation.trim().into()],
+                solution_branches: vec![OdeSolution {
+                    kind: OdeSolutionKind::Implicit,
+                    expression: equation.trim().into(),
+                    tex: equation.trim().into(),
+                }],
                 tex: equation.trim().into(),
-            }],
-            tex: equation.trim().into(),
-            residual: equation.trim().into(),
-            constants: vec![],
-        });
+                residual: equation.trim().into(),
+                constants: vec![],
+            },
+            vec![],
+        ));
     }
 
     let canonical = to_canonical(equation, independent, dependent, order);
@@ -322,26 +366,35 @@ pub fn solve(
         || contains_product_factor(equation, &format!("{dependent}'"), "微分方程")?
         || contains_ratio_symbols(equation, independent, dependent, "微分方程")?;
     let preferred = if prefer_extension {
-        try_extension(engine, &canonical)?
+        try_extension(engine, &canonical, collect_events, independent, dependent)?
     } else {
         None
     };
-    let (mut candidates, mut residual, mut method) = if let Some((solutions, method)) = preferred {
-        (solutions, Expr::Number("0".into()), method)
-    } else {
-        let upstream = engine.eval_expr(&format!(
-            "[Local(sol,res); sol:=OdeSolve({canonical}); \
+    let (mut candidates, mut residual, mut method, mut solver_events) =
+        if let Some(extension) = preferred {
+            (
+                extension.candidates,
+                Expr::Number("0".into()),
+                extension.method,
+                extension.events,
+            )
+        } else {
+            let upstream = engine.eval_expr(&format!(
+                "[Local(sol,res); sol:=OdeSolve({canonical}); \
              res:=If(sol=True,{canonical},Simplify(OdeTest({canonical},sol))); \
              {{sol,res,Upstream}};]"
-        ))?;
-        let (solution, residual, method) = parse_wrapper(upstream)?;
-        (vec![solution], residual, method)
-    };
+            ))?;
+            let (solution, residual, method) = parse_wrapper(upstream)?;
+            (vec![solution], residual, method, vec![])
+        };
     if residual.to_string() != "0" && !prefer_extension {
-        if let Some((solutions, extension_method)) = try_extension(engine, &canonical)? {
-            candidates = solutions;
+        if let Some(extension) =
+            try_extension(engine, &canonical, collect_events, independent, dependent)?
+        {
+            candidates = extension.candidates;
             residual = Expr::Number("0".into());
-            method = extension_method;
+            method = extension.method;
+            solver_events = extension.events;
         }
     }
     let mut solution = candidates[0].clone();
@@ -440,18 +493,21 @@ pub fn solve(
             raw,
         )
     };
-    Ok(OdeResult {
-        status,
-        method,
-        initial_condition_status: condition_status,
-        order,
-        solution,
-        solutions,
-        solution_branches,
-        tex,
-        residual: residual.to_string(),
-        constants,
-    })
+    Ok((
+        OdeResult {
+            status,
+            method,
+            initial_condition_status: condition_status,
+            order,
+            solution,
+            solutions,
+            solution_branches,
+            tex,
+            residual: residual.to_string(),
+            constants,
+        },
+        solver_events,
+    ))
 }
 
 fn validate_conditions(
@@ -555,7 +611,11 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
     }
 }
 
-fn parse_extension(expr: Expr) -> Result<Option<(Vec<Expr>, OdeMethod)>, EngineError> {
+fn parse_extension(
+    expr: Expr,
+    independent: &str,
+    dependent: &str,
+) -> Result<Option<ExtensionResult>, EngineError> {
     let Expr::Call { head, mut args } = expr else {
         return Err(EngineError::Parse("ODE 扩展结果不是列表".into()));
     };
@@ -565,9 +625,14 @@ fn parse_extension(expr: Expr) -> Result<Option<(Vec<Expr>, OdeMethod)>, EngineE
     if args.is_empty() {
         return Ok(None);
     }
-    if args.len() != 2 {
+    if args.len() != 2 && args.len() != 3 {
         return Err(EngineError::Parse("ODE 扩展结果形态异常".into()));
     }
+    let events = if args.len() == 3 {
+        parse_solver_events(args.pop().unwrap(), independent, dependent)?
+    } else {
+        vec![]
+    };
     let method = match args.pop().unwrap() {
         Expr::Symbol(value) if value == "Separable" => OdeMethod::Separable,
         Expr::Symbol(value) if value == "LinearFirstOrder" => OdeMethod::LinearFirstOrder,
@@ -586,32 +651,137 @@ fn parse_extension(expr: Expr) -> Result<Option<(Vec<Expr>, OdeMethod)>, EngineE
     if head != "List" || candidates.is_empty() {
         return Err(EngineError::Parse("ODE 扩展候选解为空".into()));
     }
-    Ok(Some((candidates, method)))
+    Ok(Some(ExtensionResult {
+        candidates,
+        method,
+        events,
+    }))
+}
+
+fn parse_solver_events(
+    expr: Expr,
+    independent: &str,
+    dependent: &str,
+) -> Result<Vec<OdeEvent>, EngineError> {
+    let Expr::Call { head, args } = expr else {
+        return Err(EngineError::Parse("ODE 教学事件不是列表".into()));
+    };
+    if head != "List" {
+        return Err(EngineError::Parse("ODE 教学事件不是列表".into()));
+    }
+    args.into_iter()
+        .map(|event| {
+            let Expr::Call { head, args } = event else {
+                return Err(EngineError::Parse("ODE 教学事件形态异常".into()));
+            };
+            if head != "List" || args.len() != 3 {
+                return Err(EngineError::Parse("ODE 教学事件形态异常".into()));
+            }
+            let rule = args[0].to_string();
+            let importance = match args[2].to_string().as_str() {
+                "0" => StepImportance::Routine,
+                "2" => StepImportance::Key,
+                _ => StepImportance::Normal,
+            };
+            Ok(OdeEvent::new(
+                &solver_event_rule(&rule),
+                &translate_event_expression(&args[1].to_string(), independent, dependent),
+                solver_event_explanation(&rule),
+                importance,
+            ))
+        })
+        .collect()
+}
+
+fn solver_event_rule(rule: &str) -> String {
+    let mut output = String::from("ode-");
+    for (index, character) in rule.trim_start_matches("Ode").chars().enumerate() {
+        if character.is_ascii_uppercase() && index > 0 {
+            output.push('-');
+        }
+        output.push(character.to_ascii_lowercase());
+    }
+    output
+}
+
+fn solver_event_explanation(rule: &str) -> &'static str {
+    match rule {
+        "OdeSeparableForm" => "将方程整理为可分离变量形式。",
+        "OdeLinearForm" => "整理为一阶线性方程的标准形式。",
+        "OdeBernoulliForm" => "整理为 Bernoulli 方程的标准形式。",
+        "OdeIntegratingFactor" => "计算积分因子。",
+        "OdeIntegrateLinear" => "乘以积分因子并积分。",
+        "OdeReciprocalSubstitution" => "作倒数代换。",
+        "OdeBernoulliLinear" => "代换后得到一阶线性方程。",
+        "OdeRestoreZeroBranch" => "补回倒数代换可能遗漏的零解。",
+        "OdeExactForm" => "写成恰当方程的标准形式。",
+        "OdeExactTest" => "两个交叉偏导相等，因此方程恰当。",
+        "OdePotential" => "构造势函数并令其等于任意常数。",
+        "OdeRatioSubstitution" => "以因变量和自变量之比作代换。",
+        "OdeHomogeneousReduced" => "代换后化为可分离变量方程。",
+        "OdeIntegrateBoth" => "对等式两边积分。",
+        "OdeEquilibriumBranches" => "求出代换中不能除去的平衡分支。",
+        _ => "执行当前求解方法的符号变换。",
+    }
+}
+
+fn translate_event_expression(expression: &str, independent: &str, dependent: &str) -> String {
+    let mut output = String::with_capacity(expression.len());
+    let mut chars = expression.char_indices().peekable();
+    while let Some((start, character)) = chars.next() {
+        if character.is_ascii_alphabetic() {
+            let mut end = start + character.len_utf8();
+            while let Some(&(index, next)) = chars.peek() {
+                if next.is_ascii_alphanumeric() || next == '_' || next == '\'' {
+                    chars.next();
+                    end = index + next.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            match &expression[start..end] {
+                "x" => output.push_str(independent),
+                "y" => output.push_str(dependent),
+                "y'" => {
+                    output.push_str(dependent);
+                    output.push('\'');
+                }
+                token => output.push_str(token),
+            }
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
 
 fn try_extension(
     engine: &mut dyn Engine,
     canonical: &str,
-) -> Result<Option<(Vec<Expr>, OdeMethod)>, EngineError> {
+    collect_events: bool,
+    independent: &str,
+    dependent: &str,
+) -> Result<Option<ExtensionResult>, EngineError> {
+    let suffix = if collect_events { "Data" } else { "" };
     let extension = engine.eval_expr(&format!(
         "[Local(ext); \
-         ext:=OdeExtSolveSeparable({canonical}); \
-         if (Length(ext) != 2) [ext:=OdeExtSolveLinearFirstOrder({canonical});]; \
-         if (Length(ext) != 2) [ext:=OdeExtSolveBernoulli({canonical});]; \
-         if (Length(ext) != 2) [ext:=OdeExtSolveExact({canonical});]; \
-         if (Length(ext) != 2) [ext:=OdeExtSolveHomogeneous({canonical});]; ext;]"
+         ext:=OdeExtSolveSeparable{suffix}({canonical}); \
+         if (Length(ext) < 2) [ext:=OdeExtSolveLinearFirstOrder{suffix}({canonical});]; \
+         if (Length(ext) < 2) [ext:=OdeExtSolveBernoulli{suffix}({canonical});]; \
+         if (Length(ext) < 2) [ext:=OdeExtSolveExact{suffix}({canonical});]; \
+         if (Length(ext) < 2) [ext:=OdeExtSolveHomogeneous{suffix}({canonical});]; ext;]"
     ))?;
-    let Some((raw_candidates, method)) = parse_extension(extension)? else {
+    let Some(parsed) = parse_extension(extension, independent, dependent)? else {
         return Ok(None);
     };
     let mut verified = Vec::new();
-    for candidate in raw_candidates {
-        let valid = if method == OdeMethod::Exact {
+    for candidate in parsed.candidates {
+        let valid = if parsed.method == OdeMethod::Exact {
             engine
                 .eval_expr(&format!("OdeExtVerifyExact({canonical},{candidate})"))?
                 .to_string()
                 == "True"
-        } else if method == OdeMethod::Homogeneous && is_implicit_solution(&candidate) {
+        } else if parsed.method == OdeMethod::Homogeneous && is_implicit_solution(&candidate) {
             engine
                 .eval_expr(&format!("OdeExtVerifyHomogeneous({canonical},{candidate})"))?
                 .to_string()
@@ -626,7 +796,11 @@ fn try_extension(
             verified.push(candidate);
         }
     }
-    Ok((!verified.is_empty()).then_some((verified, method)))
+    Ok((!verified.is_empty()).then_some(ExtensionResult {
+        candidates: verified,
+        method: parsed.method,
+        events: parsed.events,
+    }))
 }
 
 fn solution_constants(solution: &Expr) -> Result<Vec<String>, EngineError> {
@@ -1023,6 +1197,62 @@ mod tests {
             .iter()
             .all(|step| step.importance == StepImportance::Key));
         assert!(concise.steps.last().unwrap().expr.starts_with('{'));
+    }
+
+    #[test]
+    fn detailed_ode_steps_use_intermediates_from_the_solver_request() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (equation, expected_rules) in [
+            ("y'==x*y", &["ode-separable-form", "ode-integrate-both"][..]),
+            (
+                "y'+y==x",
+                &[
+                    "ode-linear-form",
+                    "ode-integrating-factor",
+                    "ode-integrate-linear",
+                ][..],
+            ),
+            (
+                "y'+y==x*y^2",
+                &[
+                    "ode-bernoulli-form",
+                    "ode-reciprocal-substitution",
+                    "ode-bernoulli-linear",
+                    "ode-restore-zero-branch",
+                ][..],
+            ),
+            (
+                "2*x*y+3+(x^2+4*y)*y'==0",
+                &["ode-exact-form", "ode-exact-test", "ode-potential"][..],
+            ),
+            (
+                "y'==(x+y)/x",
+                &[
+                    "ode-ratio-substitution",
+                    "ode-homogeneous-reduced",
+                    "ode-integrate-both",
+                ][..],
+            ),
+        ] {
+            let stepped = solve_steps(&mut engine, equation, "x", "y", &[]).unwrap();
+            for rule in expected_rules {
+                assert!(
+                    stepped.steps.iter().any(|step| step.rule == *rule),
+                    "{equation}: missing {rule} in {:#?}",
+                    stepped.steps
+                );
+            }
+        }
+
+        let translated = solve_steps(&mut engine, "u'+u==t", "t", "u", &[]).unwrap();
+        let standard = translated
+            .steps
+            .iter()
+            .find(|step| step.rule == "ode-linear-form")
+            .unwrap();
+        assert!(standard.expr.contains('t'));
+        assert!(standard.expr.contains('u'));
+        assert!(!standard.expr.contains("y'"));
     }
 
     #[test]

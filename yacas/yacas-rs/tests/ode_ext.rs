@@ -116,3 +116,17 @@ fn homogeneous_extension_keeps_implicit_and_equilibrium_branches() {
         "0"
     );
 }
+
+#[test]
+fn detailed_entries_preserve_solutions_and_return_events() {
+    let mut env = boot();
+    for source in [
+        "OdeExtSolveSeparableData(y'==x*y)",
+        "OdeExtSolveLinearFirstOrderData(y'+y==x)",
+        "OdeExtSolveBernoulliData(y'+y==x*y^2)",
+        "OdeExtSolveExactData(2*x*y+3+(x^2+4*y)*y'==0)",
+        "OdeExtSolveHomogeneousData(y'==(x+y)/x)",
+    ] {
+        assert_eq!(run(&mut env, &format!("Length({source})")), "3", "{source}");
+    }
+}

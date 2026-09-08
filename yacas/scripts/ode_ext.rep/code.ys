@@ -1,5 +1,8 @@
 /* Additive ODE extensions. The inherited OdeSolve entry point is unchanged. */
 
+OdeExtLegacy(_data) <--
+    If(Length(data) = 3, {data[1], data[2]}, {});
+
 RuleBase("OdeExtSeparableParts", {rhs});
 
 10 # OdeExtSeparableParts(_fx * _gy) _
@@ -19,10 +22,12 @@ RuleBase("OdeExtSeparableParts", {rhs});
      <-- {1, gy};
 100 # OdeExtSeparableParts(_rhs) <-- {};
 
-10 # OdeExtSolveSeparable(y' == _rhs) <-- OdeExtSolveSeparableRhs(rhs);
+10 # OdeExtSolveSeparable(y' == _rhs) <-- OdeExtLegacy(OdeExtSolveSeparableRhsData(rhs, False));
 100 # OdeExtSolveSeparable(_equation) <-- {};
+10 # OdeExtSolveSeparableData(y' == _rhs) <-- OdeExtSolveSeparableRhsData(rhs, True);
+100 # OdeExtSolveSeparableData(_equation) <-- {};
 
-OdeExtSolveSeparableRhs(_rhs) <--
+OdeExtSolveSeparableRhsData(_rhs, _collect) <--
 [
     Local(parts, leftIntegral, rightIntegral, constant, solutions, candidate);
     parts := OdeExtSeparableParts(rhs);
@@ -44,7 +49,11 @@ OdeExtSolveSeparableRhs(_rhs) <--
                 /* The host adapter performs the single authoritative OdeTest.
                    Repeating it here is expensive and some nonlinear identities
                    exceed the inherited simplifier's recursion budget. */
-                {{candidate}, Separable};
+                {{candidate}, Separable,
+                 If(collect,
+                    {{OdeSeparableForm, (1 / parts[2]) * y' == parts[1], 2},
+                     {OdeIntegrateBoth, leftIntegral == rightIntegral + constant, 2}},
+                    {})};
             ];
         ];
     ];
@@ -54,25 +63,43 @@ RuleBase("OdeExtSolveLinearFirstOrder", {equation});
 
 10 # OdeExtSolveLinearFirstOrder(y' + _dependentTerm == _rhs) _
      (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
-     OdeExtSolveLinearFirstOrderParts(
+     OdeExtLegacy(OdeExtSolveLinearFirstOrderPartsData(
          Coef(dependentTerm, y, 1),
-         rhs - Coef(dependentTerm, y, 0));
+         rhs - Coef(dependentTerm, y, 0), False));
 11 # OdeExtSolveLinearFirstOrder(y' - _dependentTerm == _rhs) _
      (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
-     OdeExtSolveLinearFirstOrderParts(
+     OdeExtLegacy(OdeExtSolveLinearFirstOrderPartsData(
          -Coef(dependentTerm, y, 1),
-         rhs + Coef(dependentTerm, y, 0));
+         rhs + Coef(dependentTerm, y, 0), False));
 12 # OdeExtSolveLinearFirstOrder(_dependentTerm + y' == _rhs) _
      (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
-     OdeExtSolveLinearFirstOrderParts(
+     OdeExtLegacy(OdeExtSolveLinearFirstOrderPartsData(
          Coef(dependentTerm, y, 1),
-         rhs - Coef(dependentTerm, y, 0));
+         rhs - Coef(dependentTerm, y, 0), False));
 20 # OdeExtSolveLinearFirstOrder(y' == _rhs) _
      (Degree(rhs, y) = 1) <--
-     OdeExtSolveLinearFirstOrderParts(-Coef(rhs, y, 1), Coef(rhs, y, 0));
+     OdeExtLegacy(OdeExtSolveLinearFirstOrderPartsData(-Coef(rhs, y, 1), Coef(rhs, y, 0), False));
 100 # OdeExtSolveLinearFirstOrder(_equation) <-- {};
 
-OdeExtSolveLinearFirstOrderParts(_p, _q) <--
+RuleBase("OdeExtSolveLinearFirstOrderData", {equation});
+10 # OdeExtSolveLinearFirstOrderData(y' + _dependentTerm == _rhs) _
+     (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
+     OdeExtSolveLinearFirstOrderPartsData(Coef(dependentTerm, y, 1),
+                                         rhs - Coef(dependentTerm, y, 0), True);
+11 # OdeExtSolveLinearFirstOrderData(y' - _dependentTerm == _rhs) _
+     (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
+     OdeExtSolveLinearFirstOrderPartsData(-Coef(dependentTerm, y, 1),
+                                         rhs + Coef(dependentTerm, y, 0), True);
+12 # OdeExtSolveLinearFirstOrderData(_dependentTerm + y' == _rhs) _
+     (IsFreeOf(y, rhs) And Degree(dependentTerm, y) = 1) <--
+     OdeExtSolveLinearFirstOrderPartsData(Coef(dependentTerm, y, 1),
+                                         rhs - Coef(dependentTerm, y, 0), True);
+20 # OdeExtSolveLinearFirstOrderData(y' == _rhs) _
+     (Degree(rhs, y) = 1) <--
+     OdeExtSolveLinearFirstOrderPartsData(-Coef(rhs, y, 1), Coef(rhs, y, 0), True);
+100 # OdeExtSolveLinearFirstOrderData(_equation) <-- {};
+
+OdeExtSolveLinearFirstOrderPartsData(_p, _q, _collect) <--
 [
     Local(integratingExponent, integratingFactor, antiderivative,
           constant, candidate);
@@ -88,7 +115,12 @@ OdeExtSolveLinearFirstOrderParts(_p, _q) <--
         ] else [
             constant := UniqueConstant();
             candidate := Simplify((antiderivative + constant) / integratingFactor);
-            {{candidate}, LinearFirstOrder};
+            {{candidate}, LinearFirstOrder,
+             If(collect,
+                {{OdeLinearForm, y' + p*y == q, 2},
+                 {OdeIntegratingFactor, integratingFactor, 2},
+                 {OdeIntegrateLinear, integratingFactor*y == antiderivative + constant, 1}},
+                {})};
         ];
     ];
 ];
@@ -96,20 +128,35 @@ OdeExtSolveLinearFirstOrderParts(_p, _q) <--
 RuleBase("OdeExtSolveBernoulli", {equation});
 
 5 # OdeExtSolveBernoulli(y' + y == _q * y^2) _
-    (IsFreeOf(y, q)) <-- OdeExtSolveBernoulliParts(1, q);
+    (IsFreeOf(y, q)) <-- OdeExtLegacy(OdeExtSolveBernoulliPartsData(1, q, False));
 5 # OdeExtSolveBernoulli(y' + y == y^2 * _q) _
-    (IsFreeOf(y, q)) <-- OdeExtSolveBernoulliParts(1, q);
+    (IsFreeOf(y, q)) <-- OdeExtLegacy(OdeExtSolveBernoulliPartsData(1, q, False));
 10 # OdeExtSolveBernoulli(y' + _p * y == _q * y^2) _
-     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliParts(p, q);
+     (IsFreeOf(y, {p, q})) <-- OdeExtLegacy(OdeExtSolveBernoulliPartsData(p, q, False));
 10 # OdeExtSolveBernoulli(y' + y * _p == _q * y^2) _
-     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliParts(p, q);
+     (IsFreeOf(y, {p, q})) <-- OdeExtLegacy(OdeExtSolveBernoulliPartsData(p, q, False));
 10 # OdeExtSolveBernoulli(y' + _p * y == y^2 * _q) _
-     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliParts(p, q);
+     (IsFreeOf(y, {p, q})) <-- OdeExtLegacy(OdeExtSolveBernoulliPartsData(p, q, False));
 10 # OdeExtSolveBernoulli(y' + y * _p == y^2 * _q) _
-     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliParts(p, q);
+     (IsFreeOf(y, {p, q})) <-- OdeExtLegacy(OdeExtSolveBernoulliPartsData(p, q, False));
 100 # OdeExtSolveBernoulli(_equation) <-- {};
 
-OdeExtSolveBernoulliParts(_p, _q) <--
+RuleBase("OdeExtSolveBernoulliData", {equation});
+5 # OdeExtSolveBernoulliData(y' + y == _q * y^2) _
+    (IsFreeOf(y, q)) <-- OdeExtSolveBernoulliPartsData(1, q, True);
+5 # OdeExtSolveBernoulliData(y' + y == y^2 * _q) _
+    (IsFreeOf(y, q)) <-- OdeExtSolveBernoulliPartsData(1, q, True);
+10 # OdeExtSolveBernoulliData(y' + _p * y == _q * y^2) _
+     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliPartsData(p, q, True);
+10 # OdeExtSolveBernoulliData(y' + y * _p == _q * y^2) _
+     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliPartsData(p, q, True);
+10 # OdeExtSolveBernoulliData(y' + _p * y == y^2 * _q) _
+     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliPartsData(p, q, True);
+10 # OdeExtSolveBernoulliData(y' + y * _p == y^2 * _q) _
+     (IsFreeOf(y, {p, q})) <-- OdeExtSolveBernoulliPartsData(p, q, True);
+100 # OdeExtSolveBernoulliData(_equation) <-- {};
+
+OdeExtSolveBernoulliPartsData(_p, _q, _collect) <--
 [
     Local(integratingFactor, antiderivative, constant, transformed, candidate);
     integratingFactor := Exp(-(Integrate(x) p));
@@ -122,7 +169,14 @@ OdeExtSolveBernoulliParts(_p, _q) <--
         transformed := Simplify((antiderivative + constant) / integratingFactor);
         candidate := Simplify(1 / transformed);
         /* y=0 is lost by the v=1/y substitution and must remain explicit. */
-        {{candidate, 0}, Bernoulli};
+        {{candidate, 0}, Bernoulli,
+         If(collect,
+            {{OdeBernoulliForm, y' + p*y == q*y^2, 2},
+             {OdeReciprocalSubstitution, v == 1/y, 2},
+             {OdeBernoulliLinear, v' - p*v == -q, 2},
+             {OdeIntegratingFactor, integratingFactor, 2},
+             {OdeRestoreZeroBranch, y == 0, 1}},
+            {})};
     ];
 ];
 
@@ -130,13 +184,15 @@ OdeExtSolveBernoulliParts(_p, _q) <--
    equation implicit: forcing Solve(...,y) here can discard branches. */
 RuleBase("OdeExtSolveExact", {equation});
 
-10 # OdeExtSolveExact(_left == _right) <-- OdeExtSolveExactExpression(left - right);
+10 # OdeExtSolveExact(_left == _right) <-- OdeExtLegacy(OdeExtSolveExactExpressionData(left - right, False));
 100 # OdeExtSolveExact(_equation) <-- {};
+10 # OdeExtSolveExactData(_left == _right) <-- OdeExtSolveExactExpressionData(left - right, True);
+100 # OdeExtSolveExactData(_equation) <-- {};
 
-OdeExtSolveExactExpression(_expression) <--
+OdeExtSolveExactExpressionData(_expression, _collect) <--
 [
     Local(normal, degree, m, n, mxIntegral, correction, correctionIntegral,
-          potential, constant);
+          potential, constant, my, nx);
     normal := Simplify(expression);
     degree := Degree(normal, y');
     if (degree != 1) [
@@ -144,8 +200,9 @@ OdeExtSolveExactExpression(_expression) <--
     ] else [
         m := Simplify(Coef(normal, y', 0));
         n := Simplify(Coef(normal, y', 1));
-        if (Not(IsFreeOf(y', {m, n})) Or
-            Simplify(ApplyPure("D", {y, m}) - ApplyPure("D", {x, n})) != 0) [
+        my := ApplyPure("D", {y, m});
+        nx := ApplyPure("D", {x, n});
+        if (Not(IsFreeOf(y', {m, n})) Or Simplify(my - nx) != 0) [
             {};
         ] else [
             mxIntegral := Integrate(x) m;
@@ -161,7 +218,12 @@ OdeExtSolveExactExpression(_expression) <--
                     {};
                 ] else [
                     constant := UniqueConstant();
-                    {{potential == constant}, Exact};
+                    {{potential == constant}, Exact,
+                     If(collect,
+                        {{OdeExactForm, m + n*y' == 0, 2},
+                         {OdeExactTest, my == nx, 2},
+                         {OdePotential, potential == constant, 2}},
+                        {})};
                 ];
             ];
         ];
@@ -188,13 +250,15 @@ RuleBase("OdeExtVerifyExact", {equation, solution});
 /* Homogeneous first-order equations y'=F(y/x).  The v=y/x substitution
    gives x*v'=F(v)-v.  Equilibrium slopes remain separate line solutions. */
 RuleBase("OdeExtSolveHomogeneous", {equation});
-10 # OdeExtSolveHomogeneous(y' == _rhs) <-- OdeExtSolveHomogeneousRhs(rhs);
+10 # OdeExtSolveHomogeneous(y' == _rhs) <-- OdeExtLegacy(OdeExtSolveHomogeneousRhsData(rhs, False));
 100 # OdeExtSolveHomogeneous(_equation) <-- {};
+10 # OdeExtSolveHomogeneousData(y' == _rhs) <-- OdeExtSolveHomogeneousRhsData(rhs, True);
+100 # OdeExtSolveHomogeneousData(_equation) <-- {};
 
-OdeExtSolveHomogeneousRhs(_rhs) <--
+OdeExtSolveHomogeneousRhsData(_rhs, _collect) <--
 [
     Local(transformed, denominator, integral, potential, constant,
-          rootAssignments, solutions, root, line);
+          rootAssignments, solutions, root, line, eventData);
     transformed := Simplify(ApplyPure("Subst", {y/x, z, rhs}));
     if (Not(IsFreeOf({x, y}, transformed)) Or IsFreeOf(z, transformed)) [
         transformed := Simplify(ApplyPure("Subst", {y, z*x, rhs}));
@@ -207,12 +271,19 @@ OdeExtSolveHomogeneousRhs(_rhs) <--
             {};
         ] else [
             solutions := {};
+            eventData := If(collect,
+              {{OdeRatioSubstitution, z == y/x, 2},
+               {OdeHomogeneousReduced, x*z' == denominator, 2}}, {});
             integral := Integrate(z) (1 / denominator);
             if (IsFreeOf(Integrate, integral)) [
                 potential := Simplify(
                     ApplyPure("Subst", {z, y/x, integral}) - Ln(x));
                 constant := UniqueConstant();
                 DestructiveAppend(solutions, potential == constant);
+                if (collect) [
+                    DestructiveAppend(eventData,
+                                      {OdeIntegrateBoth, integral == Ln(x) + constant, 2});
+                ];
             ];
             rootAssignments := Solve(denominator == 0, z);
             ForEach(root, rootAssignments) [
@@ -221,7 +292,14 @@ OdeExtSolveHomogeneousRhs(_rhs) <--
                     DestructiveAppend(solutions, line);
                 ];
             ];
-            If(Length(solutions) > 0, {solutions, Homogeneous}, {});
+            if (collect And Length(rootAssignments) > 0) [
+                DestructiveAppend(eventData,
+                                  {OdeEquilibriumBranches, rootAssignments, 1});
+            ];
+            If(Length(solutions) > 0,
+               {solutions, Homogeneous,
+                If(collect, eventData, {})},
+               {});
         ];
     ];
 ];
