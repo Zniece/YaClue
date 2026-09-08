@@ -1,7 +1,7 @@
 //! Bounded adaptive Simpson quadrature for definite-integral fallback.
 
 use crate::engine::{Engine, EngineError};
-use crate::plot::eval_batched;
+use crate::numeric::evaluate_real_batch;
 
 #[derive(Debug, Clone)]
 pub struct QuadratureOptions {
@@ -45,7 +45,7 @@ impl AdaptiveState<'_> {
                 self.options.max_evaluations
             )));
         }
-        let values = eval_batched(self.engine, self.func, self.var, xs, xs.len().max(1))?;
+        let values = evaluate_real_batch(self.engine, self.func, self.var, xs, xs.len().max(1))?;
         self.evaluations += xs.len();
         if let Some((x, _)) = xs.iter().zip(&values).find(|(_, y)| !y.is_finite()) {
             return Err(EngineError::Eval(format!(

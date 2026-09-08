@@ -16,7 +16,8 @@
 
 use serde::Serialize;
 
-use crate::engine::{Engine, EvalResult, Expr};
+use crate::engine::Engine;
+use crate::numeric::evaluate_real_batch;
 
 /// One sampled point.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -83,7 +84,7 @@ pub fn sample(
     let n = options.points;
     let dx = (b - a) / n as f64;
     let xs: Vec<f64> = (0..=n).map(|i| a + dx * i as f64).collect();
-    let ys = eval_batched(engine, func, var, &xs, options.batch)?;
+    let ys = evaluate_real_batch(engine, func, var, &xs, options.batch)?;
 
     // Refine all intervals at the same depth together. Midpoints are evaluated
     // in batches, avoiding hundreds of interpreter round trips on wide ranges.
@@ -121,7 +122,7 @@ fn refine_intervals(
             .iter()
             .map(|(left, right)| (left.0 + right.0) / 2.0)
             .collect();
-        let values = eval_batched(engine, func, var, &midpoints, options.batch)?;
+        let values = evaluate_real_batch(engine, func, var, &midpoints, options.batch)?;
         let mut next = Vec::new();
         for (((left, right), x), y) in active.into_iter().zip(midpoints).zip(values) {
             let middle = (x, y);
@@ -147,59 +148,6 @@ fn refine_intervals(
     let mut points = vec![first.0];
     points.extend(leaves.into_iter().map(|interval| interval.1));
     Ok(points)
-}
-
-/// Evaluate `func(var = v)` for every v in `xs`, in chunks of `batch`:
-/// one engine call per chunk, evaluating
-/// `N({Subst(var,v1,func), Subst(var,v2,func), ...})`.
-/// Non-finite / unevaluated results map to NaN.
-pub(crate) fn eval_batched(
-    engine: &mut dyn Engine,
-    func: &str,
-    var: &str,
-    xs: &[f64],
-    batch: usize,
-) -> Result<Vec<f64>, crate::engine::EngineError> {
-    let mut out = Vec::with_capacity(xs.len());
-    for chunk in xs.chunks(batch.max(1)) {
-        let items: Vec<String> = chunk
-            .iter()
-            .map(|v| format!("N(Eval(ApplyPure(\"Subst\", {{{var},{v},{func}}})))"))
-            .collect();
-        let cmd = format!("N({{{}}})", items.join(", "));
-        let result: EvalResult = engine.eval(&cmd)?;
-        let values = flatten_number_list(&result.expr);
-        if values.len() != chunk.len() {
-            return Err(crate::engine::EngineError::Eval(format!(
-                "batch evaluation returned {} values, expected {}",
-                values.len(),
-                chunk.len()
-            )));
-        }
-        out.extend(values);
-    }
-    Ok(out)
-}
-
-/// Interpret a `List` expression as f64 values; non-finite markers
-/// (`Infinity`, `Undefined`, ...) and unevaluated nodes map to NaN.
-fn flatten_number_list(expr: &Expr) -> Vec<f64> {
-    fn scalar(e: &Expr) -> Option<f64> {
-        match e {
-            Expr::Number(s) => s.parse::<f64>().ok(),
-            _ => None,
-        }
-    }
-    match expr {
-        Expr::Call { head, args } if head == "List" => {
-            args.iter().map(|e| scalar(e).unwrap_or(f64::NAN)).collect()
-        }
-        Expr::Call { head, args } if head == "N" => {
-            args.first().map(flatten_number_list).unwrap_or_default()
-        }
-        // Single scalar result (e.g. a one-element batch collapsed by the engine).
-        one => scalar(one).into_iter().collect(),
-    }
 }
 
 #[cfg(test)]
@@ -300,18 +248,5 @@ mod tests {
         let plot = sample_default("5", (0.0, 1.0));
         assert!(plot.points.iter().all(|p| (p.y - 5.0).abs() < 1e-9));
         assert!(plot.breaks.is_empty());
-    }
-
-    #[test]
-    fn batch_evaluation_matches_direct() {
-        // The bulk path (one engine call for many points) must agree with
-        // single-point evaluation.
-        let mut engine = RustEngine::spawn().expect("boot");
-        let xs: Vec<f64> = (0..16).map(|i| 0.1 * i as f64).collect();
-        let ys = eval_batched(&mut engine, "Sin(x)*Exp(-x)", "x", &xs, 8).expect("batch");
-        for (x, y) in xs.iter().zip(&ys) {
-            let expected = x.sin() * (-x).exp();
-            assert!((y - expected).abs() < 1e-9, "at x={x}");
-        }
     }
 }
