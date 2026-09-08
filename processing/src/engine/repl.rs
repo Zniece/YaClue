@@ -1,0 +1,277 @@
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+use super::{Engine, EngineError, EvalResult, Expr};
+
+const SENTINEL: &str = "\"__YACAS_END__\"";
+const BANNER_END: &str = "keep typing Example();";
+const EVAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// yacas 命令出错时的输出特征(启发式,逐行匹配)
+const ERROR_MARKERS: [&str; 9] = [
+    "In function",
+    "Invalid argument",
+    "Wrong number of arguments",
+    "bad argument number",
+    "Expecting",
+    "Could not create",
+    "execution error",
+    "Error parsing expression",
+    "Argument is not a list",
+];
+
+fn looks_like_error(output: &str) -> bool {
+    output
+        .lines()
+        .any(|line| ERROR_MARKERS.iter().any(|m| line.contains(m)))
+}
+
+// ============================================================
+// 原版引擎:yacas REPL 子进程
+// ============================================================
+
+pub struct ReplEngine {
+    child: Child,
+    stdin: ChildStdin,
+    /// stdout 由读取线程送入通道,支持超时接收
+    rx: mpsc::Receiver<String>,
+    /// 引擎已终止(超时/崩溃);下次调用时自动重启
+    dead: bool,
+}
+
+impl ReplEngine {
+    pub fn spawn() -> Result<Self, EngineError> {
+        let mut engine = Self::spawn_raw()?;
+        engine.drain_banner()?;
+        // 结果统一单行打印(矩阵等也压成一行),便于 FullForm 输出切分
+        let _ = engine.eval_raw("DefaultPrinter(True)")?;
+        for cmd in steps_boot_cmds() {
+            engine.eval_raw(&cmd)?;
+        }
+        Ok(engine)
+    }
+
+    /// 创建子进程 + stdout 读取线程,不等待横幅
+    fn spawn_raw() -> Result<Self, EngineError> {
+        let bin = std::env::var("YACAS_BIN").unwrap_or_else(|_| default_yacas_bin());
+        let scripts = std::env::var("YACAS_SCRIPTS").unwrap_or_else(|_| default_scripts_dir());
+
+        let mut child = Command::new(&bin)
+            .args(["-pc", "--rootdir", &scripts])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| EngineError::Spawn(format!("无法启动 yacas({bin}): {e}")))?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or(EngineError::Spawn("stdin 不可用".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or(EngineError::Spawn("stdout 不可用".into()))?;
+
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                let Ok(line) = line else { break };
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(ReplEngine {
+            child,
+            stdin,
+            rx,
+            dead: false,
+        })
+    }
+
+    /// 引擎已终止时重启(超时/崩溃后下次调用自动恢复)
+    fn respawn(&mut self) -> Result<(), EngineError> {
+        let fresh = Self::spawn()?;
+        *self = fresh;
+        Ok(())
+    }
+
+    /// 消费启动横幅(读到 "keep typing Example();" 即结束;
+    /// -pc 模式无提示符、无尾随空行,不能再多读)
+    fn drain_banner(&mut self) -> Result<(), EngineError> {
+        loop {
+            match self.rx.recv_timeout(EVAL_TIMEOUT) {
+                Ok(line) => {
+                    if line.contains(BANNER_END) {
+                        return Ok(());
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(EngineError::Spawn("yacas 启动超时".into()));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(EngineError::Spawn("yacas 启动后立即退出".into()));
+                }
+            }
+        }
+    }
+
+    /// 执行一条 yacas 命令,返回其输出行(不含哨兵行)
+    fn eval_raw(&mut self, command: &str) -> Result<String, EngineError> {
+        if self.dead {
+            self.respawn()?;
+        }
+        writeln!(self.stdin, "{command};")
+            .and_then(|_| writeln!(self.stdin, "{SENTINEL};"))
+            .and_then(|_| self.stdin.flush())
+            .map_err(|e| EngineError::Io(format!("写入 yacas 失败: {e}")))?;
+
+        let mut lines = Vec::new();
+        loop {
+            match self.rx.recv_timeout(EVAL_TIMEOUT) {
+                Ok(line) => {
+                    if line == SENTINEL {
+                        return Ok(lines.join("\n"));
+                    }
+                    lines.push(line);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // 疑似死循环:终止引擎,标记 dead,下次调用自动重启
+                    self.dead = true;
+                    let _ = self.child.kill();
+                    return Err(EngineError::Timeout(
+                        "命令执行超时(疑似死循环),引擎已终止".into(),
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(EngineError::Io("yacas 子进程意外退出".into()));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for ReplEngine {
+    fn drop(&mut self) {
+        let _ = writeln!(self.stdin, "Exit();");
+        let _ = self.stdin.flush();
+        let _ = self.child.kill();
+    }
+}
+
+/// `FullForm(cmd)` 的输出 = 内部形式 + 结果行(与 `cmd` 单独求值完全一致)。
+/// 去掉尾部与 `result_raw` 相同的行,即得纯 FullForm 文本。
+fn strip_suffix_lines(fullform_raw: &str, result_raw: &str) -> String {
+    let ff: Vec<&str> = fullform_raw.lines().collect();
+    let r: Vec<&str> = result_raw.lines().collect();
+    if ff.len() >= r.len() && !r.is_empty() && ff[ff.len() - r.len()..] == r[..] {
+        ff[..ff.len() - r.len()].join("\n")
+    } else {
+        fullform_raw.to_string()
+    }
+}
+
+impl Engine for ReplEngine {
+    fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
+        let raw = self.eval_raw(command)?;
+        if looks_like_error(&raw) {
+            return Err(EngineError::Eval(raw));
+        }
+        // 结构化结果:FullForm(expr) 减去尾部重复的结果行
+        let fullform_raw = self.eval_raw(&format!("FullForm({command})"))?;
+        if looks_like_error(&fullform_raw) {
+            return Err(EngineError::Eval(fullform_raw));
+        }
+        let fullform = strip_suffix_lines(&fullform_raw, &raw);
+        let expr = Expr::parse_fullform(&fullform).map_err(EngineError::Parse)?;
+        // TeXForm(expr)
+        let tex_raw = self.eval_raw(&format!("TeXForm({command})"))?;
+        let tex = tex_raw
+            .trim()
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(tex_raw.trim())
+            .to_string();
+        Ok(EvalResult { expr, tex })
+    }
+
+    fn trace(&mut self, command: &str) -> Result<Vec<String>, EngineError> {
+        // TODO(步骤层):TraceRule 的具体语义与输出格式待调研后实现
+        let raw = self.eval_raw(&format!("TraceRule({command})"))?;
+        Ok(raw
+            .lines()
+            .map(|l| l.to_string())
+            .filter(|l| !l.trim().is_empty())
+            .collect())
+    }
+}
+
+fn default_yacas_bin() -> String {
+    // Optional C++ reference binary used only by the dual-engine comparison
+    // tests; override with YACAS_BIN. It is NOT part of this repository —
+    // build it from the upstream sources (github.com/grzegorzmazur/yacas)
+    // if you want those tests to run.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    root.join("build-ref/cyacas/yacas/yacas")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Whether the optional C++ reference binary is available. Tests that need
+/// it skip silently (with a note) when it is absent, so a clean clone runs
+/// green.
+pub fn cpp_reference_available() -> bool {
+    if std::env::var_os("YACAS_BIN").is_some() {
+        return true;
+    }
+    std::path::Path::new(&default_yacas_bin()).is_file() || {
+        // The repo-root build layout may also place the binary under
+        // <root>/build-ref; check both spellings.
+        let alt = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|p| p.join("yacas/build-ref/cyacas/yacas/yacas"))
+            .unwrap_or_default();
+        std::path::Path::new(&alt).is_file()
+    }
+}
+
+pub(super) fn default_scripts_dir() -> String {
+    // 引擎与加工层分离:scripts/ 位于加工层基座 yacas/ 下
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    root.join("yacas/scripts").to_string_lossy().into_owned()
+}
+
+/// 步骤层脚本目录(steps.rep 已从 yacas/scripts 剥离,归 processing 所有)
+pub(super) fn default_steps_dir() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// 引擎启动后装载步骤包的两条命令(yacasinit 之后执行);
+/// 步骤包不再经 packages.ys 懒加载链登记,由加工层显式加载
+fn steps_boot_cmds() -> Vec<String> {
+    let dir = std::env::var("YACAS_STEPS_SCRIPTS").unwrap_or_else(|_| default_steps_dir());
+    steps_boot_cmds_from_dir(&dir)
+}
+
+pub(super) fn steps_boot_cmds_from_dir(dir: &str) -> Vec<String> {
+    vec![
+        format!("DefaultDirectory(\"{dir}/\")"),
+        "Load(\"steps.rep/code.ys\")".to_string(),
+    ]
+}
