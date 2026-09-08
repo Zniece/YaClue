@@ -11,3 +11,5 @@ OdeExtVerifyExact
 OdeExtSolveHomogeneous
 OdeExtSolveHomogeneousData
 OdeExtVerifyHomogeneous
+OdeExtSolveUndeterminedCoefficients
+OdeExtSolveUndeterminedCoefficientsData

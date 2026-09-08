@@ -33,6 +33,7 @@ pub enum OdeMethod {
     Bernoulli,
     Exact,
     Homogeneous,
+    UndeterminedCoefficients,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -273,6 +274,10 @@ fn method_events(
             "ode-method-homogeneous",
             "识别为一阶齐次方程，用因变量与自变量之比作代换。",
         ),
+        OdeMethod::UndeterminedCoefficients => (
+            "ode-method-undetermined-coefficients",
+            "识别为二阶常系数非齐次方程，使用待定系数法。",
+        ),
     };
     let mut events = vec![OdeEvent::new(rule, equation, why, StepImportance::Key)];
     match method {
@@ -362,7 +367,8 @@ fn solve_internal(
     }
 
     let canonical = to_canonical(equation, independent, dependent, order);
-    let prefer_extension = contains_exact_power(equation, dependent, "2", "微分方程")?
+    let prefer_extension = order == 2
+        || contains_exact_power(equation, dependent, "2", "微分方程")?
         || contains_product_factor(equation, &format!("{dependent}'"), "微分方程")?
         || contains_ratio_symbols(equation, independent, dependent, "微分方程")?;
     let preferred = if prefer_extension {
@@ -604,6 +610,9 @@ fn parse_wrapper(expr: Expr) -> Result<(Expr, Expr, OdeMethod), EngineError> {
                 Expr::Symbol(value) if value == "Bernoulli" => OdeMethod::Bernoulli,
                 Expr::Symbol(value) if value == "Exact" => OdeMethod::Exact,
                 Expr::Symbol(value) if value == "Homogeneous" => OdeMethod::Homogeneous,
+                Expr::Symbol(value) if value == "UndeterminedCoefficients" => {
+                    OdeMethod::UndeterminedCoefficients
+                }
                 other => return Err(EngineError::Parse(format!("未知 ODE 求解方法: {other}"))),
             };
             let residual = args.pop().unwrap();
@@ -641,6 +650,9 @@ fn parse_extension(
         Expr::Symbol(value) if value == "Bernoulli" => OdeMethod::Bernoulli,
         Expr::Symbol(value) if value == "Exact" => OdeMethod::Exact,
         Expr::Symbol(value) if value == "Homogeneous" => OdeMethod::Homogeneous,
+        Expr::Symbol(value) if value == "UndeterminedCoefficients" => {
+            OdeMethod::UndeterminedCoefficients
+        }
         other => return Err(EngineError::Parse(format!("未知 ODE 扩展方法: {other}"))),
     };
     let Expr::Call {
@@ -723,6 +735,12 @@ fn solver_event_explanation(rule: &str) -> &'static str {
         "OdeHomogeneousReduced" => "代换后化为可分离变量方程。",
         "OdeIntegrateBoth" => "对等式两边积分。",
         "OdeEquilibriumBranches" => "求出代换中不能除去的平衡分支。",
+        "OdeLinearConstantForm" => "整理为二阶常系数非齐次方程的标准形式。",
+        "OdeCharacteristicEquation" => "建立对应齐次方程的特征方程。",
+        "OdeComplementarySolution" => "解特征方程，得到对应齐次方程的通解。",
+        "OdeTrialParticular" => "根据右端函数族和共振次数选择特解试探式。",
+        "OdeCoefficientSystem" => "代回方程并比较同类项，建立待定系数方程组。",
+        "OdeParticularSolution" => "解出待定系数，得到一个特解。",
         _ => "执行当前求解方法的符号变换。",
     }
 }
@@ -767,7 +785,8 @@ fn try_extension(
     let suffix = if collect_events { "Data" } else { "" };
     let extension = engine.eval_expr(&format!(
         "[Local(ext); \
-         ext:=OdeExtSolveSeparable{suffix}({canonical}); \
+         ext:=OdeExtSolveUndeterminedCoefficients{suffix}({canonical}); \
+         if (Length(ext) < 2) [ext:=OdeExtSolveSeparable{suffix}({canonical});]; \
          if (Length(ext) < 2) [ext:=OdeExtSolveLinearFirstOrder{suffix}({canonical});]; \
          if (Length(ext) < 2) [ext:=OdeExtSolveBernoulli{suffix}({canonical});]; \
          if (Length(ext) < 2) [ext:=OdeExtSolveExact{suffix}({canonical});]; \
@@ -1011,6 +1030,55 @@ mod tests {
     }
 
     #[test]
+    fn solves_second_order_nonhomogeneous_constant_coefficient_equations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for equation in [
+            "y''-3*y'+2*y==x^2",
+            "y''-3*y'+2*y==Exp(3*x)",
+            "y''-2*y'+y==Exp(x)",
+            "y''+y==Cos(x)",
+        ] {
+            let result = solve(&mut engine, equation, "x", "y", &[]).unwrap();
+            assert_eq!(result.status, OdeStatus::Solved, "{equation}: {result:#?}");
+            assert_eq!(
+                result.method,
+                OdeMethod::UndeterminedCoefficients,
+                "{equation}: {result:#?}"
+            );
+            assert_eq!(result.residual, "0", "{equation}: {result:#?}");
+        }
+
+        let translated = solve(&mut engine, "u''+u==t^2", "t", "u", &[]).unwrap();
+        assert!(translated.solution.contains('t'), "{translated:#?}");
+
+        let initial = solve(
+            &mut engine,
+            "y''-3*y'+2*y==x^2",
+            "x",
+            "y",
+            &[
+                InitialCondition {
+                    derivative_order: 0,
+                    point: "0",
+                    value: "0",
+                },
+                InitialCondition {
+                    derivative_order: 1,
+                    point: "0",
+                    value: "0",
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            initial.initial_condition_status,
+            InitialConditionStatus::Applied,
+            "{initial:#?}"
+        );
+        assert!(initial.constants.is_empty(), "{initial:#?}");
+    }
+
+    #[test]
     fn solves_bernoulli_equations_without_losing_zero_solution() {
         let mut engine = RustEngine::spawn().unwrap();
         let result = solve(&mut engine, "y'+y==x*y^2", "x", "y", &[]).unwrap();
@@ -1174,6 +1242,11 @@ mod tests {
                 OdeMethod::Homogeneous,
                 "ode-method-homogeneous",
             ),
+            (
+                "y''-3*y'+2*y==x^2",
+                OdeMethod::UndeterminedCoefficients,
+                "ode-method-undetermined-coefficients",
+            ),
         ] {
             let stepped = solve_steps_with_verbosity(
                 &mut engine,
@@ -1243,6 +1316,17 @@ mod tests {
                     "ode-ratio-substitution",
                     "ode-homogeneous-reduced",
                     "ode-integrate-both",
+                ][..],
+            ),
+            (
+                "y''-3*y'+2*y==x^2",
+                &[
+                    "ode-linear-constant-form",
+                    "ode-characteristic-equation",
+                    "ode-complementary-solution",
+                    "ode-trial-particular",
+                    "ode-coefficient-system",
+                    "ode-particular-solution",
                 ][..],
             ),
         ] {

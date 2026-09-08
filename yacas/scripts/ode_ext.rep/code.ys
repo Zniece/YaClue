@@ -180,6 +180,246 @@ OdeExtSolveBernoulliPartsData(_p, _q, _collect) <--
     ];
 ];
 
+/* Second-order linear equations with constant coefficients.  The
+   undetermined-coefficients extension deliberately accepts only forcing
+   families closed under differentiation. */
+OdeExtConstantList(_count) <--
+[
+    Local(result, index);
+    result := ZeroVector(count);
+    For(index := 1, index <= count, index++)
+        result[index] := UniqueConstant();
+    result;
+];
+
+OdeExtD1(_expression) <-- ApplyPure("D", {x, expression});
+OdeExtD2(_expression) <-- ApplyPure("D", {x, OdeExtD1(expression)});
+
+OdeExtApplyAssignments(_expression, _assignments) <--
+[
+    Local(result, assignment);
+    result := expression;
+    ForEach(assignment, assignments)
+        result := WithValue(assignment[1], assignment[2], result);
+    result;
+];
+
+RuleBase("OdeExtExponentialPolynomialParts", {forcing});
+10 # OdeExtExponentialPolynomialParts(Exp(_argument)) _
+     (Degree(argument, x) = 1 And Coef(argument, x, 0) = 0) <--
+     {1, Coef(argument, x, 1)};
+20 # OdeExtExponentialPolynomialParts(_polynomial * Exp(_argument)) _
+     (CanBeUni(x, polynomial) And Degree(argument, x) = 1 And
+      Coef(argument, x, 0) = 0) <--
+     {polynomial, Coef(argument, x, 1)};
+21 # OdeExtExponentialPolynomialParts(Exp(_argument) * _polynomial) _
+     (CanBeUni(x, polynomial) And Degree(argument, x) = 1 And
+      Coef(argument, x, 0) = 0) <--
+     {polynomial, Coef(argument, x, 1)};
+90 # OdeExtExponentialPolynomialParts(_polynomial) _
+     CanBeUni(x, polynomial) <-- {polynomial, 0};
+100 # OdeExtExponentialPolynomialParts(_forcing) <-- {};
+
+OdeExtUndeterminedExponential(_a, _b, _c, _forcing) <--
+[
+    Local(parts, polynomial, rate, degree, characteristic,
+          characteristicDerivative, resonance, coefficients, base,
+          trial, residual, equations, assignments, particular);
+    parts := OdeExtExponentialPolynomialParts(forcing);
+    if (Length(parts) != 2) [
+        {};
+    ] else [
+        polynomial := parts[1];
+        rate := parts[2];
+        degree := Degree(polynomial, x);
+        characteristic := Simplify(a*rate^2 + b*rate + c);
+        characteristicDerivative := Simplify(2*a*rate + b);
+        resonance := If(characteristic != 0, 0,
+                        If(characteristicDerivative != 0, 1, 2));
+        coefficients := OdeExtConstantList(degree + 1);
+        base := Add(coefficients * (x^(0 .. degree)));
+        trial := Simplify(x^resonance * Exp(rate*x) * base);
+        residual := Simplify(
+            (a*OdeExtD2(trial) + b*OdeExtD1(trial) + c*trial - forcing) /
+            Exp(rate*x));
+        if (Not(CanBeUni(x, residual))) [
+            {};
+        ] else [
+            equations := Coef(Expand(residual), x, 0 .. degree);
+            equations := Select({{coefficient}, coefficient != 0}, equations);
+            assignments := Solve(equations, coefficients);
+            if (Length(assignments) != 1) [
+                {};
+            ] else [
+                particular := OdeExtApplyAssignments(trial, assignments[1]);
+                If(IsFreeOf(Undefined, particular) And
+                   Simplify(a*OdeExtD2(particular) +
+                            b*OdeExtD1(particular) + c*particular - forcing) = 0,
+                   {particular, trial, equations,
+                    a*r^2 + b*r + c == 0},
+                   {});
+            ];
+        ];
+    ];
+];
+
+RuleBase("OdeExtTrigonometricPolynomialParts", {forcing});
+10 # OdeExtTrigonometricPolynomialParts(Sin(_argument)) _
+     (Degree(argument, x) = 1 And Coef(argument, x, 0) = 0) <--
+     {0, 1, Coef(argument, x, 1)};
+11 # OdeExtTrigonometricPolynomialParts(Cos(_argument)) _
+     (Degree(argument, x) = 1 And Coef(argument, x, 0) = 0) <--
+     {1, 0, Coef(argument, x, 1)};
+20 # OdeExtTrigonometricPolynomialParts(_polynomial * Sin(_argument)) _
+     (CanBeUni(x, polynomial) And Degree(argument, x) = 1 And
+      Coef(argument, x, 0) = 0) <--
+     {0, polynomial, Coef(argument, x, 1)};
+21 # OdeExtTrigonometricPolynomialParts(Sin(_argument) * _polynomial) _
+     (CanBeUni(x, polynomial) And Degree(argument, x) = 1 And
+      Coef(argument, x, 0) = 0) <--
+     {0, polynomial, Coef(argument, x, 1)};
+22 # OdeExtTrigonometricPolynomialParts(_polynomial * Cos(_argument)) _
+     (CanBeUni(x, polynomial) And Degree(argument, x) = 1 And
+      Coef(argument, x, 0) = 0) <--
+     {polynomial, 0, Coef(argument, x, 1)};
+23 # OdeExtTrigonometricPolynomialParts(Cos(_argument) * _polynomial) _
+     (CanBeUni(x, polynomial) And Degree(argument, x) = 1 And
+      Coef(argument, x, 0) = 0) <--
+     {polynomial, 0, Coef(argument, x, 1)};
+100 # OdeExtTrigonometricPolynomialParts(_forcing) <-- {};
+
+OdeExtUndeterminedTrigonometric(_a, _b, _c, _forcing) <--
+[
+    Local(parts, cosinePolynomial, sinePolynomial, frequency, degree,
+          resonance, cosineCoefficients, sineCoefficients, cosineBase,
+          sineBase, trial, residual, cosineTerm, sineTerm,
+          cosineResidual, sineResidual, equations, variables, assignments,
+          particular);
+    parts := OdeExtTrigonometricPolynomialParts(forcing);
+    if (Length(parts) != 3) [
+        {};
+    ] else [
+        cosinePolynomial := parts[1];
+        sinePolynomial := parts[2];
+        frequency := parts[3];
+        degree := Max(Degree(cosinePolynomial, x), Degree(sinePolynomial, x));
+        resonance := If(Simplify(c - a*frequency^2) = 0 And
+                        Simplify(b*frequency) = 0, 1, 0);
+        cosineCoefficients := OdeExtConstantList(degree + 1);
+        sineCoefficients := OdeExtConstantList(degree + 1);
+        cosineBase := Add(cosineCoefficients * (x^(0 .. degree)));
+        sineBase := Add(sineCoefficients * (x^(0 .. degree)));
+        cosineTerm := Cos(frequency*x);
+        sineTerm := Sin(frequency*x);
+        trial := x^resonance *
+                 (cosineBase*cosineTerm + sineBase*sineTerm);
+        residual := Expand(a*OdeExtD2(trial) + b*OdeExtD1(trial) +
+                           c*trial - forcing);
+        cosineResidual := Simplify(Coef(residual, cosineTerm, 1));
+        sineResidual := Simplify(Coef(residual, sineTerm, 1));
+        /* Put sine equations first to align the leading equation with the
+           cosine unknowns.  The inherited linear system solver has no row
+           pivoting for a zero first diagonal entry. */
+        equations := Concat(Coef(sineResidual, x, 0 .. degree + resonance),
+                            Coef(cosineResidual, x, 0 .. degree + resonance));
+        equations := Select({{coefficient}, coefficient != 0}, equations);
+        variables := Concat(cosineCoefficients, sineCoefficients);
+        if (Length(equations) > 0 And Length(variables) > 0 And
+            IsFreeOf(variables[1], equations[1])) [
+            variables := Reverse(variables);
+        ];
+        assignments := Solve(equations, variables);
+        if (Length(assignments) != 1) [
+            {};
+        ] else [
+            particular := OdeExtApplyAssignments(trial, assignments[1]);
+            If(IsFreeOf(Undefined, particular) And
+               Simplify(a*OdeExtD2(particular) +
+                        b*OdeExtD1(particular) + c*particular - forcing) = 0,
+               {particular, trial, equations,
+                a*r^2 + b*r + c == 0},
+               {});
+        ];
+    ];
+];
+
+RuleBase("OdeExtUndeterminedParticular", {a, b, c, forcing});
+10 # OdeExtUndeterminedParticular(_a, _b, _c, _left + _right) <--
+[
+    Local(leftData, rightData);
+    leftData := OdeExtUndeterminedParticular(a, b, c, left);
+    rightData := OdeExtUndeterminedParticular(a, b, c, right);
+    If(Length(leftData) = 4 And Length(rightData) = 4,
+       {Simplify(leftData[1] + rightData[1]),
+        leftData[2] + rightData[2],
+        Concat(leftData[3], rightData[3]), leftData[4]},
+       {});
+];
+11 # OdeExtUndeterminedParticular(_a, _b, _c, _left - _right) <--
+[
+    Local(leftData, rightData);
+    leftData := OdeExtUndeterminedParticular(a, b, c, left);
+    rightData := OdeExtUndeterminedParticular(a, b, c, right);
+    If(Length(leftData) = 4 And Length(rightData) = 4,
+       {Simplify(leftData[1] - rightData[1]),
+        leftData[2] - rightData[2],
+        Concat(leftData[3], rightData[3]), leftData[4]},
+       {});
+];
+20 # OdeExtUndeterminedParticular(_a, _b, _c, _forcing) <--
+[
+    Local(result);
+    result := OdeExtUndeterminedExponential(a, b, c, forcing);
+    if (Length(result) != 4) [
+        result := OdeExtUndeterminedTrigonometric(a, b, c, forcing);
+    ];
+    result;
+];
+
+RuleBase("OdeExtSolveUndeterminedCoefficients", {equation});
+10 # OdeExtSolveUndeterminedCoefficients(_left == _right) <--
+     OdeExtLegacy(OdeExtSolveUndeterminedCoefficientsPartsData(left == right, False));
+100 # OdeExtSolveUndeterminedCoefficients(_equation) <-- {};
+
+RuleBase("OdeExtSolveUndeterminedCoefficientsData", {equation});
+10 # OdeExtSolveUndeterminedCoefficientsData(_left == _right) <--
+     OdeExtSolveUndeterminedCoefficientsPartsData(left == right, True);
+100 # OdeExtSolveUndeterminedCoefficientsData(_equation) <-- {};
+
+RuleBase("OdeExtSolveUndeterminedCoefficientsPartsData", {equation, collect});
+10 # OdeExtSolveUndeterminedCoefficientsPartsData(_left == _right, _collect) <--
+[
+    Local(normal, a, b, c, forcing, remainder, particularData,
+          homogeneous, candidate, eventData);
+    normal := Expand(left - right);
+    a := Simplify(Coef(normal, y'', 1));
+    b := Simplify(Coef(normal, y', 1));
+    c := Simplify(Coef(normal, y, 1));
+    remainder := Simplify(normal - a*y'' - b*y' - c*y);
+    forcing := Simplify(-remainder);
+    if (a = 0 Or forcing = 0 Or
+        Not(IsFreeOf({x, y, y', y''}, {a, b, c})) Or
+        Not(IsFreeOf({y, y', y''}, forcing))) [
+        {};
+    ] else [
+        particularData := OdeExtUndeterminedParticular(a, b, c, forcing);
+        if (Length(particularData) != 4) [
+            {};
+        ] else [
+            homogeneous := OdeSolve(a*y'' + b*y' + c*y == 0);
+            candidate := Simplify(homogeneous + particularData[1]);
+            eventData := If(collect,
+              {{OdeLinearConstantForm, a*y'' + b*y' + c*y == forcing, 2},
+               {OdeCharacteristicEquation, particularData[4], 2},
+               {OdeComplementarySolution, homogeneous, 1},
+               {OdeTrialParticular, particularData[2], 2},
+               {OdeCoefficientSystem, particularData[3], 1},
+               {OdeParticularSolution, particularData[1], 2}}, {});
+            {{candidate}, UndeterminedCoefficients, eventData};
+        ];
+    ];
+];
+
 /* Exact first-order equations M(x,y)+N(x,y)y'=0.  Keep the potential
    equation implicit: forcing Solve(...,y) here can discard branches. */
 RuleBase("OdeExtSolveExact", {equation});
@@ -383,7 +623,10 @@ RuleBase("OdeExtVerifyHomogeneous", {equation, solution});
 100 # ExtendedOdeSolve(_equation) <--
 [
     Local(result);
-    result := OdeExtSolveExact(equation);
+    result := OdeExtSolveUndeterminedCoefficients(equation);
+    if (Length(result) != 2) [
+        result := OdeExtSolveExact(equation);
+    ];
     if (Length(result) != 2) [
         result := OdeExtSolveHomogeneous(equation);
     ];

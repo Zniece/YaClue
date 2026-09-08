@@ -130,3 +130,45 @@ fn detailed_entries_preserve_solutions_and_return_events() {
         assert_eq!(run(&mut env, &format!("Length({source})")), "3", "{source}");
     }
 }
+
+#[test]
+fn undetermined_coefficients_handles_closed_forcing_families_and_resonance() {
+    let mut env = boot();
+    for equation in [
+        "y''+y==x^2",
+        "y''-3*y'+2*y==Exp(3*x)",
+        "y''-2*y'+y==Exp(x)",
+        "y''+y==Cos(x)",
+        "y''+y==Sin(2*x)",
+        "y''+y==x^2+Exp(2*x)",
+        "y''+y==Sin(2*x)+Cos(2*x)",
+    ] {
+        assert_eq!(
+            run(
+                &mut env,
+                &format!(
+                    "[Local(r);r:=OdeExtSolveUndeterminedCoefficients({equation});{{r[2],Simplify(OdeTest({equation},r[1][1]))}};]"
+                )
+            ),
+            "{UndeterminedCoefficients,0}",
+            "{equation}"
+        );
+    }
+    for equation in ["x*y''+y==x", "y''+y==Ln(x)", "y''+y^2==x"] {
+        assert_eq!(
+            run(
+                &mut env,
+                &format!("Length(OdeExtSolveUndeterminedCoefficients({equation}))")
+            ),
+            "0",
+            "{equation}"
+        );
+    }
+    assert_eq!(
+        run(
+            &mut env,
+            "[Local(r);r:=ExtendedOdeSolve(y''-3*y'+2*y==0);r[2];]"
+        ),
+        "Upstream"
+    );
+}
