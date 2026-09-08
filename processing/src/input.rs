@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use crate::engine::{EngineError, Expr};
+use crate::engine::EngineError;
 use yacas_rs::value::{spine_refs, LispObject, ObjectKind};
 
 thread_local! {
@@ -37,41 +37,6 @@ pub fn analyze_expression(input: &str, label: &str) -> Result<ExpressionAnalysis
         function_heads: function_heads.into_iter().collect(),
         constants: constants.into_iter().collect(),
     })
-}
-
-/// Parse product input without evaluating it and expose a small owned tree for
-/// structural routing decisions.
-pub fn parse_expression_tree(input: &str, label: &str) -> Result<Expr, EngineError> {
-    validate_safe_text(input, label)?;
-    let tree = PARSE_ENV.with(|env| {
-        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
-    });
-    let tree = tree
-        .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
-        .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
-    syntax_expr(&tree)
-}
-
-fn syntax_expr(node: &Rc<LispObject>) -> Result<Expr, EngineError> {
-    match &node.kind {
-        ObjectKind::Number(number) => Ok(Expr::Number(number.string().to_string())),
-        ObjectKind::Atom(name) => Ok(Expr::Symbol(name.to_string())),
-        ObjectKind::Sublist(first) => {
-            let mut nodes = spine_refs(first);
-            let head = nodes
-                .next()
-                .and_then(|node| node.atom_string())
-                .ok_or_else(|| EngineError::InvalidInput("表达式函数头无效".into()))?;
-            let args = nodes.map(syntax_expr).collect::<Result<Vec<_>, _>>()?;
-            Ok(Expr::Call {
-                head: head.to_string(),
-                args,
-            })
-        }
-        ObjectKind::Generic(_) => Err(EngineError::InvalidInput(
-            "输入表达式包含不支持的通用对象".into(),
-        )),
-    }
 }
 
 pub fn validate_expression(input: &str, label: &str) -> Result<(), EngineError> {
