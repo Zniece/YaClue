@@ -8,9 +8,9 @@ The audit created an `Environment` with current `yacas-rs`, loaded `yacasinit.ys
 
 | Item | Count |
 |---|---:|
-| Level-three reference headings | 523 |
-| Headings recognizable as functions or operators | 507 |
-| Names directly discoverable after full startup | 503 |
+| Level-three reference headings | 524 |
+| Headings recognizable as functions or operators | 508 |
+| Names directly discoverable after full startup | 504 |
 | Names available after package loading | 4 |
 
 Four package-local names become available when their packages load.

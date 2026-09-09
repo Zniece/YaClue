@@ -954,6 +954,29 @@ Out> {{-ki2/ -1,ki2},{-ki2,ki2}};
 
 ## Matrix decompositions
 
+### LinearStructure(A)
+
+compute exact row and subspace structure in one elimination
+
+**param A:** nonempty matrix of exact rational numbers
+
+`LinearStructure(A)` returns
+`{rref, rank, pivotColumns, nullSpaceBasis, columnSpaceBasis}`. Pivot
+columns use one-based indices. The column-space basis contains columns from
+the original matrix. The function accepts rectangular matrices and performs
+exact rational arithmetic.
+
+**Example:**
+
+```
+In> LinearStructure({{1,2,3},{2,4,6},{1,1,1}})
+Out> {{{1,0,-1},{0,1,2},{0,0,0}},2,{1,2},{{1,-2,1}},{{1,2,1},{2,4,1}}};
+```
+
+The processing API additionally enforces a 16 by 16 product limit and exposes
+rank-nullity and row/column linear-independence fields.
+
+
 ### Cholesky(A)
 
 find the Cholesky decomposition
@@ -1207,5 +1230,4 @@ zeros if $a=3$.
 ```
 
 > **See also:** [Determinant](linear-algebra.md#determinantm), [Simplify](simplify.md#simplifyexpr), [Solve](solvers.md#solveeq-var), [PSolve](solvers.md#psolvepoly-var)
-
 
