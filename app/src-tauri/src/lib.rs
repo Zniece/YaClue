@@ -4,6 +4,9 @@ use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngi
 use processing::equations::{EquationStepResult, SolveResult};
 use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
+use processing::multiple_integrals::{
+    DoubleIntegralResult, DoubleIntegralStepResult, IntegralBound,
+};
 use processing::numeric::{NumericResult, RootResult, TaylorResult};
 use processing::ode::{InitialCondition, OdeResult, OdeStepResult};
 use processing::ode_numeric::{NumericOdeOptions, NumericOdeResult};
@@ -139,6 +142,62 @@ async fn solve_equation_steps(
         &equation,
         &variable,
         parse_verbosity(&verbosity)?,
+    )
+    .map_err(message)
+}
+
+#[derive(Deserialize)]
+struct DoubleIntegralRequest {
+    expression: String,
+    inner_variable: String,
+    inner_lower: String,
+    inner_upper: String,
+    outer_variable: String,
+    outer_lower: String,
+    outer_upper: String,
+    verbosity: Option<String>,
+}
+
+fn integral_bounds(request: &DoubleIntegralRequest) -> (IntegralBound<'_>, IntegralBound<'_>) {
+    (
+        IntegralBound {
+            variable: &request.inner_variable,
+            lower: &request.inner_lower,
+            upper: &request.inner_upper,
+        },
+        IntegralBound {
+            variable: &request.outer_variable,
+            lower: &request.outer_lower,
+            upper: &request.outer_upper,
+        },
+    )
+}
+
+#[tauri::command]
+async fn calculate_double_integral(
+    request: DoubleIntegralRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<DoubleIntegralResult, ErrorResponse> {
+    let (inner, outer) = integral_bounds(&request);
+    let mut engine = lock_engine(&engine)?;
+    processing::multiple_integrals::double_integral(&mut *engine, &request.expression, inner, outer)
+        .map_err(message)
+}
+
+#[tauri::command]
+async fn calculate_double_integral_steps(
+    request: DoubleIntegralRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<DoubleIntegralStepResult, ErrorResponse> {
+    let verbosity = parse_verbosity(request.verbosity.as_deref().unwrap_or("detailed"))?;
+    let (inner, outer) = integral_bounds(&request);
+    let mut engine = lock_engine(&engine)?;
+    processing::multiple_integrals::double_integral_steps_with_verbosity(
+        &mut *engine,
+        &request.expression,
+        inner,
+        outer,
+        verbosity,
     )
     .map_err(message)
 }
@@ -458,6 +517,8 @@ pub fn run() {
             transform_expression,
             solve_equations,
             solve_equation_steps,
+            calculate_double_integral,
+            calculate_double_integral_steps,
             calculate_limit,
             calculate_limit_steps,
             solve_ode,
