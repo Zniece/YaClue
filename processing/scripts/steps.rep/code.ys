@@ -858,6 +858,7 @@ RuleBase("Steps'Text", {key});
 10 # Steps'Text("definite-substitution-rule") <-- "将上限和下限代入原函数";
 10 # Steps'Text("definite-odd-symmetry-rule") <-- "对称区间上的奇函数积分为 0";
 10 # Steps'Text("definite-even-symmetry-rule") <-- "对称区间上的偶函数积分等于半区间积分的 2 倍";
+10 # Steps'Text("higher-derivative-round") <-- "继续对上一阶导数求导";
 
 10 # Steps'Text("simplify") <-- "化简";
 
@@ -910,7 +911,7 @@ RuleBase("Steps'Importance", {key});
 10 # Steps'Importance("sec-power-reduction-rule") <-- 2;
 10 # Steps'Importance("definite-eval-rule") <-- 2;
 10 # Steps'Importance("definite-integral-rule") <-- 0;
-10 # Steps'Importance("definite-antiderivative-rule") <-- 1;
+10 # Steps'Importance("definite-antiderivative-rule") <-- 0;
 10 # Steps'Importance("definite-substitution-rule") <-- 1;
 10 # Steps'Importance("definite-odd-symmetry-rule") <-- 2;
 10 # Steps'Importance("definite-even-symmetry-rule") <-- 2;
@@ -926,6 +927,11 @@ StepsD'Full(expr, var, order) :=
   out := {};
   For (i := 1, i <= order, i++)
   [
+    If (i > 1,
+      DestructiveAppend(out,
+        {"higher-derivative-round", DPrime(cur),
+         Steps'Explain("higher-derivative-round"),
+         Steps'Importance("higher-derivative-round")}));
     steps := Steps'Annotate(StepsD(cur, var), "d");
     out := Concat(out, steps);
     cur := steps[Length(steps)][2];

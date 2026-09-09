@@ -491,6 +491,19 @@ mod tests {
         }
         // order=0 拒绝
         assert!(derive_steps_order(&mut engine, "x^4", "x", 0).is_err());
+
+        let standard =
+            derive_steps_order_with_verbosity(&mut engine, "x^4", "x", 2, StepVerbosity::Standard)
+                .unwrap();
+        assert!(standard
+            .iter()
+            .any(|step| step.rule == "higher-derivative-round"));
+        let concise =
+            derive_steps_order_with_verbosity(&mut engine, "x^4", "x", 2, StepVerbosity::Concise)
+                .unwrap();
+        assert!(concise
+            .iter()
+            .all(|step| step.rule != "higher-derivative-round"));
     }
 
     #[test]
@@ -582,6 +595,12 @@ mod tests {
 
         assert!(detailed.len() > standard.len());
         assert!(standard.len() > concise.len());
+        assert!(detailed
+            .iter()
+            .any(|step| step.rule == "definite-antiderivative-rule"));
+        assert!(standard
+            .iter()
+            .all(|step| step.rule != "definite-antiderivative-rule"));
         assert_eq!(detailed.last().unwrap().expr, concise.last().unwrap().expr);
         assert_eq!(engine.eval_calls, 3);
         assert_eq!(

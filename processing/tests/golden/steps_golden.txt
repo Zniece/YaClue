@@ -128,6 +128,7 @@ simplify	(((2 ^ (x ^ 2)) * x) * (2 * Ln(2)))	2 ^{x ^{2}} x 2 \ln 2	化简
 sin-rule	(Cos(x) * DPrime(x))	\cos x \left(x\right)'	正弦法则: (Sin(u))' = Cos(u)*u'
 identity-rule	(Cos(x) * 1)	\cos x	自变量法则: x' = 1
 simplify	Cos(x)	\cos x	化简
+higher-derivative-round	DPrime(Cos(x))	\left(\cos x\right)'	继续对上一阶导数求导
 cos-rule	(- (Sin(x) * DPrime(x)))	 - \sin x \left(x\right)'	余弦法则: (Cos(u))' = -Sin(u)*u'
 identity-rule	(- (Sin(x) * 1))	 - \sin x	自变量法则: x' = 1
 simplify	(- Sin(x))	 - \sin x	化简
@@ -135,6 +136,7 @@ simplify	(- Sin(x))	 - \sin x	化简
 power-rule	(4 * ((x ^ 3) * DPrime(x)))	4 x ^{3} \left(x\right)'	幂法则: (u^n)' = n*u^(n-1)*u'
 identity-rule	(4 * ((x ^ 3) * 1))	4 x ^{3}	自变量法则: x' = 1
 simplify	(4 * (x ^ 3))	4 x ^{3}	化简
+higher-derivative-round	DPrime((4 * (x ^ 3)))	\left(4 x ^{3}\right)'	继续对上一阶导数求导
 constant-multiple-rule	(4 * DPrime((x ^ 3)))	4 \left(x ^{3}\right)'	常数倍法则: (c*u)' = c*u'
 power-rule	(4 * (3 * ((x ^ 2) * DPrime(x))))	12 x ^{2} \left(x\right)'	幂法则: (u^n)' = n*u^(n-1)*u'
 identity-rule	(12 * ((x ^ 2) * 1))	12 x ^{2}	自变量法则: x' = 1
