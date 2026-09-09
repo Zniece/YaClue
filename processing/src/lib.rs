@@ -22,6 +22,7 @@ pub mod plot;
 pub mod quadrature;
 pub mod series;
 pub mod steps;
+pub mod surface_integrals;
 
 #[cfg(test)]
 mod test_support;
