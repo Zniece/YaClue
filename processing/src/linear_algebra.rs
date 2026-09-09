@@ -7,6 +7,38 @@ use serde::Serialize;
 pub const MAX_LINEAR_STRUCTURE_DIMENSION: usize = 16;
 pub const MAX_EIGENVALUES: usize = 16;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PlduResult {
+    pub dimension: usize,
+    pub permutation: Vec<Vec<String>>,
+    pub lower: Vec<Vec<String>>,
+    pub diagonal: Vec<Vec<String>>,
+    pub upper: Vec<Vec<String>>,
+    /// Whether the engine verified `P*A = L*D*U` in the same evaluation.
+    pub verified: bool,
+    pub tex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CholeskyResult {
+    pub dimension: usize,
+    /// Upper-triangular factor satisfying `A = Transpose(R)*R`.
+    pub upper: Vec<Vec<String>>,
+    pub verified: bool,
+    pub tex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GramSchmidtResult {
+    pub vector_count: usize,
+    pub vector_dimension: usize,
+    pub basis: Vec<Vec<String>>,
+    pub normalized: bool,
+    /// Whether pairwise orthogonality (and unit norms when requested) was verified.
+    pub verified: bool,
+    pub tex: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatrixOperation {
@@ -73,6 +105,139 @@ pub struct EigenSpaceResult {
     pub dimension: usize,
     pub spaces: Vec<EigenSpace>,
     pub tex: String,
+}
+
+/// Compute a pivoted exact `P*A = L*D*U` decomposition.
+pub fn pldu(engine: &mut dyn Engine, matrix: &str) -> Result<PlduResult, EngineError> {
+    validate_expression(matrix, "矩阵")?;
+    let command = format!(
+        "[Local(a,p,l,d,u,ok); a:={matrix}; \
+         Check(IsSquareMatrix(a),\"argument must be a square matrix\"); \
+         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+               \"matrix dimension limit exceeded\"); \
+         {{p,l,d,u}}:=PLDU(a); ok:=(p*a-l*d*u)=ZeroMatrix(Length(a)); \
+         {{Length(a),p,l,d,u,ok}};]"
+    );
+    let evaluated = engine.eval(&command)?;
+    let fields = exact_fields(&evaluated.expr, "PLDU result", 6)?;
+    let dimension = usize_item(&fields[0], "矩阵维数")?;
+    Ok(PlduResult {
+        dimension,
+        permutation: square_matrix(&fields[1], "置换矩阵", dimension)?,
+        lower: square_matrix(&fields[2], "下三角矩阵", dimension)?,
+        diagonal: square_matrix(&fields[3], "对角矩阵", dimension)?,
+        upper: square_matrix(&fields[4], "上三角矩阵", dimension)?,
+        verified: bool_item(&fields[5], "PLDU 证书")?,
+        tex: strip_tex_delimiters(&evaluated.tex),
+    })
+}
+
+/// Compute an exact upper Cholesky factor after checking symmetry.
+pub fn cholesky(engine: &mut dyn Engine, matrix: &str) -> Result<CholeskyResult, EngineError> {
+    validate_expression(matrix, "矩阵")?;
+    let command = format!(
+        "[Local(a,r,ok); a:={matrix}; \
+         Check(IsSquareMatrix(a),\"argument must be a square matrix\"); \
+         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+               \"matrix dimension limit exceeded\"); \
+         Check(a=Transpose(a),\"matrix must be symmetric\"); \
+         r:=Cholesky(a); ok:=(Transpose(r)*r-a)=ZeroMatrix(Length(a)); \
+         {{Length(a),r,ok}};]"
+    );
+    let evaluated = engine.eval(&command)?;
+    let fields = exact_fields(&evaluated.expr, "Cholesky result", 3)?;
+    let dimension = usize_item(&fields[0], "矩阵维数")?;
+    Ok(CholeskyResult {
+        dimension,
+        upper: square_matrix(&fields[1], "Cholesky 因子", dimension)?,
+        verified: bool_item(&fields[2], "Cholesky 证书")?,
+        tex: strip_tex_delimiters(&evaluated.tex),
+    })
+}
+
+/// Orthogonalize a linearly independent vector family. The vectors are
+/// normalized when `normalized` is true.
+pub fn gram_schmidt(
+    engine: &mut dyn Engine,
+    vectors: &str,
+    normalized: bool,
+) -> Result<GramSchmidtResult, EngineError> {
+    validate_expression(vectors, "向量组")?;
+    let algorithm = if normalized {
+        "OrthonormalBasis(w)"
+    } else {
+        "OrthogonalBasis(w)"
+    };
+    let unit_check = if normalized {
+        "For(i:=1,i<=Length(b),i++) If(Not(Simplify(InProduct(b[i],b[i]))=1),ok:=False);"
+    } else {
+        ""
+    };
+    let command = format!(
+        "[Local(w,s,b,ok,i,j); w:={vectors}; \
+         Check(IsMatrix(w),\"vectors must have equal dimensions\"); \
+         Check(Length(w)>0 And Length(w)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+               \"vector count limit exceeded\"); \
+         Check(Length(w[1])>0 And Length(w[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+               \"vector dimension limit exceeded\"); \
+         s:=LinearStructure(w); Check(s[2]=Length(w),\"vectors must be linearly independent\"); \
+         b:={algorithm}; \
+         ok:=True; For(i:=1,i<Length(b),i++) For(j:=i+1,j<=Length(b),j++) \
+              If(Not(InProduct(b[i],b[j])=0),ok:=False); \
+         {unit_check} \
+         {{Length(w),Length(w[1]),b,ok}};]"
+    );
+    let evaluated = engine.eval(&command)?;
+    let fields = exact_fields(&evaluated.expr, "Gram-Schmidt result", 4)?;
+    let vector_count = usize_item(&fields[0], "向量数量")?;
+    let vector_dimension = usize_item(&fields[1], "向量维数")?;
+    let basis = matrix_items(&fields[2], "正交基")?;
+    if basis.len() != vector_count || basis.iter().any(|v| v.len() != vector_dimension) {
+        return Err(EngineError::Parse("Gram-Schmidt 返回的基维数不一致".into()));
+    }
+    Ok(GramSchmidtResult {
+        vector_count,
+        vector_dimension,
+        basis,
+        normalized,
+        verified: bool_item(&fields[3], "Gram-Schmidt 证书")?,
+        tex: strip_tex_delimiters(&evaluated.tex),
+    })
+}
+
+fn exact_fields<'a>(
+    expression: &'a Expr,
+    label: &str,
+    count: usize,
+) -> Result<&'a [Expr], EngineError> {
+    let fields = list_items(expression, label)?;
+    if fields.len() != count {
+        return Err(EngineError::Parse(format!(
+            "{label} 返回 {} 个字段，预期 {count} 个",
+            fields.len()
+        )));
+    }
+    Ok(fields)
+}
+
+fn square_matrix(
+    expression: &Expr,
+    label: &str,
+    dimension: usize,
+) -> Result<Vec<Vec<String>>, EngineError> {
+    let matrix = matrix_items(expression, label)?;
+    if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
+        return Err(EngineError::Parse(format!("{label} 维数与输入矩阵不一致")));
+    }
+    Ok(matrix)
+}
+
+fn bool_item(expression: &Expr, label: &str) -> Result<bool, EngineError> {
+    match expression.to_string().as_str() {
+        "True" => Ok(true),
+        "False" => Ok(false),
+        _ => Err(EngineError::Parse(format!("{label} 不是布尔值"))),
+    }
 }
 
 /// Compute exact eigenspace bases for a rational square matrix. When
@@ -553,5 +718,44 @@ mod tests {
         assert!(eigen_spaces(&mut engine, "{{x,0},{0,1}}", &["1"]).is_err());
         assert!(eigen_spaces(&mut engine, "{{1,0},{0,1}}", &["Sqrt(2)"]).is_err());
         assert_eq!(engine.eval("2+3").unwrap().expr.to_string(), "5");
+    }
+
+    #[test]
+    fn returns_verified_pivoted_pldu_factors() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = pldu(&mut engine, "{{0,1},{1,2}}").unwrap();
+        assert_eq!(result.dimension, 2);
+        assert_eq!(result.permutation, vec![vec!["0", "1"], vec!["1", "0"]]);
+        assert!(result.verified);
+        assert!(!result.tex.is_empty());
+    }
+
+    #[test]
+    fn returns_verified_cholesky_factor_and_rejects_bad_inputs() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = cholesky(&mut engine, "{{4,2},{2,3}}").unwrap();
+        assert_eq!(result.dimension, 2);
+        assert_eq!(result.upper, vec![vec!["2", "1"], vec!["0", "Sqrt(2)"]]);
+        assert!(result.verified);
+        assert!(cholesky(&mut engine, "{{1,2},{0,1}}").is_err());
+        assert!(cholesky(&mut engine, "{{1,2},{2,1}}").is_err());
+    }
+
+    #[test]
+    fn returns_verified_orthogonal_and_orthonormal_bases() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let orthogonal = gram_schmidt(&mut engine, "{{1,1,0},{2,0,1},{2,2,1}}", false).unwrap();
+        assert_eq!(
+            (orthogonal.vector_count, orthogonal.vector_dimension),
+            (3, 3)
+        );
+        assert!(!orthogonal.normalized);
+        assert!(orthogonal.verified);
+
+        let orthonormal = gram_schmidt(&mut engine, "{{1,0},{0,1}}", true).unwrap();
+        assert!(orthonormal.normalized);
+        assert!(orthonormal.verified);
+        assert!(gram_schmidt(&mut engine, "{{1,0},{2,0}}", false).is_err());
+        assert!(gram_schmidt(&mut engine, "{{1,0},{1}}", false).is_err());
     }
 }
