@@ -371,6 +371,12 @@ fn solve_internal(
             let (solution, residual, method) = parse_wrapper(upstream)?;
             (vec![solution], residual, method, vec![])
         };
+    if collect_events && method == OdeMethod::Upstream && residual.to_string() == "0" {
+        if let Some(events) = elementary_growth_events(equation, independent, dependent) {
+            method = OdeMethod::Separable;
+            solver_events = events;
+        }
+    }
     if residual.to_string() != "0" && !prefer_extension {
         if let Some(extension) = try_extension(
             engine,
@@ -852,6 +858,43 @@ fn try_extension(
         method: parsed.method,
         events: parsed.events,
     }))
+}
+
+fn elementary_growth_events(
+    equation: &str,
+    independent: &str,
+    dependent: &str,
+) -> Option<Vec<OdeEvent>> {
+    let compact: String = equation
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let derivative = format!("{dependent}'");
+    if compact != format!("{derivative}=={dependent}")
+        && compact != format!("{dependent}=={derivative}")
+    {
+        return None;
+    }
+    Some(vec![
+        OdeEvent::new(
+            "ode-equilibrium-branches",
+            &format!("{dependent}==0"),
+            "先保留除以因变量时可能遗漏的零解。",
+            StepImportance::Normal,
+        ),
+        OdeEvent::new(
+            "ode-separable-form",
+            &format!("{derivative}/{dependent}==1"),
+            "将因变量和自变量分到等式两边。",
+            StepImportance::Normal,
+        ),
+        OdeEvent::new(
+            "ode-integrate-both",
+            &format!("Ln(Abs({dependent}))=={independent}+C"),
+            "对等式两边积分。",
+            StepImportance::Normal,
+        ),
+    ])
 }
 
 fn solution_constants(solution: &Expr) -> Result<Vec<String>, EngineError> {
@@ -1416,6 +1459,25 @@ mod tests {
             .iter()
             .all(|step| step.importance == StepImportance::Key));
         assert!(concise.steps.last().unwrap().expr.starts_with('{'));
+
+        let elementary = solve_steps_with_verbosity(
+            &mut engine,
+            "y'==y",
+            "x",
+            "y",
+            &[],
+            StepVerbosity::Standard,
+        )
+        .unwrap();
+        assert_eq!(elementary.result.method, OdeMethod::Separable);
+        assert!(elementary
+            .steps
+            .iter()
+            .any(|step| step.rule == "ode-method-separable"));
+        assert!(elementary
+            .steps
+            .iter()
+            .any(|step| step.rule == "ode-integrate-both"));
     }
 
     #[test]
