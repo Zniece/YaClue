@@ -11,7 +11,7 @@ use crate::input::{
     analyze_expression, contains_exact_power, contains_product_factor, contains_ratio_symbols,
     strip_tex_delimiters, validate_expression, validate_symbol,
 };
-use crate::steps::{Step, StepImportance, StepVerbosity};
+use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 pub const MAX_ODE_ORDER: u32 = 2;
@@ -190,62 +190,15 @@ fn ode_steps(
         StepImportance::Key,
     ));
 
-    let last = events.len().saturating_sub(1);
-    let events: Vec<_> = events
-        .into_iter()
-        .enumerate()
-        .filter(|(index, event)| {
-            *index == last
-                || match verbosity {
-                    StepVerbosity::Detailed => true,
-                    StepVerbosity::Standard => event.importance != StepImportance::Routine,
-                    StepVerbosity::Concise => event.importance == StepImportance::Key,
-                }
-        })
-        .map(|(_, event)| event)
-        .collect();
-    let expressions: Vec<_> = events.iter().map(|event| event.expr.clone()).collect();
-    let tex = engine.render_tex_batch(&expressions)?;
-    if tex.len() != events.len() {
-        return Err(EngineError::Parse(
-            "ODE 批量 TeX 结果数量与步骤数量不一致".into(),
-        ));
-    }
-    Ok(events
-        .into_iter()
-        .zip(tex)
-        .map(|(event, tex)| Step {
-            rule: event.rule,
-            expr: event.expr,
-            why: event.why,
-            tex: strip_tex_delimiters(&tex),
-            importance: event.importance,
-        })
-        .collect())
+    render_events(engine, events, verbosity)
 }
 
-struct OdeEvent {
-    rule: String,
-    expr: String,
-    why: String,
-    importance: StepImportance,
-}
+type OdeEvent = StepEvent;
 
 struct ExtensionResult {
     candidates: Vec<Expr>,
     method: OdeMethod,
     events: Vec<OdeEvent>,
-}
-
-impl OdeEvent {
-    fn new(rule: &str, expr: &str, why: &str, importance: StepImportance) -> Self {
-        Self {
-            rule: rule.into(),
-            expr: expr.into(),
-            why: why.into(),
-            importance,
-        }
-    }
 }
 
 fn method_events(

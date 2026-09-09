@@ -5,7 +5,7 @@ use crate::input::{
     analyze_expression, direct_function_equation, strip_tex_delimiters, validate_expression,
     validate_symbol,
 };
-use crate::steps::{Step, StepImportance, StepVerbosity};
+use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -101,13 +101,6 @@ pub fn solve_steps_with_verbosity(
     Ok(EquationStepResult { result, steps })
 }
 
-struct EquationEvent {
-    rule: &'static str,
-    expr: String,
-    why: String,
-    importance: StepImportance,
-}
-
 fn algebraic_equation_steps(
     engine: &mut dyn Engine,
     equation: &str,
@@ -156,34 +149,34 @@ fn algebraic_equation_steps(
         _ => return Err(EngineError::Parse("候选解残差证书不是列表".into())),
     };
 
-    let mut events = vec![EquationEvent {
-        rule: "equation-start",
-        expr: equation.to_string(),
-        why: format!("建立关于 {variable} 的方程。"),
-        importance: StepImportance::Routine,
-    }];
+    let mut events = vec![StepEvent::new(
+        "equation-start",
+        equation,
+        &format!("建立关于 {variable} 的方程。"),
+        StepImportance::Routine,
+    )];
     if polynomial {
-        events.push(EquationEvent {
-            rule: "equation-normalize",
-            expr: format!("{normalized}==0"),
-            why: "将方程移到一边并整理为多项式标准形。".into(),
-            importance: StepImportance::Normal,
-        });
+        events.push(StepEvent::new(
+            "equation-normalize",
+            &format!("{normalized}==0"),
+            "将方程移到一边并整理为多项式标准形。",
+            StepImportance::Normal,
+        ));
         match degree {
-            Some(1) => events.push(EquationEvent {
-                rule: "equation-linear",
+            Some(1) => events.push(StepEvent {
+                rule: "equation-linear".into(),
                 expr: result.raw.clone(),
                 why: format!("合并同类项并解出 {variable}。"),
                 importance: StepImportance::Normal,
             }),
-            Some(2) => events.push(EquationEvent {
-                rule: "equation-quadratic",
+            Some(2) => events.push(StepEvent {
+                rule: "equation-quadratic".into(),
                 expr: format!("{normalized}==0"),
                 why: "使用二次方程求根公式求出各个分支。".into(),
                 importance: StepImportance::Normal,
             }),
-            Some(3..=8) if factored != normalized => events.push(EquationEvent {
-                rule: "equation-factor",
+            Some(3..=8) if factored != normalized => events.push(StepEvent {
+                rule: "equation-factor".into(),
                 expr: format!("{factored}==0"),
                 why: "因式分解后令每个因式分别为零。".into(),
                 importance: StepImportance::Key,
@@ -202,14 +195,14 @@ fn algebraic_equation_steps(
                     )));
                 }
                 certificate += 1;
-                events.push(EquationEvent {
-                    rule: "equation-branch",
+                events.push(StepEvent {
+                    rule: "equation-branch".into(),
                     expr: format!("{}=={}", solution[0].variable, solution[0].value),
                     why: "得到一个候选解分支。".into(),
                     importance: StepImportance::Normal,
                 });
-                events.push(EquationEvent {
-                    rule: "equation-verify",
+                events.push(StepEvent {
+                    rule: "equation-verify".into(),
                     expr: "0".into(),
                     why: "将该候选解代回原方程，残差为零。".into(),
                     importance: StepImportance::Routine,
@@ -217,8 +210,8 @@ fn algebraic_equation_steps(
             }
         }
     }
-    events.push(EquationEvent {
-        rule: "equation-result",
+    events.push(StepEvent {
+        rule: "equation-result".into(),
         expr: result.raw.clone(),
         why: match result.status {
             SolveStatus::Solved => "得到方程的解集。",
@@ -230,36 +223,7 @@ fn algebraic_equation_steps(
         importance: StepImportance::Key,
     });
 
-    let last = events.len() - 1;
-    let events: Vec<_> = events
-        .into_iter()
-        .enumerate()
-        .filter(|(index, event)| {
-            *index == last
-                || match verbosity {
-                    StepVerbosity::Detailed => true,
-                    StepVerbosity::Standard => event.importance != StepImportance::Routine,
-                    StepVerbosity::Concise => event.importance == StepImportance::Key,
-                }
-        })
-        .map(|(_, event)| event)
-        .collect();
-    let expressions = events
-        .iter()
-        .map(|event| event.expr.clone())
-        .collect::<Vec<_>>();
-    let tex = engine.render_tex_batch(&expressions)?;
-    Ok(events
-        .into_iter()
-        .zip(tex)
-        .map(|(event, tex)| Step {
-            rule: event.rule.into(),
-            expr: event.expr,
-            why: event.why,
-            tex: strip_tex_delimiters(&tex),
-            importance: event.importance,
-        })
-        .collect())
+    render_events(engine, events, verbosity)
 }
 
 pub fn solve(

@@ -40,6 +40,69 @@ pub enum StepVerbosity {
     Detailed,
 }
 
+/// Internal semantic event shared by Rust-organized step domains. Mathematical
+/// classification remains in the owning domain; this type only centralizes
+/// verbosity filtering and rendering.
+pub(crate) struct StepEvent {
+    pub(crate) rule: String,
+    pub(crate) expr: String,
+    pub(crate) why: String,
+    pub(crate) importance: StepImportance,
+}
+
+impl StepEvent {
+    pub(crate) fn new(rule: &str, expr: &str, why: &str, importance: StepImportance) -> Self {
+        Self {
+            rule: rule.into(),
+            expr: expr.into(),
+            why: why.into(),
+            importance,
+        }
+    }
+}
+
+pub(crate) fn render_events(
+    engine: &mut dyn Engine,
+    events: Vec<StepEvent>,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    let last = events.len().saturating_sub(1);
+    let events: Vec<_> = events
+        .into_iter()
+        .enumerate()
+        .filter(|(index, event)| {
+            *index == last
+                || match verbosity {
+                    StepVerbosity::Detailed => true,
+                    StepVerbosity::Standard => event.importance != StepImportance::Routine,
+                    StepVerbosity::Concise => event.importance == StepImportance::Key,
+                }
+        })
+        .map(|(_, event)| event)
+        .collect();
+    let expressions = events
+        .iter()
+        .map(|event| event.expr.clone())
+        .collect::<Vec<_>>();
+    let tex = engine.render_tex_batch(&expressions)?;
+    if tex.len() != events.len() {
+        return Err(EngineError::Parse(
+            "批量 TeX 结果数量与步骤事件数量不一致".into(),
+        ));
+    }
+    Ok(events
+        .into_iter()
+        .zip(tex)
+        .map(|(event, tex)| Step {
+            rule: event.rule,
+            expr: event.expr,
+            why: event.why,
+            tex: strip_tex_delimiters(&tex),
+            importance: event.importance,
+        })
+        .collect())
+}
+
 /// 执行 StepsX'Full 命令并提取步骤(规则名 + 表达式 + 文案 + LaTeX)
 fn steps_from_command(
     engine: &mut dyn Engine,
