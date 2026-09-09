@@ -938,20 +938,24 @@ fn process_expression_with_engine(
                 let variables = list_or_single(variables, "变量列表")?;
                 let equation_refs: Vec<_> = equations.iter().map(String::as_str).collect();
                 let variable_refs: Vec<_> = variables.iter().map(String::as_str).collect();
-                let solved =
-                    processing::equations::solve(&mut *engine, &equation_refs, &variable_refs)
-                        .map_err(message)?;
-                let steps = if request.steps && equations.len() == 1 && variables.len() == 1 {
-                    processing::equations::solve_steps_with_verbosity(
+                let (solved, steps) = if request.steps
+                    && equations.len() == 1
+                    && variables.len() == 1
+                {
+                    let stepped = processing::equations::solve_steps_with_verbosity(
                         &mut *engine,
                         &equations[0],
                         &variables[0],
                         verbosity,
                     )
-                    .map_err(message)?
-                    .steps
+                    .map_err(message)?;
+                    (stepped.result, stepped.steps)
                 } else {
-                    vec![]
+                    (
+                        processing::equations::solve(&mut *engine, &equation_refs, &variable_refs)
+                            .map_err(message)?,
+                        vec![],
+                    )
                 };
                 return unified_result(
                     "equation",
@@ -1238,17 +1242,17 @@ fn process_expression_with_engine(
                 let equations = [&request.expression[..]];
                 let solved =
                     processing::equations::solve(&mut *engine, &equations, &[]).map_err(message)?;
-                let steps = if request.steps && solved.variables.len() == 1 {
-                    processing::equations::solve_steps_with_verbosity(
+                let (solved, steps) = if request.steps && solved.variables.len() == 1 {
+                    let stepped = processing::equations::solve_steps_with_verbosity(
                         &mut *engine,
                         &request.expression,
                         &solved.variables[0],
                         verbosity,
                     )
-                    .map_err(message)?
-                    .steps
+                    .map_err(message)?;
+                    (stepped.result, stepped.steps)
                 } else {
-                    vec![]
+                    (solved, vec![])
                 };
                 return unified_result(
                     "equation",

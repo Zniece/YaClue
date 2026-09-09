@@ -11,6 +11,7 @@ const emptyEl = $("#empty-result");
 const stateEl = $("#engine-state");
 const timingEl = $("#timing");
 const assumptions = new Map();
+let calculating = false;
 
 const TEMPLATES = {
   calculus: [
@@ -148,7 +149,8 @@ function renderPlot(data) {
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
   const low = ys[Math.floor(ys.length * 0.02)], high = ys[Math.min(ys.length - 1, Math.ceil(ys.length * 0.98))];
   const span = Math.max(high - low, 1e-9), yMin = low - span * 0.08, yMax = high + span * 0.08;
-  const px = (x) => 34 + ((x - xMin) / (xMax - xMin)) * (width - 52);
+  const xSpan = Math.max(xMax - xMin, 1e-9);
+  const px = (x) => 34 + ((x - xMin) / xSpan) * (width - 52);
   const py = (y) => height - 24 - ((y - yMin) / (yMax - yMin)) * (height - 48);
   ctx.clearRect(0, 0, width, height);
   ctx.strokeStyle = "#d7deea";
@@ -169,8 +171,10 @@ function renderPlot(data) {
 }
 
 async function calculate() {
+  if (calculating) return;
   const expression = exprEl.value.trim();
   if (!expression) return;
+  calculating = true;
   resetOutput();
   setBusy(true);
   const started = performance.now();
@@ -194,6 +198,7 @@ async function calculate() {
   } finally {
     timingEl.textContent = `${Math.round(performance.now() - started)} ms`;
     setBusy(false);
+    calculating = false;
   }
 }
 
