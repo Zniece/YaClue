@@ -183,6 +183,8 @@ fn algebraic_equation_steps(
             }),
             _ => {}
         }
+    } else if let Some(event) = direct_inverse_event(equation, variable)? {
+        events.push(event);
     }
     if result.status == SolveStatus::Solved {
         let mut certificate = 0;
@@ -224,6 +226,40 @@ fn algebraic_equation_steps(
     });
 
     render_events(engine, events, verbosity)
+}
+
+fn direct_inverse_event(equation: &str, variable: &str) -> Result<Option<StepEvent>, EngineError> {
+    let Some(function) = direct_function_equation(equation, variable, &["Exp", "Ln"])? else {
+        return Ok(None);
+    };
+    let Some((left, right)) = equation.split_once("==") else {
+        return Ok(None);
+    };
+    let other = if analyze_expression(left, "方程左侧")?
+        .symbols
+        .iter()
+        .any(|symbol| symbol == variable)
+    {
+        right.trim()
+    } else {
+        left.trim()
+    };
+    let event = match function.as_str() {
+        "Exp" => StepEvent::new(
+            "equation-invert-exponential",
+            &format!("{variable}==Ln({other})"),
+            "两边取自然对数，利用自然对数与指数函数互为反函数。",
+            StepImportance::Key,
+        ),
+        "Ln" => StepEvent::new(
+            "equation-invert-logarithm",
+            &format!("{variable}==Exp({other})"),
+            "两边取指数，利用指数函数与自然对数互为反函数。",
+            StepImportance::Key,
+        ),
+        _ => return Ok(None),
+    };
+    Ok(Some(event))
 }
 
 pub fn solve(
@@ -926,5 +962,28 @@ mod tests {
                 .unwrap();
         assert_eq!(engine.batch_sizes, [concise.steps.len()]);
         assert!(concise.steps.len() < detailed.steps.len());
+    }
+
+    #[test]
+    fn direct_exponential_and_logarithmic_steps_use_input_transformations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (equation, rule, transformed) in [
+            ("Exp(x)==2", "equation-invert-exponential", "x==Ln(2)"),
+            ("1==Ln(x)", "equation-invert-logarithm", "x==Exp(1)"),
+        ] {
+            let output = solve_steps(&mut engine, equation, "x").unwrap();
+            let event = output.steps.iter().find(|step| step.rule == rule).unwrap();
+            assert_eq!(event.expr, transformed);
+            assert!(output
+                .steps
+                .iter()
+                .any(|step| step.rule == "equation-verify"));
+        }
+
+        let composite = solve_steps(&mut engine, "Exp(2*x)==2", "x").unwrap();
+        assert!(!composite
+            .steps
+            .iter()
+            .any(|step| step.rule.starts_with("equation-invert-")));
     }
 }
