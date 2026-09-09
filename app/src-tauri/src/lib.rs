@@ -5,7 +5,8 @@ use processing::equations::{EquationStepResult, SolveResult};
 use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
 use processing::multiple_integrals::{
-    DoubleIntegralResult, DoubleIntegralStepResult, IntegralBound,
+    DoubleIntegralResult, DoubleIntegralStepResult, IntegralBound, PolarIntegralResult,
+    PolarIntegralStepResult, PolarRegion,
 };
 use processing::numeric::{NumericResult, RootResult, TaylorResult};
 use processing::ode::{InitialCondition, OdeResult, OdeStepResult};
@@ -197,6 +198,69 @@ async fn calculate_double_integral_steps(
         &request.expression,
         inner,
         outer,
+        verbosity,
+    )
+    .map_err(message)
+}
+
+#[derive(Deserialize)]
+struct PolarIntegralRequest {
+    expression: String,
+    x_variable: String,
+    y_variable: String,
+    radius_variable: String,
+    angle_variable: String,
+    radial_lower: String,
+    radial_upper: String,
+    angle_lower: String,
+    angle_upper: String,
+    verbosity: Option<String>,
+}
+
+fn polar_region(request: &PolarIntegralRequest) -> PolarRegion<'_> {
+    PolarRegion {
+        radial_lower: &request.radial_lower,
+        radial_upper: &request.radial_upper,
+        angle_lower: &request.angle_lower,
+        angle_upper: &request.angle_upper,
+    }
+}
+
+#[tauri::command]
+async fn calculate_polar_integral(
+    request: PolarIntegralRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<PolarIntegralResult, ErrorResponse> {
+    let region = polar_region(&request);
+    let mut engine = lock_engine(&engine)?;
+    processing::multiple_integrals::polar_integral(
+        &mut *engine,
+        &request.expression,
+        &request.x_variable,
+        &request.y_variable,
+        &request.radius_variable,
+        &request.angle_variable,
+        region,
+    )
+    .map_err(message)
+}
+
+#[tauri::command]
+async fn calculate_polar_integral_steps(
+    request: PolarIntegralRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<PolarIntegralStepResult, ErrorResponse> {
+    let verbosity = parse_verbosity(request.verbosity.as_deref().unwrap_or("detailed"))?;
+    let region = polar_region(&request);
+    let mut engine = lock_engine(&engine)?;
+    processing::multiple_integrals::polar_integral_steps_with_verbosity(
+        &mut *engine,
+        &request.expression,
+        &request.x_variable,
+        &request.y_variable,
+        &request.radius_variable,
+        &request.angle_variable,
+        region,
         verbosity,
     )
     .map_err(message)
@@ -519,6 +583,8 @@ pub fn run() {
             solve_equation_steps,
             calculate_double_integral,
             calculate_double_integral_steps,
+            calculate_polar_integral,
+            calculate_polar_integral_steps,
             calculate_limit,
             calculate_limit_steps,
             solve_ode,
