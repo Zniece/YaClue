@@ -110,12 +110,11 @@ fn steps_from_command(
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
     let expr = engine.eval_expr(command)?;
-    let mut candidates = Vec::new();
+    let mut events = Vec::new();
 
     if let Expr::Call { head, args } = &expr {
         if head == "List" {
-            let step_count = args.len();
-            for (index, step) in args.iter().enumerate() {
+            for step in args {
                 if let Expr::Call { args: pair, .. } = step {
                     if pair.len() >= 2 {
                         let rule = match &pair[0] {
@@ -134,47 +133,23 @@ fn steps_from_command(
                             Some(Expr::Number(value)) if value == "2" => StepImportance::Key,
                             _ => StepImportance::Normal,
                         };
-                        let keep = index + 1 == step_count
-                            || match verbosity {
-                                StepVerbosity::Detailed => true,
-                                StepVerbosity::Standard => importance != StepImportance::Routine,
-                                StepVerbosity::Concise => importance == StepImportance::Key,
-                            };
-                        if !keep {
-                            continue;
-                        }
-                        candidates.push((rule, expr_str, why, importance));
+                        events.push(StepEvent {
+                            rule,
+                            expr: expr_str,
+                            why,
+                            importance,
+                        });
                     }
                 }
             }
         }
     }
-    if candidates.is_empty() {
+    if events.is_empty() {
         return Err(EngineError::Eval(format!(
             "未能生成步骤(表达式可能不受支持): {command}"
         )));
     }
-    let expressions: Vec<_> = candidates
-        .iter()
-        .map(|(_, expression, _, _)| expression.clone())
-        .collect();
-    let tex = engine.render_tex_batch(&expressions)?;
-    if tex.len() != candidates.len() {
-        return Err(EngineError::Parse(
-            "批量 TeX 结果数量与步骤数量不一致".into(),
-        ));
-    }
-    Ok(candidates
-        .into_iter()
-        .zip(tex)
-        .map(|((rule, expr, why, importance), tex)| Step {
-            rule,
-            expr,
-            why,
-            tex: strip_tex_delimiters(&tex),
-            importance,
-        })
-        .collect())
+    render_events(engine, events, verbosity)
 }
 
 /// 对 `expr` 关于 `var` 生成分步求导过程
