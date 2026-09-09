@@ -15,6 +15,7 @@ use processing::ode_numeric::{NumericOdeOptions, NumericOdeResult};
 use processing::plot::{SampleOptions, SampledPlot};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::{Mutex, MutexGuard};
 use tauri::Manager;
 
@@ -625,6 +626,667 @@ struct RawResult {
     tex: String,
 }
 
+#[derive(Deserialize)]
+struct ProcessExpressionRequest {
+    expression: String,
+    steps: bool,
+    verbosity: String,
+}
+
+#[derive(Serialize)]
+struct ProcessExpressionResult {
+    kind: String,
+    title: String,
+    expression: String,
+    tex: String,
+    steps: Vec<Step>,
+    data: Value,
+}
+
+fn unified_result<T: Serialize>(
+    kind: &str,
+    title: &str,
+    expression: String,
+    tex: String,
+    steps: Vec<Step>,
+    data: &T,
+) -> Result<ProcessExpressionResult, ErrorResponse> {
+    Ok(ProcessExpressionResult {
+        kind: kind.into(),
+        title: title.into(),
+        expression,
+        tex,
+        steps,
+        data: serde_json::to_value(data)
+            .map_err(|error| invalid_input(format!("结果序列化失败: {error}")))?,
+    })
+}
+
+fn final_step(steps: &[Step]) -> (String, String) {
+    steps
+        .last()
+        .map(|step| (step.expr.clone(), step.tex.clone()))
+        .unwrap_or_default()
+}
+
+fn list_or_single(expression: &str, label: &str) -> Result<Vec<String>, ErrorResponse> {
+    let call = processing::input::root_call(expression, label).map_err(message)?;
+    Ok(match call {
+        Some(call) if call.head == "List" => call.arguments,
+        _ => vec![expression.to_string()],
+    })
+}
+
+fn process_expression_with_engine(
+    request: ProcessExpressionRequest,
+    engine: &mut RustEngineProxy,
+) -> Result<ProcessExpressionResult, ErrorResponse> {
+    let call = processing::input::root_call(&request.expression, "表达式").map_err(message)?;
+    let verbosity = parse_verbosity(&request.verbosity)?;
+    if let Some(call) = &call {
+        match (call.head.as_str(), call.arguments.as_slice()) {
+            ("D", [variable, expression]) | ("Deriv", [variable, expression]) => {
+                if request.steps {
+                    let steps = processing::steps::derive_steps_order_with_verbosity(
+                        &mut *engine,
+                        expression,
+                        variable,
+                        1,
+                        verbosity,
+                    )
+                    .map_err(message)?;
+                    let (expression, tex) = final_step(&steps);
+                    return unified_result("derivative", "导数", expression, tex, steps, &());
+                }
+            }
+            ("D", [variable, order, expression]) | ("Deriv", [variable, order, expression]) => {
+                let order = order
+                    .parse::<u32>()
+                    .map_err(|_| invalid_input("导数阶数必须是非负整数"))?;
+                if request.steps {
+                    let steps = processing::steps::derive_steps_order_with_verbosity(
+                        &mut *engine,
+                        expression,
+                        variable,
+                        order,
+                        verbosity,
+                    )
+                    .map_err(message)?;
+                    let (expression, tex) = final_step(&steps);
+                    return unified_result("derivative", "导数", expression, tex, steps, &());
+                }
+            }
+            ("Integrate", [variable, expression]) if request.steps => {
+                let steps = processing::steps::derive_integrals_with_verbosity(
+                    &mut *engine,
+                    expression,
+                    variable,
+                    verbosity,
+                )
+                .map_err(message)?;
+                let (expression, tex) = final_step(&steps);
+                return unified_result("integral", "不定积分", expression, tex, steps, &());
+            }
+            ("Integrate", [variable, from, to, expression]) if request.steps => {
+                let steps = processing::steps::derive_definite_with_verbosity(
+                    &mut *engine,
+                    expression,
+                    variable,
+                    from,
+                    to,
+                    verbosity,
+                )
+                .map_err(message)?;
+                let (expression, tex) = final_step(&steps);
+                return unified_result("definite_integral", "定积分", expression, tex, steps, &());
+            }
+            (
+                "DoubleIntegral",
+                [expression, inner_var, inner_from, inner_to, outer_var, outer_from, outer_to],
+            ) => {
+                let inner = IntegralBound {
+                    variable: inner_var,
+                    lower: inner_from,
+                    upper: inner_to,
+                };
+                let outer = IntegralBound {
+                    variable: outer_var,
+                    lower: outer_from,
+                    upper: outer_to,
+                };
+                if request.steps {
+                    let result =
+                        processing::multiple_integrals::double_integral_steps_with_verbosity(
+                            &mut *engine,
+                            expression,
+                            inner,
+                            outer,
+                            verbosity,
+                        )
+                        .map_err(message)?;
+                    return unified_result(
+                        "double_integral",
+                        "二重积分",
+                        result.result.value.clone(),
+                        result.result.tex.clone(),
+                        result.steps.clone(),
+                        &result,
+                    );
+                }
+                let result = processing::multiple_integrals::double_integral(
+                    &mut *engine,
+                    expression,
+                    inner,
+                    outer,
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "double_integral",
+                    "二重积分",
+                    result.value.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            (
+                "PolarIntegral",
+                [expression, x, y, radius, angle, radial_from, radial_to, angle_from, angle_to],
+            ) => {
+                let region = PolarRegion {
+                    radial_lower: radial_from,
+                    radial_upper: radial_to,
+                    angle_lower: angle_from,
+                    angle_upper: angle_to,
+                };
+                if request.steps {
+                    let result =
+                        processing::multiple_integrals::polar_integral_steps_with_verbosity(
+                            &mut *engine,
+                            expression,
+                            x,
+                            y,
+                            radius,
+                            angle,
+                            region,
+                            verbosity,
+                        )
+                        .map_err(message)?;
+                    return unified_result(
+                        "polar_integral",
+                        "极坐标积分",
+                        result.result.integral.value.clone(),
+                        result.result.integral.tex.clone(),
+                        result.steps.clone(),
+                        &result,
+                    );
+                }
+                let result = processing::multiple_integrals::polar_integral(
+                    &mut *engine,
+                    expression,
+                    x,
+                    y,
+                    radius,
+                    angle,
+                    region,
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "polar_integral",
+                    "极坐标积分",
+                    result.integral.value.clone(),
+                    result.integral.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("Limit", [variable, at, expression]) => {
+                if request.steps {
+                    let steps = processing::limits::limit_steps_with_verbosity(
+                        &mut *engine,
+                        expression,
+                        variable,
+                        at,
+                        LimitDirection::Both,
+                        verbosity,
+                    )
+                    .map_err(message)?;
+                    let (expression, tex) = final_step(&steps);
+                    return unified_result("limit", "极限", expression, tex, steps, &());
+                }
+                let result = processing::limits::limit(
+                    &mut *engine,
+                    expression,
+                    variable,
+                    at,
+                    LimitDirection::Both,
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "limit",
+                    "极限",
+                    result.value.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("Limit", [variable, at, direction, expression]) => {
+                let direction = match direction.as_str() {
+                    "Left" => LimitDirection::Left,
+                    "Right" => LimitDirection::Right,
+                    _ => return Err(invalid_input("极限方向应为 Left 或 Right")),
+                };
+                if request.steps {
+                    let steps = processing::limits::limit_steps_with_verbosity(
+                        &mut *engine,
+                        expression,
+                        variable,
+                        at,
+                        direction,
+                        verbosity,
+                    )
+                    .map_err(message)?;
+                    let (expression, tex) = final_step(&steps);
+                    return unified_result("limit", "极限", expression, tex, steps, &());
+                }
+                let result =
+                    processing::limits::limit(&mut *engine, expression, variable, at, direction)
+                        .map_err(message)?;
+                return unified_result(
+                    "limit",
+                    "极限",
+                    result.value.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("OdeSolve", [equation]) => {
+                if request.steps {
+                    let result = processing::ode::solve_steps_with_verbosity(
+                        &mut *engine,
+                        equation,
+                        "x",
+                        "y",
+                        &[],
+                        verbosity,
+                    )
+                    .map_err(message)?;
+                    return unified_result(
+                        "ode",
+                        "常微分方程",
+                        result.result.solution.clone(),
+                        result.result.tex.clone(),
+                        result.steps.clone(),
+                        &result,
+                    );
+                }
+                let result = processing::ode::solve(&mut *engine, equation, "x", "y", &[])
+                    .map_err(message)?;
+                return unified_result(
+                    "ode",
+                    "常微分方程",
+                    result.solution.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("Solve" | "OldSolve", [equations, variables]) => {
+                let equations = list_or_single(equations, "方程列表")?;
+                let variables = list_or_single(variables, "变量列表")?;
+                let equation_refs: Vec<_> = equations.iter().map(String::as_str).collect();
+                let variable_refs: Vec<_> = variables.iter().map(String::as_str).collect();
+                let solved =
+                    processing::equations::solve(&mut *engine, &equation_refs, &variable_refs)
+                        .map_err(message)?;
+                let steps = if request.steps && equations.len() == 1 && variables.len() == 1 {
+                    processing::equations::solve_steps_with_verbosity(
+                        &mut *engine,
+                        &equations[0],
+                        &variables[0],
+                        verbosity,
+                    )
+                    .map_err(message)?
+                    .steps
+                } else {
+                    vec![]
+                };
+                return unified_result(
+                    "equation",
+                    if equations.len() == 1 {
+                        "方程"
+                    } else {
+                        "方程组"
+                    },
+                    String::new(),
+                    solved.tex.clone(),
+                    steps,
+                    &solved,
+                );
+            }
+            ("OdeSolveNumeric", [equation, independent, dependent, start, value, end]) => {
+                let end = end
+                    .parse::<f64>()
+                    .map_err(|_| invalid_input("数值 ODE 的终点必须是有限数字"))?;
+                let condition = [InitialCondition {
+                    derivative_order: 0,
+                    point: start,
+                    value,
+                }];
+                let result = processing::ode_numeric::solve_initial_value(
+                    &mut *engine,
+                    equation,
+                    independent,
+                    dependent,
+                    &condition,
+                    NumericOdeOptions {
+                        end,
+                        ..NumericOdeOptions::default()
+                    },
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "numeric_ode",
+                    "常微分方程数值解",
+                    String::new(),
+                    String::new(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("N", [expression, precision]) => {
+                let precision = precision
+                    .parse::<u32>()
+                    .map_err(|_| invalid_input("近似精度必须是正整数"))?;
+                let result = processing::numeric::approximate(&mut *engine, expression, precision)
+                    .map_err(message)?;
+                return unified_result(
+                    "numeric",
+                    "数值近似",
+                    result.output.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("FindRoot", [expression, variable, initial]) => {
+                let initial = initial
+                    .parse::<f64>()
+                    .map_err(|_| invalid_input("数值求根初值必须是有限数字"))?;
+                let result = processing::numeric::find_root(
+                    &mut *engine,
+                    expression,
+                    variable,
+                    initial,
+                    1e-8,
+                    None,
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "numeric_root",
+                    "数值根",
+                    result.output.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("Plot", [expression, variable, min, max]) => {
+                let min = min
+                    .parse::<f64>()
+                    .map_err(|_| invalid_input("绘图区间下界必须是有限数字"))?;
+                let max = max
+                    .parse::<f64>()
+                    .map_err(|_| invalid_input("绘图区间上界必须是有限数字"))?;
+                let result = processing::plot::sample(
+                    &mut *engine,
+                    expression,
+                    variable,
+                    (min, max),
+                    &SampleOptions::default(),
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "plot",
+                    "函数图像",
+                    request.expression.clone(),
+                    String::new(),
+                    vec![],
+                    &result,
+                );
+            }
+            (head @ ("Factor" | "Expand" | "Simplify" | "Tidy"), [expression]) => {
+                let kind = match head {
+                    "Factor" => TransformKind::Factor,
+                    "Expand" => TransformKind::Expand,
+                    "Simplify" => TransformKind::Simplify,
+                    _ => TransformKind::Tidy,
+                };
+                let result = processing::algebra::transform(&mut *engine, expression, kind, None)
+                    .map_err(message)?;
+                return unified_result(
+                    "algebra",
+                    "代数变换",
+                    result.output.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("Apart", [expression, variable]) => {
+                let result = processing::algebra::transform(
+                    &mut *engine,
+                    expression,
+                    TransformKind::Apart,
+                    Some(variable),
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "algebra",
+                    "部分分式分解",
+                    result.output.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("Taylor", [variable, point, degree, expression]) => {
+                let degree = degree
+                    .parse::<u32>()
+                    .map_err(|_| invalid_input("Taylor 次数必须是非负整数"))?;
+                let result =
+                    processing::numeric::taylor(&mut *engine, expression, variable, point, degree)
+                        .map_err(message)?;
+                return unified_result(
+                    "taylor",
+                    "Taylor 多项式",
+                    result.output.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("Extrema", [expression, x, y]) => {
+                if request.steps {
+                    let result = processing::extrema::analyze_steps_with_verbosity(
+                        &mut *engine,
+                        expression,
+                        x,
+                        y,
+                        verbosity,
+                    )
+                    .map_err(message)?;
+                    return unified_result(
+                        "extrema",
+                        "无约束极值",
+                        result.result.expression.clone(),
+                        result.result.tex.clone(),
+                        result.steps.clone(),
+                        &result,
+                    );
+                }
+                let result = processing::extrema::analyze(&mut *engine, expression, x, y)
+                    .map_err(message)?;
+                return unified_result(
+                    "extrema",
+                    "无约束极值",
+                    result.expression.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("Lagrange", [expression, constraint, x, y]) => {
+                if request.steps {
+                    let result = processing::extrema::analyze_lagrange_steps_with_verbosity(
+                        &mut *engine,
+                        expression,
+                        constraint,
+                        x,
+                        y,
+                        verbosity,
+                    )
+                    .map_err(message)?;
+                    return unified_result(
+                        "lagrange",
+                        "约束极值",
+                        result.result.expression.clone(),
+                        result.result.tex.clone(),
+                        result.steps.clone(),
+                        &result,
+                    );
+                }
+                let result = processing::extrema::analyze_lagrange(
+                    &mut *engine,
+                    expression,
+                    constraint,
+                    x,
+                    y,
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "lagrange",
+                    "约束极值",
+                    result.expression.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            (head @ ("Determinant" | "Inverse" | "Transpose" | "EigenValues"), [matrix]) => {
+                let operation = match head {
+                    "Determinant" => MatrixOperation::Determinant,
+                    "Inverse" => MatrixOperation::Inverse,
+                    "Transpose" => MatrixOperation::Transpose,
+                    _ => MatrixOperation::Eigenvalues,
+                };
+                let result =
+                    processing::linear_algebra::compute(&mut *engine, matrix, operation, None)
+                        .map_err(message)?;
+                return unified_result(
+                    "matrix",
+                    "线性代数",
+                    result.output.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("MatrixSolve" | "SolveMatrix", [matrix, vector]) => {
+                let result = processing::linear_algebra::compute(
+                    &mut *engine,
+                    matrix,
+                    MatrixOperation::Solve,
+                    Some(vector),
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "matrix",
+                    "线性方程组",
+                    result.output.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            (head @ ("+" | "*"), [left, right])
+                if call
+                    .argument_heads
+                    .iter()
+                    .all(|head| head.as_deref() == Some("List")) =>
+            {
+                let operation = if head == "+" {
+                    MatrixOperation::Add
+                } else {
+                    MatrixOperation::Multiply
+                };
+                let result =
+                    processing::linear_algebra::compute(&mut *engine, left, operation, Some(right))
+                        .map_err(message)?;
+                return unified_result(
+                    "matrix",
+                    "线性代数",
+                    result.output.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
+            }
+            ("=" | "==", [_, _]) => {
+                let equations = [&request.expression[..]];
+                let solved =
+                    processing::equations::solve(&mut *engine, &equations, &[]).map_err(message)?;
+                let steps = if request.steps && solved.variables.len() == 1 {
+                    processing::equations::solve_steps_with_verbosity(
+                        &mut *engine,
+                        &request.expression,
+                        &solved.variables[0],
+                        verbosity,
+                    )
+                    .map_err(message)?
+                    .steps
+                } else {
+                    vec![]
+                };
+                return unified_result(
+                    "equation",
+                    "方程",
+                    solved
+                        .solutions
+                        .first()
+                        .map(|solution| format!("{solution:?}"))
+                        .unwrap_or_default(),
+                    solved.tex.clone(),
+                    steps,
+                    &solved,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let evaluated = engine.eval(&request.expression).map_err(message)?;
+    unified_result(
+        "evaluation",
+        "计算结果",
+        evaluated.expr.to_string(),
+        evaluated.tex.trim_matches('$').to_string(),
+        vec![],
+        &(),
+    )
+}
+
+#[tauri::command]
+async fn process_expression(
+    request: ProcessExpressionRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<ProcessExpressionResult, ErrorResponse> {
+    let mut engine = lock_engine(&engine)?;
+    process_expression_with_engine(request, &mut engine)
+}
+
 #[tauri::command]
 async fn evaluate(
     expr: String,
@@ -687,7 +1349,61 @@ pub fn run() {
             clear_assumptions,
             get_assumptions,
             evaluate,
+            process_expression,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(expression: &str, steps: bool) -> ProcessExpressionRequest {
+        ProcessExpressionRequest {
+            expression: expression.into(),
+            steps,
+            verbosity: "standard".into(),
+        }
+    }
+
+    #[test]
+    fn unified_expression_dispatches_core_calculator_paths() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+
+        let derivative =
+            process_expression_with_engine(request("D(x)Sin(x)^2", true), &mut engine).unwrap();
+        assert_eq!(derivative.kind, "derivative");
+        assert!(!derivative.steps.is_empty());
+
+        let matrix = process_expression_with_engine(
+            request("{{1,2},{3,4}}*{{5,6},{7,8}}", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(matrix.kind, "matrix");
+        assert!(matrix.expression.contains("19"));
+
+        let ode =
+            process_expression_with_engine(request("OdeSolve(y'==y)", true), &mut engine).unwrap();
+        assert_eq!(ode.kind, "ode");
+        assert!(!ode.steps.is_empty());
+        assert!(!ode.expression.contains("C7"));
+
+        let equations = process_expression_with_engine(
+            request("OldSolve({x+y==3,x-y==1},{x,y})", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(equations.kind, "equation");
+        assert!(!equations.tex.is_empty());
+
+        let double_integral = process_expression_with_engine(
+            request("DoubleIntegral(x+y,y,0,x,x,0,1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(double_integral.kind, "double_integral");
+        assert!(!double_integral.steps.is_empty());
+    }
 }

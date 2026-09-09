@@ -13,8 +13,8 @@
         "title": "分步 CAS 计算器",
         "width": 1120,
         "height": 820,
-        "minWidth": 760,
-        "minHeight": 620
+        "minWidth": 360,
+        "minHeight": 560
       }
     ],
     "security": {

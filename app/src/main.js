@@ -1,9 +1,6 @@
 const { invoke } = window.__TAURI__.core;
-
 const $ = (selector) => document.querySelector(selector);
-const modeEl = $("#mode");
 const exprEl = $("#expr");
-const variableEl = $("#variable");
 const errorEl = $("#error");
 const summaryEl = $("#summary");
 const stepsEl = $("#steps-list");
@@ -15,125 +12,63 @@ const stateEl = $("#engine-state");
 const timingEl = $("#timing");
 const assumptions = new Map();
 
-const DOMAINS = [
-  { id: "calculus", label: "微积分" },
-  { id: "equations", label: "方程" },
-  { id: "algebra", label: "代数" },
-  { id: "linear", label: "线性代数" },
-  { id: "numeric", label: "数值与绘图" },
-];
-
-const MODES = {
-  derivative: { domain: "calculus", label: "求导", title: "对什么函数求导？", help: "用 * 表示乘法，用 ^ 表示乘方。", examples: ["Sin(x)^2", "x^3*Exp(x)", "Ln(x)/(1+x)"], variants: true },
-  integral: { domain: "calculus", label: "不定积分", title: "要积分的函数", help: "只填写被积函数，积分变量在上方选择。", examples: ["x*Exp(x)", "1/(1+x^2)", "Sin(x)^3"], variants: true },
-  definite: { domain: "calculus", label: "定积分", title: "要积分的函数", help: "在上方分别填写积分变量、下限和上限。", examples: ["Sin(x)", "x^2", "Exp(-x^2)"], variants: true },
-  limit: { domain: "calculus", label: "极限", title: "要求极限的函数", help: "趋近值可以是数字或 Infinity，并可选择左右方向。", examples: ["Sin(x)/x", "(x^2-4)/(x-2)", "Abs(x)/x"], variants: true },
-  taylor: { domain: "calculus", label: "Taylor 展开", title: "要展开的函数", help: "选择展开点和最高次数。", examples: ["Sin(x)", "Exp(x)", "Ln(1+x)"] },
-  equation: { domain: "equations", label: "方程 / 方程组", title: "输入方程，每行一个", help: "等号写作 ==。方程组每行输入一条；变量可留空自动识别。", examples: ["x^2==4", "x+y==3\nx-y==1", "Sin(x)==0"] },
-  ode: { domain: "equations", label: "常微分方程", title: "输入微分方程", help: "一阶导数写作 y'，等号写作 ==。", examples: ["y'+y==x", "y'==x*y", "y''+y==0"], variants: true },
-  ode_numeric: { domain: "numeric", label: "常微分方程数值解", title: "输入微分方程初值问题", help: "一阶导数写作 y'；还需要填写初值和积分终点。", examples: ["y'+y==x", "y'==y", "y''==-y"] },
-  transform: { domain: "algebra", label: "化简与变换", title: "要变换的表达式", help: "选择展开、因式分解、约分等操作。", examples: ["(x+1)^2", "x^2-1", "(x^2-1)/(x-1)"] },
-  evaluate: { domain: "algebra", label: "高级：脚本求值", title: "Yacas 脚本表达式", help: "面向熟悉 Yacas 语法的用户，可直接调用当前引擎会话。", examples: ["Factor(x^4-1)", "Expand((x+1)^4)", "Simplify(Sin(x)^2+Cos(x)^2)"] },
-  matrix: { domain: "linear", label: "矩阵运算", title: "输入矩阵表达式", help: "矩阵按行填写；相加或相乘时可直接输入完整算式。", examples: ["{{1,2},{3,4}}*{{5,6},{7,8}}", "{{1,2},{3,4}}+{{5,6},{7,8}}", "{{1,0,2},{-1,3,1},{3,2,0}}"] },
-  approximate: { domain: "numeric", label: "高精度近似", title: "要近似的数值表达式", help: "选择需要的小数精度。", examples: ["Pi", "Sqrt(2)", "Exp(1)"] },
-  root: { domain: "numeric", label: "数值求根", title: "令这个表达式等于零", help: "填写左边表达式即可，例如 Cos(x)-x；无需再写 ==0。", examples: ["Cos(x)-x", "x^3-2", "Exp(x)-3"] },
-  plot: { domain: "numeric", label: "函数绘图", title: "要绘制的函数", help: "填写关于横轴变量的函数，并选择显示范围。", examples: ["Sin(x)", "1/x", "Exp(-x^2)"] },
+const TEMPLATES = {
+  calculus: [
+    ["求导", "D(x)Sin(x)^2", "D(变量[,阶数])表达式"],
+    ["不定积分", "Integrate(x)x*Exp(x)", "Integrate(变量)表达式"],
+    ["定积分", "Integrate(x,0,Pi)Sin(x)", "Integrate(变量,下限,上限)表达式"],
+    ["极限", "Limit(x,0)Sin(x)/x", "Limit(变量,趋近值[,方向])表达式"],
+    ["Taylor 展开", "Taylor(x,0,6)Sin(x)", "Taylor(变量,展开点,次数)表达式"],
+    ["二重积分", "DoubleIntegral(x+y,y,0,x,x,0,1)", "被积式,内层变量与上下限,外层变量与上下限"],
+    ["极坐标积分", "PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)", "被积式,直角变量,极坐标变量及边界"],
+  ],
+  equations: [
+    ["代数方程", "x^2-5*x+6==0", "使用 == 表示等号"],
+    ["方程组", "OldSolve({x+y==3,x-y==1},{x,y})", "OldSolve({方程...},{变量...})"],
+    ["常微分方程", "OdeSolve(y'==y)", "当前标准形式使用自变量 x、因变量 y"],
+    ["ODE 数值解", "OdeSolveNumeric(y'==y,x,y,0,1,2)", "方程,自变量,因变量,起点,初值,终点"],
+  ],
+  algebra: [
+    ["因式分解", "Factor(x^4-1)", "Factor(表达式)"],
+    ["展开", "Expand((x+1)^4)", "Expand(表达式)"],
+    ["化简", "Simplify(Sin(x)^2+Cos(x)^2)", "Simplify(表达式)"],
+    ["整理", "Tidy((x+x)/2)", "Tidy(表达式)"],
+    ["部分分式", "Apart((x+1)/(x^2-1),x)", "Apart(表达式,变量)"],
+    ["无约束极值", "Extrema(x^2+y^2,x,y)", "Extrema(表达式,x变量,y变量)"],
+    ["约束极值", "Lagrange(x+y,x^2+y^2==1,x,y)", "Lagrange(目标,约束,x变量,y变量)"],
+  ],
+  linear: [
+    ["矩阵乘法", "{{1,2},{3,4}}*{{5,6},{7,8}}", "直接使用 + 或 *"],
+    ["行列式", "Determinant({{1,2},{3,4}})", "Determinant(矩阵)"],
+    ["逆矩阵", "Inverse({{1,2},{3,4}})", "Inverse(矩阵)"],
+    ["转置", "Transpose({{1,2,3},{4,5,6}})", "Transpose(矩阵)"],
+    ["特征值", "EigenValues({{2,1},{1,2}})", "EigenValues(矩阵)"],
+    ["线性方程组", "MatrixSolve({{2,1},{1,-1}},{5,1})", "MatrixSolve(系数矩阵,常数向量)"],
+  ],
+  numeric: [
+    ["高精度近似", "N(Pi,30)", "N(表达式,精度)"],
+    ["数值求根", "FindRoot(Cos(x)-x,x,1)", "FindRoot(表达式,变量,初值)"],
+    ["函数绘图", "Plot(Sin(x),x,-6.28,6.28)", "Plot(表达式,变量,下界,上界)"],
+  ],
 };
 
-let activeDomain = "calculus";
-const STEP_MODES = new Set(["derivative", "integral", "definite", "limit_steps", "ode_steps"]);
-
-function effectiveMode() {
-  if ($("#output-mode").value === "steps" && modeEl.value === "limit") return "limit_steps";
-  if ($("#output-mode").value === "steps" && modeEl.value === "ode") return "ode_steps";
-  return modeEl.value;
-}
-
-function renderExamples(mode) {
-  const list = $("#example-list");
-  list.innerHTML = "";
-  MODES[mode].examples.forEach((example) => {
+function renderTemplates(group) {
+  const target = $("#template-list");
+  target.innerHTML = "";
+  TEMPLATES[group].forEach(([label, expression, help]) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "example";
-    button.textContent = example.replace(/\n/g, " ； ");
-    button.addEventListener("click", () => { exprEl.value = example; exprEl.focus(); });
-    list.appendChild(button);
-  });
-}
-
-function renderTasks(domain, preferredMode) {
-  modeEl.innerHTML = "";
-  Object.entries(MODES).filter(([, config]) => config.domain === domain).forEach(([id, config]) => {
-    const option = document.createElement("option");
-    option.value = id;
-    option.textContent = config.label;
-    modeEl.appendChild(option);
-  });
-  if (preferredMode && MODES[preferredMode]?.domain === domain) modeEl.value = preferredMode;
-}
-
-function renderDomains() {
-  const nav = $("#domain-nav");
-  DOMAINS.forEach((domain) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = domain.label;
-    button.dataset.domain = domain.id;
-    button.classList.toggle("active", domain.id === activeDomain);
+    button.className = "template";
+    button.innerHTML = `<strong></strong><small></small>`;
+    button.querySelector("strong").textContent = label;
+    button.querySelector("small").textContent = help;
     button.addEventListener("click", () => {
-      activeDomain = domain.id;
-      nav.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
-      renderTasks(activeDomain);
-      updateMode(true);
+      exprEl.value = expression;
+      $("#input-help").textContent = help;
+      exprEl.focus();
     });
-    nav.appendChild(button);
+    target.appendChild(button);
   });
-}
-
-function updateMode(setExample = true) {
-  const task = modeEl.value;
-  const mode = effectiveMode();
-  document.querySelectorAll("[data-for]").forEach((element) => {
-    const targets = element.dataset.for.split(" ");
-    element.hidden = !(targets.includes(mode) || (targets.includes("steps") && STEP_MODES.has(mode)));
-  });
-  $("#expression-title").textContent = MODES[task].title;
-  $("#input-help").textContent = MODES[task].help;
-  $("#output-mode-field").hidden = !MODES[task].variants;
-  updateMatrixFields();
-  renderExamples(task);
-  variableEl.placeholder = mode === "equation" ? "自动发现（如 x,y）" : "x";
-  if (setExample) {
-    exprEl.value = MODES[task].examples[0];
-    variableEl.value = mode === "equation" ? "" : "x";
-    if (["ode", "ode_steps", "ode_numeric"].includes(mode)) {
-      $("#dependent").value = "y";
-      if (mode === "ode_numeric") $("#ode-conditions").value = "0,0,1";
-    }
-  }
-}
-
-function updateMatrixFields() {
-  const mode = modeEl.value;
-  const operation = $("#matrix-operation").value;
-  $("#matrix-right-field").hidden = mode !== "matrix" || !["add", "multiply", "solve"].includes(operation);
-}
-
-function parseMatrixExpression(expression) {
-  let depth = 0;
-  for (let index = 0; index < expression.length; index += 1) {
-    const character = expression[index];
-    if ("{([".includes(character)) depth += 1;
-    else if ("})]".includes(character)) depth -= 1;
-    else if (depth === 0 && (character === "+" || character === "*")) {
-      const left = expression.slice(0, index).trim();
-      const right = expression.slice(index + 1).trim();
-      if (!left || !right) break;
-      return { left, right, operation: character === "+" ? "add" : "multiply" };
-    }
-  }
-  throw new Error("请输入两个矩阵的完整加法或乘法算式，例如 {{1,2},{3,4}}*{{5,6},{7,8}}");
 }
 
 function setBusy(busy) {
@@ -152,24 +87,29 @@ function resetOutput() {
   rawBoxEl.hidden = true;
   rawEl.textContent = "";
   emptyEl.hidden = true;
+  $("#result-kind").textContent = "";
 }
 
 function showError(error) {
-  if (error && typeof error === "object" && error.message) {
-    const suffix = error.code === "timeout"
-      ? "（计算超时，可以重试）"
-      : error.retryable
-        ? "（可以重试）"
-        : "";
-    errorEl.textContent = `${error.message}${suffix}`;
-  } else {
-    errorEl.textContent = typeof error === "string" ? error : JSON.stringify(error);
-  }
+  const message = error && typeof error === "object" && error.message
+    ? error.message
+    : typeof error === "string" ? error : JSON.stringify(error);
+  const retry = error?.code === "timeout" || error?.retryable ? "（可以重试）" : "";
+  errorEl.textContent = `${message}${retry}`;
   errorEl.hidden = false;
 }
 
 function renderMath(tex, target, displayMode = true) {
   window.katex.render(tex || "", target, { throwOnError: false, displayMode });
+}
+
+function renderSummary(result) {
+  summaryEl.hidden = false;
+  const math = document.createElement("div");
+  math.className = "summary-math";
+  summaryEl.appendChild(math);
+  if (result.tex) renderMath(result.tex, math);
+  else math.textContent = result.expression || "计算完成";
 }
 
 function renderSteps(steps) {
@@ -178,8 +118,9 @@ function renderSteps(steps) {
     item.className = `step importance-${step.importance}`;
     const heading = document.createElement("div");
     heading.className = "step-heading";
-    heading.innerHTML = `<span>${index + 1}</span><strong></strong><small>${step.rule}</small>`;
+    heading.innerHTML = `<span>${index + 1}</span><div><strong></strong><small></small></div>`;
     heading.querySelector("strong").textContent = step.why || "计算";
+    heading.querySelector("small").textContent = step.rule;
     const math = document.createElement("div");
     math.className = "math";
     item.append(heading, math);
@@ -188,290 +129,66 @@ function renderSteps(steps) {
   });
 }
 
-function showStructured(result) {
-  rawEl.textContent = JSON.stringify(result, null, 2);
-  rawBoxEl.hidden = false;
-}
-
-function summary(title, tex, metadata = []) {
-  summaryEl.hidden = false;
-  const heading = document.createElement("h3");
-  heading.textContent = title;
-  const math = document.createElement("div");
-  math.className = "summary-math";
-  summaryEl.append(heading, math);
-  renderMath(tex, math);
-  if (metadata.length) {
-    const meta = document.createElement("p");
-    meta.className = "metadata";
-    meta.textContent = metadata.join(" · ");
-    summaryEl.appendChild(meta);
-  }
-}
-
-function conditionText(condition) {
-  if (condition.kind === "property") return `${condition.expression}: ${condition.fact}`;
-  if (condition.kind === "relation") return `${condition.left} ${condition.relation} ${condition.right}`;
-  return (condition.conditions || []).map(conditionText).join(condition.kind === "all" ? " 且 " : " 或 ");
-}
-
-function parseOdeConditions(value) {
-  if (!value.trim()) return [];
-  return value.split(/[;\n]+/).map((item) => {
-    const fields = item.split(",").map((field) => field.trim());
-    if (fields.length !== 3) throw new Error("初值条件格式应为：阶数,点,值；多项用分号分隔");
-    const derivativeOrder = Number(fields[0]);
-    if (!Number.isInteger(derivativeOrder) || derivativeOrder < 0) throw new Error("初值导数阶数必须是非负整数");
-    return { derivative_order: derivativeOrder, point: fields[1], value: fields[2] };
-  });
-}
-
-function optionalNumber(selector) {
-  const value = $(selector).value.trim();
-  return value === "" ? null : Number(value);
-}
-
-function renderPlot(result) {
+function renderPlot(data) {
+  const points = data.kind === "numeric_ode"
+    ? data.data.points.map((point) => ({ x: point.independent, y: point.state[0] }))
+    : data.data.points;
   plotEl.hidden = false;
   const ratio = window.devicePixelRatio || 1;
   const width = plotEl.clientWidth || 800;
-  const height = 390;
+  const height = Math.min(390, Math.max(280, width * 0.48));
   plotEl.width = width * ratio;
   plotEl.height = height * ratio;
   const ctx = plotEl.getContext("2d");
   ctx.scale(ratio, ratio);
-  ctx.clearRect(0, 0, width, height);
-  const finite = result.points.filter((point) => Number.isFinite(point.y));
+  const finite = points.filter((point) => Number.isFinite(point.y));
   if (!finite.length) throw new Error("采样结果中没有有限点");
-  const bounds = result.suggested_bounds;
-  const xs = result.points.map((point) => point.x);
+  const xs = points.map((point) => point.x);
   const ys = finite.map((point) => point.y).sort((a, b) => a - b);
-  const xMin = bounds?.x_min ?? Math.min(...xs);
-  const xMax = bounds?.x_max ?? Math.max(...xs);
-  const low = ys[Math.floor(ys.length * 0.02)];
-  const high = ys[Math.min(ys.length - 1, Math.ceil(ys.length * 0.98))];
-  const span = Math.max(high - low, 1e-9);
-  const yMin = bounds?.y_min ?? low - span * 0.08;
-  const yMax = bounds?.y_max ?? high + span * 0.08;
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const low = ys[Math.floor(ys.length * 0.02)], high = ys[Math.min(ys.length - 1, Math.ceil(ys.length * 0.98))];
+  const span = Math.max(high - low, 1e-9), yMin = low - span * 0.08, yMax = high + span * 0.08;
   const px = (x) => 34 + ((x - xMin) / (xMax - xMin)) * (width - 52);
   const py = (y) => height - 24 - ((y - yMin) / (yMax - yMin)) * (height - 48);
-
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--border");
-  ctx.lineWidth = 1;
+  ctx.clearRect(0, 0, width, height);
+  ctx.strokeStyle = "#d7deea";
   ctx.beginPath();
   if (xMin <= 0 && xMax >= 0) { ctx.moveTo(px(0), 12); ctx.lineTo(px(0), height - 18); }
   if (yMin <= 0 && yMax >= 0) { ctx.moveTo(26, py(0)); ctx.lineTo(width - 10, py(0)); }
   ctx.stroke();
-
-  ctx.strokeStyle = "#3767d6";
+  ctx.strokeStyle = "#315fc5";
   ctx.lineWidth = 2;
   ctx.beginPath();
-  if (result.segments?.length) {
-    result.segments.forEach((segment) => {
-      let drawing = false;
-      for (let index = segment.start_index; index <= segment.end_index; index += 1) {
-        const point = result.points[index];
-        const visible = point.y >= yMin && point.y <= yMax;
-        if (!visible) {
-          drawing = false;
-        } else if (drawing) {
-          ctx.lineTo(px(point.x), py(point.y));
-        } else {
-          ctx.moveTo(px(point.x), py(point.y));
-          drawing = true;
-        }
-      }
-    });
-  } else {
-    const breaks = new Set(result.breaks || []);
-    let drawing = false;
-    result.points.forEach((point, index) => {
-      const visible = Number.isFinite(point.y) && point.y >= yMin && point.y <= yMax;
-      if (!visible || breaks.has(index) || breaks.has(index - 1)) {
-        drawing = false;
-      } else if (drawing) {
-        ctx.lineTo(px(point.x), py(point.y));
-      } else {
-        ctx.moveTo(px(point.x), py(point.y));
-        drawing = true;
-      }
-    });
-  }
-  ctx.stroke();
-  const details = [`${result.points.length} 个点`, `${result.breaks?.length || 0} 个断点`];
-  if (result.segments) details.push(`${result.segments.length} 个连续区段`);
-  if (result.termination && result.termination !== "complete") details.push(`终止：${result.termination}`);
-  summary("采样完成", "", details);
-}
-
-function renderNumericOdePlot(result) {
-  renderPlot({
-    points: result.points.map((point) => ({ x: point.independent, y: point.state[0] })),
-    breaks: [],
+  let drawing = false;
+  points.forEach((point) => {
+    if (!Number.isFinite(point.y) || point.y < yMin || point.y > yMax) drawing = false;
+    else if (drawing) ctx.lineTo(px(point.x), py(point.y));
+    else { ctx.moveTo(px(point.x), py(point.y)); drawing = true; }
   });
-  summaryEl.innerHTML = "";
-  summary("数值 ODE 结果", "", [
-    `状态：${result.status}`,
-    `阶数：${result.order}`,
-    `接受 ${result.accepted_steps} 步`,
-    `拒绝 ${result.rejected_steps} 步`,
-    `${result.evaluations} 次求值`,
-    `估计误差：${result.estimated_error}`,
-  ]);
+  ctx.stroke();
 }
 
 async function calculate() {
-  const expr = exprEl.value.trim();
-  if (!expr) return;
+  const expression = exprEl.value.trim();
+  if (!expression) return;
   resetOutput();
   setBusy(true);
   const started = performance.now();
   try {
-    const mode = effectiveMode();
-    const variable = variableEl.value.trim();
-    let result;
-    if (["derivative", "integral", "definite"].includes(mode)) {
-      result = await invoke("calculate_steps", {
-        request: {
-          kind: mode,
-          expr,
-          variable,
-          verbosity: $("#verbosity").value,
-          order: Number($("#order").value),
-          from: $("#from").value.trim(),
-          to: $("#to").value.trim(),
-        },
-      });
-      if ($("#output-mode").value === "result") {
-        const finalStep = result.at(-1);
-        summary("计算结果", finalStep?.tex || "");
-      } else {
-        renderSteps(result);
-      }
-    } else if (mode === "transform") {
-      result = await invoke("transform_expression", { expr, operation: $("#operation").value, variable });
-      summary(result.operation, result.tex, [result.changed ? "表达式已改变" : "表达式未改变", result.unresolved ? "未完成" : "已完成"]);
-      showStructured(result);
-    } else if (mode === "equation") {
-      const equations = expr.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-      const variables = variable.split(",").map((item) => item.trim()).filter(Boolean);
-      result = await invoke("solve_equations", { equations, variables });
-      const source = result.variable_source === "inferred" ? "自动发现" : "显式指定";
-      const details = [
-        `状态：${result.status}`,
-        `完整性：${result.completeness}`,
-        `求解变量：${result.variables.join(", ")}（${source}）`,
-        result.families?.length
-          ? `${result.families.length} 组周期解族`
-          : `${result.solutions.length} 组解`,
-      ];
-      if (result.parameters.length) details.push(`参数化结果：${result.parameters.join(", ")}`);
-      if (result.completeness === "representative") details.push("当前仅返回代表根");
-      summary("方程结果", result.tex, details);
-      showStructured(result);
-    } else if (mode === "limit") {
-      result = await invoke("calculate_limit", { expr, variable, at: $("#at").value.trim(), direction: $("#direction").value });
-      const conditions = result.conditions.map(conditionText);
-      summary("极限结果", result.tex, [`状态：${result.status}`, ...conditions]);
-      showStructured(result);
-    } else if (mode === "limit_steps") {
-      result = await invoke("calculate_limit_steps", {
-        expr,
-        variable,
-        at: $("#at").value.trim(),
-        direction: $("#direction").value,
+    const result = await invoke("process_expression", {
+      request: {
+        expression,
+        steps: $("#output-mode").value === "steps",
         verbosity: $("#verbosity").value,
-      });
-      renderSteps(result);
-      showStructured(result);
-    } else if (mode === "ode" || mode === "ode_steps") {
-      const request = {
-        equation: expr,
-        independent: variable,
-        dependent: $("#dependent").value.trim(),
-        initialConditions: parseOdeConditions($("#ode-conditions").value),
-      };
-      if (mode === "ode_steps") {
-        result = await invoke("solve_ode_steps", { ...request, verbosity: $("#verbosity").value });
-        summary("ODE 结果", result.result.tex, [`状态：${result.result.status}`, `方法：${result.result.method}`, `${result.result.solutions.length} 个分支`]);
-        renderSteps(result.steps);
-      } else {
-        result = await invoke("solve_ode", request);
-        summary("ODE 结果", result.tex, [`状态：${result.status}`, `方法：${result.method}`, `${result.solutions.length} 个分支`]);
-      }
-      showStructured(result);
-    } else if (mode === "ode_numeric") {
-      result = await invoke("solve_ode_numeric", {
-        equation: expr,
-        independent: variable,
-        dependent: $("#dependent").value.trim(),
-        initialConditions: parseOdeConditions($("#ode-conditions").value),
-        options: {
-          end: Number($("#ode-end").value),
-          initialStep: optionalNumber("#ode-step"),
-          absoluteTolerance: optionalNumber("#ode-absolute-tolerance"),
-          relativeTolerance: optionalNumber("#ode-relative-tolerance"),
-          maxSteps: null,
-          maxEvaluations: null,
-        },
-      });
-      renderNumericOdePlot(result);
-      showStructured(result);
-    } else if (mode === "approximate") {
-      result = await invoke("approximate_numeric", { expr, precisionDigits: Number($("#precision").value) });
-      summary("数值近似", result.tex, [`类型：${result.kind}`, `精度：${result.precision_digits} 位`]);
-      showStructured(result);
-    } else if (mode === "root") {
-      result = await invoke("find_numeric_root", {
-        expr,
-        variable,
-        initial: Number($("#root-initial").value),
-        accuracy: Number($("#root-accuracy").value),
-        min: optionalNumber("#root-min"),
-        max: optionalNumber("#root-max"),
-      });
-      summary("数值根", result.tex, [`状态：${result.status}`]);
-      showStructured(result);
-    } else if (mode === "taylor") {
-      result = await invoke("calculate_taylor", {
-        expr,
-        variable,
-        point: $("#taylor-point").value.trim(),
-        degree: Number($("#taylor-degree").value),
-      });
-      summary("Taylor 多项式", result.tex, [`次数：${result.degree}`, result.unresolved ? "未完成" : "已完成"]);
-      showStructured(result);
-    } else if (mode === "matrix") {
-      let operation = $("#matrix-operation").value;
-      let left = expr;
-      let right = $("#matrix-right").value.trim();
-      if (operation === "auto") ({ operation, left, right } = parseMatrixExpression(expr));
-      const binary = ["add", "multiply", "solve"].includes(operation);
-      result = await invoke("calculate_matrix", {
-        left,
-        operation,
-        right: binary ? right : null,
-      });
-      summary("线性代数结果", result.tex, [`运算：${result.operation}`, result.unresolved ? "未完成" : "已完成"]);
-      showStructured(result);
-    } else if (mode === "plot") {
-      result = await invoke("sample_plot", { expr, variable, min: Number($("#plot-min").value), max: Number($("#plot-max").value) });
-      renderPlot(result);
-      showStructured({
-        points: result.points.length,
-        breaks: result.breaks,
-        discontinuities: result.discontinuities,
-        segments: result.segments,
-        suggested_bounds: result.suggested_bounds,
-        evaluations: result.evaluations,
-        termination: result.termination,
-      });
-    } else {
-      result = await invoke("evaluate", { expr });
-      summary("求值结果", result.tex, [result.expression]);
-      showStructured(result);
-      await refreshAssumptions();
-    }
+      },
+    });
+    $("#result-title").textContent = result.title;
+    $("#result-kind").textContent = result.kind.replaceAll("_", " ");
+    if (result.kind === "plot" || result.kind === "numeric_ode") renderPlot(result);
+    else renderSummary(result);
+    renderSteps(result.steps || []);
+    rawEl.textContent = JSON.stringify(result.data, null, 2);
+    rawBoxEl.hidden = false;
   } catch (error) {
     showError(error);
   } finally {
@@ -483,16 +200,14 @@ async function calculate() {
 function renderAssumptions() {
   const list = $("#assumption-list");
   list.innerHTML = "";
-  if (!assumptions.size) {
-    list.innerHTML = '<span class="empty">暂无假设</span>';
-    return;
-  }
+  if (!assumptions.size) list.innerHTML = '<span class="empty">暂无假设</span>';
   assumptions.forEach(({ fact, symbol }) => {
     const chip = document.createElement("span");
     chip.className = "chip";
     chip.textContent = `${symbol}: ${fact}`;
     list.appendChild(chip);
   });
+  $("#assumption-summary").textContent = assumptions.size ? `${assumptions.size} 项假设` : "无假设";
 }
 
 async function refreshAssumptions() {
@@ -504,36 +219,25 @@ async function refreshAssumptions() {
 
 async function addAssumption() {
   try {
-    const symbol = $("#assumption-symbol").value.trim();
-    await invoke("set_assumption", { symbol, fact: $("#assumption-fact").value });
+    await invoke("set_assumption", { symbol: $("#assumption-symbol").value.trim(), fact: $("#assumption-fact").value });
     await refreshAssumptions();
-  } catch (error) {
-    resetOutput();
-    showError(error);
-  }
+  } catch (error) { resetOutput(); showError(error); }
 }
 
 async function clearAssumptions() {
-  try {
-    await invoke("clear_assumptions");
-    await refreshAssumptions();
-  } catch (error) {
-    resetOutput();
-    showError(error);
-  }
+  try { await invoke("clear_assumptions"); await refreshAssumptions(); }
+  catch (error) { resetOutput(); showError(error); }
 }
 
-modeEl.addEventListener("change", () => updateMode(true));
-$("#matrix-operation").addEventListener("change", updateMatrixFields);
-$("#output-mode").addEventListener("change", () => updateMode(false));
+document.querySelectorAll("[data-group]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-group]").forEach((item) => item.classList.toggle("active", item === button));
+  renderTemplates(button.dataset.group);
+}));
+$("#output-mode").addEventListener("change", () => { $("#verbosity-field").hidden = $("#output-mode").value !== "steps"; });
+$("#clear-expression").addEventListener("click", () => { exprEl.value = ""; exprEl.focus(); });
 $("#go").addEventListener("click", calculate);
 $("#add-assumption").addEventListener("click", addAssumption);
 $("#clear-assumptions").addEventListener("click", clearAssumptions);
-exprEl.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate();
-});
-$("#syntax-content").innerHTML = "<p><code>*</code> 乘法　<code>^</code> 乘方　<code>==</code> 等号　<code>Pi</code> 圆周率　<code>Infinity</code> 无穷</p><p>常用函数：<code>Sin(x)</code>、<code>Cos(x)</code>、<code>Exp(x)</code>、<code>Ln(x)</code>、<code>Sqrt(x)</code>、<code>Abs(x)</code>。</p>";
-renderDomains();
-renderTasks(activeDomain, "derivative");
-updateMode(false);
+exprEl.addEventListener("keydown", (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate(); });
+renderTemplates("calculus");
 refreshAssumptions().catch(showError);
