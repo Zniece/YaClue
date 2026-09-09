@@ -938,6 +938,7 @@ StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var), "i");
    复用 Lim 的求值与洛必达条件，不建立第二套极限求解器。返回值只描述
    processing 渲染步骤所需的中间事实：
    {Direct, 代入值, 终值} 或
+   {Cancel, 分子极限, 分母极限, 约后分子, 约后分母, 公因式, 约分式, 终值} 或
    {LHopital, {{分子极限,分母极限,导数商},...}, 终值}。
    洛必达链设硬上限，避免不收敛的符号变换占满请求时限。 */
 
@@ -981,7 +982,8 @@ StepsL'GeneralData(_expr, _var, _at, _dir) <--
 [
   Local(parts, numerator, denominator, numeratorLimit, denominatorLimit,
         derivativeQuotient, final, substituted, indeterminate, events, rounds,
-        left, right, leftLimit, rightLimit, transformed, innerLimit);
+        left, right, leftLimit, rightLimit, transformed, innerLimit,
+        common, reducedNumerator, reducedDenominator, cancelled, cancellation);
   if (Type(expr) = "/" And at = Infinity And
       Type(Listify(expr)[2]) = "^" And Listify(expr)[3] = Ln(var)) [
     substituted := Eval(ApplyPure("Subst", {var, at, expr}));
@@ -994,27 +996,53 @@ StepsL'GeneralData(_expr, _var, _at, _dir) <--
     events := {};
     rounds := 0;
     indeterminate := True;
-    While(indeterminate And rounds < 8) [
-      numeratorLimit := StepsL'Lim(numerator, var, at, dir);
-      denominatorLimit := StepsL'Lim(denominator, var, at, dir);
-      indeterminate :=
-        Limit'IsIndeterminateQuotient(numeratorLimit, denominatorLimit);
-      if (indeterminate) [
-        numerator := ApplyPure("D", {var, numerator});
-        denominator := ApplyPure("D", {var, denominator});
-        derivativeQuotient := Simplify(numerator / denominator);
-        DestructiveAppend(events,
-                          {numeratorLimit, denominatorLimit, derivativeQuotient});
-        rounds++;
+    cancellation := {};
+    numeratorLimit := StepsL'Lim(numerator, var, at, dir);
+    denominatorLimit := StepsL'Lim(denominator, var, at, dir);
+    if (at != Infinity And numeratorLimit = 0 And denominatorLimit = 0 And
+        CanBeUni(var, numerator) And CanBeUni(var, denominator) And
+        (VarList(numerator) = {var} Or VarList(numerator) = {}) And
+        (VarList(denominator) = {var} Or VarList(denominator) = {})) [
+      common := PolynomialGcd(numerator, denominator, var);
+      reducedNumerator := Div(numerator, common);
+      reducedDenominator := Div(denominator, common);
+      cancelled := Simplify(reducedNumerator / reducedDenominator);
+      substituted := Eval(ApplyPure("Subst", {var, at, cancelled}));
+      if (common != 1 And substituted != Undefined And
+          Simplify(expr - cancelled) = 0) [
+        final := StepsL'Lim(cancelled, var, at, dir);
+        cancellation :=
+          {Cancel, numeratorLimit, denominatorLimit, reducedNumerator,
+           reducedDenominator, common, cancelled, final};
       ];
     ];
-    if (Length(events) > 0) [
-      final := StepsL'Lim(Simplify(numerator / denominator), var, at, dir);
-      {LHopital, events, final};
+    if (Length(cancellation) > 0) [
+      cancellation;
     ] else [
-      substituted := Eval(ApplyPure("Subst", {var, at, expr}));
-      final := StepsL'Lim(expr, var, at, dir);
-      {Direct, substituted, final};
+      While(indeterminate And rounds < 8) [
+        indeterminate :=
+          Limit'IsIndeterminateQuotient(numeratorLimit, denominatorLimit);
+        if (indeterminate) [
+          numerator := ApplyPure("D", {var, numerator});
+          denominator := ApplyPure("D", {var, denominator});
+          derivativeQuotient := Simplify(numerator / denominator);
+          DestructiveAppend(events,
+                            {numeratorLimit, denominatorLimit, derivativeQuotient});
+          rounds++;
+          if (rounds < 8) [
+            numeratorLimit := StepsL'Lim(numerator, var, at, dir);
+            denominatorLimit := StepsL'Lim(denominator, var, at, dir);
+          ];
+        ];
+      ];
+      if (Length(events) > 0) [
+        final := StepsL'Lim(Simplify(numerator / denominator), var, at, dir);
+        {LHopital, events, final};
+      ] else [
+        substituted := Eval(ApplyPure("Subst", {var, at, expr}));
+        final := StepsL'Lim(expr, var, at, dir);
+        {Direct, substituted, final};
+      ];
     ];
   ] else if (Type(expr) = "*") [
     parts := Listify(expr);

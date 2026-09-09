@@ -108,6 +108,7 @@ pub fn limit_steps_with_verbosity(
     }
     let final_node = match args[0].to_string().as_str() {
         "Direct" | "LHopital" if args.len() == 3 => &args[2],
+        "Cancel" if args.len() == 8 => &args[7],
         "Transform" if args.len() == 6 => &args[5],
         _ => &args[0],
     };
@@ -163,6 +164,67 @@ pub fn limit_steps_with_verbosity(
                     importance: StepImportance::Key,
                 });
             }
+        }
+        "Cancel" if args.len() == 8 => {
+            let numerator_limit = args[1].to_string();
+            let denominator_limit = args[2].to_string();
+            let reduced_numerator = args[3].to_string();
+            let reduced_denominator = args[4].to_string();
+            let common = args[5].to_string();
+            let factored =
+                format!("(({reduced_numerator})*({common}))/(({reduced_denominator})*({common}))");
+            let cancelled = args[6].to_string();
+            let final_value = final_value_override.clone();
+            let show_detail = verbosity != StepVerbosity::Concise;
+            let mut expressions = if show_detail {
+                vec![
+                    numerator_limit.clone(),
+                    denominator_limit.clone(),
+                    factored.clone(),
+                ]
+            } else {
+                vec![]
+            };
+            expressions.push(cancelled.clone());
+            expressions.push(final_value.clone());
+            let tex = engine
+                .render_tex_batch(&expressions)?
+                .into_iter()
+                .map(|tex| strip_tex_delimiters(&tex))
+                .collect::<Vec<_>>();
+            let offset = if show_detail {
+                steps.push(Step {
+                    rule: "limit-indeterminate-form".into(),
+                    expr: format!("{numerator_limit}/{denominator_limit}"),
+                    why: "直接代入后分子和分母同时为 0".into(),
+                    tex: format!("\\frac{{{}}}{{{}}}", tex[0], tex[1]),
+                    importance: StepImportance::Normal,
+                });
+                steps.push(Step {
+                    rule: "limit-factor".into(),
+                    expr: factored,
+                    why: "因式分解分子和分母，显露公共因子".into(),
+                    tex: tex[2].clone(),
+                    importance: StepImportance::Normal,
+                });
+                3
+            } else {
+                0
+            };
+            steps.push(Step {
+                rule: "limit-cancel-common-factor".into(),
+                expr: cancelled,
+                why: "在趋近点之外约去公共因子；这不改变极限".into(),
+                tex: tex[offset].clone(),
+                importance: StepImportance::Key,
+            });
+            steps.push(Step {
+                rule: "limit-result".into(),
+                expr: final_value,
+                why: format!("对约分后的表达式代入 {variable} = {}", at.trim()),
+                tex: tex[offset + 1].clone(),
+                importance: StepImportance::Key,
+            });
         }
         "LHopital" if args.len() == 3 => {
             let Expr::Call {
@@ -513,30 +575,44 @@ mod tests {
     }
 
     #[test]
-    fn explains_direct_substitution_and_lhopital_limits() {
+    fn explains_direct_substitution_and_polynomial_cancellation() {
         let mut engine = RustEngine::spawn().unwrap();
         let direct = limit_steps(&mut engine, "x^2+1", "x", "2", LimitDirection::Both).unwrap();
         assert_eq!(direct.last().unwrap().rule, "limit-direct-substitution");
         assert_eq!(direct.last().unwrap().expr, "5");
 
-        let lhopital =
+        let cancellation =
             limit_steps(&mut engine, "(x^2-4)/(x-2)", "x", "2", LimitDirection::Both).unwrap();
         assert_eq!(
-            lhopital
+            cancellation
                 .iter()
                 .map(|step| step.rule.as_str())
                 .collect::<Vec<_>>(),
             vec![
                 "limit-start",
                 "limit-indeterminate-form",
-                "limit-lhopital",
+                "limit-factor",
+                "limit-cancel-common-factor",
                 "limit-result"
             ]
         );
-        assert_eq!(lhopital[1].expr, "0/0");
-        assert_eq!(lhopital[2].expr, "(2 * x)");
-        assert_eq!(lhopital[3].expr, "4");
-        assert!(lhopital.iter().all(|step| !step.tex.is_empty()));
+        assert_eq!(cancellation[1].expr, "0/0");
+        assert_eq!(cancellation[3].expr, "(x + 2)");
+        assert_eq!(cancellation[4].expr, "4");
+        assert!(cancellation.iter().all(|step| !step.tex.is_empty()));
+
+        let higher_degree = limit_steps(
+            &mut engine,
+            "(x^3-x)/(x^2-1)",
+            "x",
+            "1",
+            LimitDirection::Both,
+        )
+        .unwrap();
+        assert!(higher_degree
+            .iter()
+            .any(|step| step.rule == "limit-cancel-common-factor"));
+        assert_eq!(higher_degree.last().unwrap().expr, "1");
     }
 
     #[test]
@@ -552,7 +628,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(concise.len(), 2);
-        assert_eq!(concise[0].rule, "limit-lhopital");
+        assert_eq!(concise[0].rule, "limit-cancel-common-factor");
         assert_eq!(concise[1].rule, "limit-result");
     }
 
