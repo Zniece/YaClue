@@ -15,38 +15,96 @@ const stateEl = $("#engine-state");
 const timingEl = $("#timing");
 const assumptions = new Map();
 
+const DOMAINS = [
+  { id: "calculus", label: "微积分" },
+  { id: "equations", label: "方程" },
+  { id: "algebra", label: "代数" },
+  { id: "linear", label: "线性代数" },
+  { id: "numeric", label: "数值与绘图" },
+];
+
 const MODES = {
-  derivative: { title: "被求导表达式", help: "支持高阶导数和三种步骤粒度。", example: "Sin(x)^2" },
-  integral: { title: "被积表达式", help: "展示换元、分部积分、部分分式和三角积分等已有步骤。", example: "x*Exp(x)" },
-  definite: { title: "被积表达式", help: "解析积分失败时会尝试自适应辛普森数值积分。", example: "Sin(x)" },
-  transform: { title: "待变换表达式", help: "Apart 使用上方变量，其余变换不使用变量参数。", example: "(x+1)^2" },
-  equation: { title: "方程（每行一个）", help: "方程组每行一个等式；求解变量可留空自动发现，或填写 x,y 显式指定。", example: "x+y==3\nx-y==1" },
-  limit: { title: "极限表达式", help: "趋近值可填写 0、Infinity 等；支持左、右和双侧极限。", example: "Sin(x)/x" },
-  limit_steps: { title: "极限表达式", help: "展示连续洛必达、乘积/差/幂型不定式变换和参数条件。", example: "(1-Cos(x))/x^2" },
-  ode: { title: "常微分方程", help: "自变量使用上方输入，另行指定因变量；初值格式为 阶数,点,值。", example: "y'==(x+y)/x" },
-  ode_steps: { title: "常微分方程", help: "展示求解器实际产生的标准形、代换、积分因子和验算事件。", example: "y'+y==x" },
-  ode_numeric: { title: "常微分方程初值问题", help: "使用自适应数值积分；初值数量需要与方程阶数一致。", example: "y'+y==x" },
-  approximate: { title: "数值表达式", help: "按指定十进制精度近似，最高 1000 位。", example: "Pi" },
-  root: { title: "等于零的表达式", help: "Newton 数值求根；区间上下界可同时留空。", example: "Cos(x)-x" },
-  taylor: { title: "待展开表达式", help: "生成指定点和次数的 Taylor 多项式。", example: "Sin(x)" },
-  matrix: { title: "左矩阵", help: "使用 Yacas 列表矩阵语法；二元运算填写右操作数。", example: "{{1,2},{3,4}}" },
-  plot: { title: "待绘制表达式", help: "使用批量采样和曲率细分；非有限点会断开曲线。", example: "Sin(x)" },
-  evaluate: { title: "Yacas 表达式", help: "直接访问当前会话中的引擎，适合体验尚无专用界面的能力。", example: "Factor(x^4-1)" },
+  derivative: { domain: "calculus", label: "求导", title: "对什么函数求导？", help: "用 * 表示乘法，用 ^ 表示乘方。", examples: ["Sin(x)^2", "x^3*Exp(x)", "Ln(x)/(1+x)"], variants: true },
+  integral: { domain: "calculus", label: "不定积分", title: "要积分的函数", help: "只填写被积函数，积分变量在上方选择。", examples: ["x*Exp(x)", "1/(1+x^2)", "Sin(x)^3"], variants: true },
+  definite: { domain: "calculus", label: "定积分", title: "要积分的函数", help: "在上方分别填写积分变量、下限和上限。", examples: ["Sin(x)", "x^2", "Exp(-x^2)"], variants: true },
+  limit: { domain: "calculus", label: "极限", title: "要求极限的函数", help: "趋近值可以是数字或 Infinity，并可选择左右方向。", examples: ["Sin(x)/x", "(x^2-4)/(x-2)", "Abs(x)/x"], variants: true },
+  taylor: { domain: "calculus", label: "Taylor 展开", title: "要展开的函数", help: "选择展开点和最高次数。", examples: ["Sin(x)", "Exp(x)", "Ln(1+x)"] },
+  equation: { domain: "equations", label: "方程 / 方程组", title: "输入方程，每行一个", help: "等号写作 ==。方程组每行输入一条；变量可留空自动识别。", examples: ["x^2==4", "x+y==3\nx-y==1", "Sin(x)==0"] },
+  ode: { domain: "equations", label: "常微分方程", title: "输入微分方程", help: "一阶导数写作 y'，等号写作 ==。", examples: ["y'+y==x", "y'==x*y", "y''+y==0"], variants: true },
+  ode_numeric: { domain: "numeric", label: "常微分方程数值解", title: "输入微分方程初值问题", help: "一阶导数写作 y'；还需要填写初值和积分终点。", examples: ["y'+y==x", "y'==y", "y''==-y"] },
+  transform: { domain: "algebra", label: "化简与变换", title: "要变换的表达式", help: "选择展开、因式分解、约分等操作。", examples: ["(x+1)^2", "x^2-1", "(x^2-1)/(x-1)"] },
+  evaluate: { domain: "algebra", label: "高级：脚本求值", title: "Yacas 脚本表达式", help: "面向熟悉 Yacas 语法的用户，可直接调用当前引擎会话。", examples: ["Factor(x^4-1)", "Expand((x+1)^4)", "Simplify(Sin(x)^2+Cos(x)^2)"] },
+  matrix: { domain: "linear", label: "矩阵运算", title: "输入矩阵", help: "矩阵按行填写为 {{1,2},{3,4}}。", examples: ["{{1,2},{3,4}}", "{{1,0,2},{-1,3,1},{3,2,0}}"] },
+  approximate: { domain: "numeric", label: "高精度近似", title: "要近似的数值表达式", help: "选择需要的小数精度。", examples: ["Pi", "Sqrt(2)", "Exp(1)"] },
+  root: { domain: "numeric", label: "数值求根", title: "令这个表达式等于零", help: "填写左边表达式即可，例如 Cos(x)-x；无需再写 ==0。", examples: ["Cos(x)-x", "x^3-2", "Exp(x)-3"] },
+  plot: { domain: "numeric", label: "函数绘图", title: "要绘制的函数", help: "填写关于横轴变量的函数，并选择显示范围。", examples: ["Sin(x)", "1/x", "Exp(-x^2)"] },
 };
 
+let activeDomain = "calculus";
 const STEP_MODES = new Set(["derivative", "integral", "definite", "limit_steps", "ode_steps"]);
 
+function effectiveMode() {
+  if ($("#output-mode").value === "steps" && modeEl.value === "limit") return "limit_steps";
+  if ($("#output-mode").value === "steps" && modeEl.value === "ode") return "ode_steps";
+  return modeEl.value;
+}
+
+function renderExamples(mode) {
+  const list = $("#example-list");
+  list.innerHTML = "";
+  MODES[mode].examples.forEach((example) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "example";
+    button.textContent = example.replace(/\n/g, " ； ");
+    button.addEventListener("click", () => { exprEl.value = example; exprEl.focus(); });
+    list.appendChild(button);
+  });
+}
+
+function renderTasks(domain, preferredMode) {
+  modeEl.innerHTML = "";
+  Object.entries(MODES).filter(([, config]) => config.domain === domain).forEach(([id, config]) => {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = config.label;
+    modeEl.appendChild(option);
+  });
+  if (preferredMode && MODES[preferredMode]?.domain === domain) modeEl.value = preferredMode;
+}
+
+function renderDomains() {
+  const nav = $("#domain-nav");
+  DOMAINS.forEach((domain) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = domain.label;
+    button.dataset.domain = domain.id;
+    button.classList.toggle("active", domain.id === activeDomain);
+    button.addEventListener("click", () => {
+      activeDomain = domain.id;
+      nav.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
+      renderTasks(activeDomain);
+      updateMode(true);
+    });
+    nav.appendChild(button);
+  });
+}
+
 function updateMode(setExample = true) {
-  const mode = modeEl.value;
+  const task = modeEl.value;
+  const mode = effectiveMode();
   document.querySelectorAll("[data-for]").forEach((element) => {
     const targets = element.dataset.for.split(" ");
     element.hidden = !(targets.includes(mode) || (targets.includes("steps") && STEP_MODES.has(mode)));
   });
-  $("#expression-title").textContent = MODES[mode].title;
-  $("#input-help").textContent = MODES[mode].help;
+  $("#expression-title").textContent = MODES[task].title;
+  $("#input-help").textContent = MODES[task].help;
+  $("#output-mode-field").hidden = !MODES[task].variants;
+  renderExamples(task);
   variableEl.placeholder = mode === "equation" ? "自动发现（如 x,y）" : "x";
   if (setExample) {
-    exprEl.value = MODES[mode].example;
+    exprEl.value = MODES[task].examples[0];
     variableEl.value = mode === "equation" ? "" : "x";
     if (["ode", "ode_steps", "ode_numeric"].includes(mode)) {
       $("#dependent").value = "y";
@@ -246,7 +304,7 @@ async function calculate() {
   setBusy(true);
   const started = performance.now();
   try {
-    const mode = modeEl.value;
+    const mode = effectiveMode();
     const variable = variableEl.value.trim();
     let result;
     if (["derivative", "integral", "definite"].includes(mode)) {
@@ -261,7 +319,12 @@ async function calculate() {
           to: $("#to").value.trim(),
         },
       });
-      renderSteps(result);
+      if ($("#output-mode").value === "result") {
+        const finalStep = result.at(-1);
+        summary("计算结果", finalStep?.tex || "");
+      } else {
+        renderSteps(result);
+      }
     } else if (mode === "transform") {
       result = await invoke("transform_expression", { expr, operation: $("#operation").value, variable });
       summary(result.operation, result.tex, [result.changed ? "表达式已改变" : "表达式未改变", result.unresolved ? "未完成" : "已完成"]);
@@ -435,11 +498,15 @@ async function clearAssumptions() {
 }
 
 modeEl.addEventListener("change", () => updateMode(true));
+$("#output-mode").addEventListener("change", () => updateMode(false));
 $("#go").addEventListener("click", calculate);
 $("#add-assumption").addEventListener("click", addAssumption);
 $("#clear-assumptions").addEventListener("click", clearAssumptions);
 exprEl.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate();
 });
+$("#syntax-content").innerHTML = "<p><code>*</code> 乘法　<code>^</code> 乘方　<code>==</code> 等号　<code>Pi</code> 圆周率　<code>Infinity</code> 无穷</p><p>常用函数：<code>Sin(x)</code>、<code>Cos(x)</code>、<code>Exp(x)</code>、<code>Ln(x)</code>、<code>Sqrt(x)</code>、<code>Abs(x)</code>。</p>";
+renderDomains();
+renderTasks(activeDomain, "derivative");
 updateMode(false);
 refreshAssumptions().catch(showError);

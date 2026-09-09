@@ -10,34 +10,24 @@
   <body>
     <header>
       <div>
-        <p class="eyebrow">BACKEND PLAYGROUND</p>
-        <h1>YaClue 计算体验台</h1>
-        <p>阶段性原型：集中试用当前已经完成的计算、步骤和绘图能力。</p>
+        <p class="eyebrow">MATH WORKSPACE</p>
+        <h1>YaClue</h1>
+        <p>选择要解决的问题，输入数学内容，然后查看结果或步骤。</p>
       </div>
       <span id="engine-state" class="state">引擎就绪</span>
     </header>
 
     <main>
       <section class="card calculator">
+        <nav id="domain-nav" class="domain-nav" aria-label="数学领域"></nav>
         <div class="toolbar">
-          <label class="wide">功能
-            <select id="mode">
-              <option value="derivative">分步求导</option>
-              <option value="integral">分步不定积分</option>
-              <option value="definite">分步定积分</option>
-              <option value="transform">代数变换</option>
-              <option value="equation">方程 / 方程组</option>
-              <option value="limit">极限</option>
-              <option value="limit_steps">极限分步</option>
-              <option value="ode">常微分方程</option>
-              <option value="ode_steps">常微分方程分步</option>
-              <option value="ode_numeric">常微分方程数值解</option>
-              <option value="approximate">任意精度近似</option>
-              <option value="root">数值求根</option>
-              <option value="taylor">Taylor 多项式</option>
-              <option value="matrix">线性代数</option>
-              <option value="plot">函数绘图</option>
-              <option value="evaluate">直接求值</option>
+          <label class="wide">任务
+            <select id="mode"></select>
+          </label>
+          <label id="output-mode-field">输出
+            <select id="output-mode">
+              <option value="steps">显示步骤</option>
+              <option value="result">只看结果</option>
             </select>
           </label>
           <label>变量 / 自变量<input id="variable" value="x" /></label>
@@ -102,7 +92,15 @@
         <label class="expression-label"><span id="expression-title">表达式</span>
           <textarea id="expr" rows="3" spellcheck="false">Sin(x)^2</textarea>
         </label>
-        <p id="input-help" class="help">输入 Yacas 表达式，例如 <code>Sin(x)^2</code>。</p>
+        <p id="input-help" class="help"></p>
+        <div class="examples" aria-label="输入示例">
+          <span>试一试</span>
+          <div id="example-list"></div>
+        </div>
+        <details class="syntax-help">
+          <summary>输入格式帮助</summary>
+          <div id="syntax-content"></div>
+        </details>
         <div class="actions">
           <button id="go">计算</button>
           <span id="timing"></span>

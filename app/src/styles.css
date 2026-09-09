@@ -46,6 +46,9 @@ main {
 .assumptions { padding: 20px; }
 .output { grid-column: 1 / -1; min-height: 190px; padding: 22px; }
 
+.domain-nav { display: flex; gap: 6px; margin: -5px -5px 20px; padding: 5px; overflow-x: auto; border-bottom: 1px solid var(--border); }
+.domain-nav button { flex: 0 0 auto; padding: 9px 13px; color: var(--muted); background: transparent; font-size: 13px; }
+.domain-nav button.active { color: var(--blue); background: var(--blue-soft); }
 .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
 label { display: flex; flex-direction: column; gap: 5px; min-width: 105px; color: var(--muted); font-size: 12px; font-weight: 650; }
 label.wide { min-width: 175px; }
@@ -58,6 +61,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 textarea { width: 100%; padding: 13px 14px; resize: vertical; font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .help { min-height: 20px; margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 code { padding: 1px 5px; background: #eef1f6; border-radius: 4px; }
+.examples { display: flex; align-items: flex-start; gap: 9px; margin-top: 10px; color: var(--muted); font-size: 12px; }
+.examples > span { flex: 0 0 auto; padding-top: 6px; }
+#example-list { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+button.example { max-width: 100%; padding: 5px 9px; overflow: hidden; color: #2853b1; background: var(--blue-soft); font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.syntax-help { margin-top: 10px; }
+.syntax-help summary { width: fit-content; cursor: pointer; color: var(--blue); }
+.syntax-help p { margin: 8px 0 0; line-height: 1.8; }
 
 .actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 button { padding: 9px 18px; border: 0; border-radius: 8px; color: white; background: var(--blue); cursor: pointer; font-weight: 700; }
@@ -108,6 +118,7 @@ pre { max-height: 300px; padding: 12px; overflow: auto; color: #283247; backgrou
   header p:not(.eyebrow) { font-size: 13px; }
   main { margin-top: 14px; padding: 0 12px; }
   .calculator, .assumptions, .output { padding: 16px; }
+  .domain-nav { margin: -2px -2px 16px; }
   .toolbar > label, .toolbar > label.wide { flex: 1 1 140px; min-width: 0; }
   .toolbar input, .toolbar select { width: 100%; }
   .assumption-form { grid-template-columns: 1fr; }
@@ -115,4 +126,9 @@ pre { max-height: 300px; padding: 12px; overflow: auto; color: #283247; backgrou
   .step { grid-template-columns: 1fr; }
   .step-heading { grid-template-columns: 25px minmax(0, 1fr); }
   #plot { height: 300px; }
+  .actions { position: sticky; bottom: 0; z-index: 2; margin: 14px -16px -16px; padding: 12px 16px; background: rgba(255, 255, 255, .96); border-top: 1px solid var(--border); }
+  .actions #go { flex: 1; }
+  .examples { flex-direction: column; gap: 5px; }
+  .examples > span { padding-top: 0; }
+  .step-heading small { display: none; }
 }
