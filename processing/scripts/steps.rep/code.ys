@@ -938,6 +938,7 @@ StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var), "i");
    复用 Lim 的求值与洛必达条件，不建立第二套极限求解器。返回值只描述
    processing 渲染步骤所需的中间事实：
    {Direct, 代入值, 终值} 或
+   {OneSided, 终值} 或
    {Cancel, 分子极限, 分母极限, 约后分子, 约后分母, 公因式, 约分式, 终值} 或
    {LHopital, {{分子极限,分母极限,导数商},...}, 终值}。
    洛必达链设硬上限，避免不收敛的符号变换占满请求时限。 */
@@ -1041,7 +1042,9 @@ StepsL'GeneralData(_expr, _var, _at, _dir) <--
       ] else [
         substituted := Eval(ApplyPure("Subst", {var, at, expr}));
         final := StepsL'Lim(expr, var, at, dir);
-        {Direct, substituted, final};
+        If(dir != Both And IsZero(denominatorLimit),
+           {OneSided, final},
+           {Direct, substituted, final});
       ];
     ];
   ] else if (Type(expr) = "*") [

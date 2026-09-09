@@ -108,6 +108,7 @@ pub fn limit_steps_with_verbosity(
     }
     let final_node = match args[0].to_string().as_str() {
         "Direct" | "LHopital" if args.len() == 3 => &args[2],
+        "OneSided" if args.len() == 2 => &args[1],
         "Cancel" if args.len() == 8 => &args[7],
         "Transform" if args.len() == 6 => &args[5],
         _ => &args[0],
@@ -164,6 +165,29 @@ pub fn limit_steps_with_verbosity(
                     importance: StepImportance::Key,
                 });
             }
+        }
+        "OneSided" if args.len() == 2 => {
+            let final_value = final_value_override.clone();
+            let tex = strip_tex_delimiters(
+                &engine
+                    .render_tex_batch(std::slice::from_ref(&final_value))?
+                    .remove(0),
+            );
+            let side = match direction {
+                LimitDirection::Left => "左侧",
+                LimitDirection::Right => "右侧",
+                LimitDirection::Both => unreachable!("OneSided requires a directed limit"),
+            };
+            steps.push(Step {
+                rule: "limit-one-sided-approach".into(),
+                expr: final_value,
+                why: format!(
+                    "从{side}趋近 {variable} = {}，判断表达式的符号与大小",
+                    at.trim()
+                ),
+                tex,
+                importance: StepImportance::Key,
+            });
         }
         "Cancel" if args.len() == 8 => {
             let numerator_limit = args[1].to_string();
@@ -572,6 +596,11 @@ mod tests {
         assert_eq!(left.status, LimitStatus::NegativeInfinity, "{}", left.value);
         let both = limit(&mut engine, "1/x", "x", "0", LimitDirection::Both).unwrap();
         assert_eq!(both.status, LimitStatus::DoesNotExist);
+
+        let abs_right = limit(&mut engine, "Abs(x)/x", "x", "0", LimitDirection::Right).unwrap();
+        let abs_left = limit(&mut engine, "Abs(x)/x", "x", "0", LimitDirection::Left).unwrap();
+        assert_eq!(abs_right.value, "1");
+        assert_eq!(abs_left.value, "-1");
     }
 
     #[test]
@@ -630,6 +659,27 @@ mod tests {
         assert_eq!(concise.len(), 2);
         assert_eq!(concise[0].rule, "limit-cancel-common-factor");
         assert_eq!(concise[1].rule, "limit-result");
+    }
+
+    #[test]
+    fn one_sided_steps_use_directional_behavior_instead_of_substitution() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (direction, expected) in [
+            (LimitDirection::Right, "Infinity"),
+            (LimitDirection::Left, "(- Infinity)"),
+        ] {
+            let steps = limit_steps(&mut engine, "1/x", "x", "0", direction).unwrap();
+            assert_eq!(steps.last().unwrap().rule, "limit-one-sided-approach");
+            assert_eq!(steps.last().unwrap().expr, expected);
+            assert!(!steps
+                .iter()
+                .any(|step| step.rule == "limit-direct-substitution"));
+        }
+
+        let right = limit_steps(&mut engine, "Abs(x)/x", "x", "0", LimitDirection::Right).unwrap();
+        let left = limit_steps(&mut engine, "Abs(x)/x", "x", "0", LimitDirection::Left).unwrap();
+        assert_eq!(right.last().unwrap().expr, "1");
+        assert_eq!(left.last().unwrap().expr, "-1");
     }
 
     #[test]

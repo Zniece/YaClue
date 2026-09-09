@@ -88,6 +88,12 @@ Sign(_var, _tar, _dir, _exp, _n)
 
 Protect(Sign);
 
+/* Sign is discontinuous at zero, but its one-sided limit is determined by
+   the first non-zero term of its argument. */
+90 # Lim(_var, _tar, _dir, Sign(_x))_
+((dir = Left Or dir = Right) And IsZero(Lim(var, tar, dir, x)))
+<-- Sign(var, tar, dir, x, 1);
+
 /*  To avoid infinite recursion (with 1/Exp(-x) for instance)  */
 310 # Lim(_var, _tar, _dir, _x / _y)_
 (IsInfinity(tar) And IsZero(Lim(var, tar, dir, y)))
