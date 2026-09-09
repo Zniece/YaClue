@@ -245,7 +245,6 @@ fn trigonometric_representatives_are_not_claimed_as_complete() {
 }
 
 #[test]
-#[ignore = "known defect: an underdetermined system returns a malformed list assignment"]
 fn underdetermined_system_has_a_parametric_contract() {
     let mut engine = RustEngine::spawn().unwrap();
     let result = solve(&mut engine, &["x+y==3"], &["x", "y"]).unwrap();
@@ -259,7 +258,6 @@ fn underdetermined_system_has_a_parametric_contract() {
 }
 
 #[test]
-#[ignore = "known defect: an inconsistent system returns Infinity assignments"]
 fn inconsistent_system_is_not_a_solution() {
     let mut engine = RustEngine::spawn().unwrap();
     let result = solve(&mut engine, &["x+y==3", "x+y==4"], &["x", "y"]).unwrap();
@@ -268,7 +266,6 @@ fn inconsistent_system_is_not_a_solution() {
 }
 
 #[test]
-#[ignore = "known defect: a consistent overdetermined system leaks ListNotLongEnough"]
 fn consistent_overdetermined_system_is_solved() {
     let mut engine = RustEngine::spawn().unwrap();
     let result = solve(&mut engine, &["x+y==3", "x-y==1", "x==2"], &["x", "y"])
