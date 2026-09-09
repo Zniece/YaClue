@@ -48,6 +48,31 @@ pub struct DoubleIntegralStepResult {
     pub steps: Vec<Step>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TripleIntegralStatus {
+    Evaluated,
+    InnerUnresolved,
+    MiddleUnresolved,
+    OuterUnresolved,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TripleIntegralResult {
+    pub status: TripleIntegralStatus,
+    pub expression: String,
+    /// Reached layers in evaluation order: inner, middle, outer.
+    pub layers: Vec<IntegralLayerResult>,
+    pub value: String,
+    pub tex: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TripleIntegralStepResult {
+    pub result: TripleIntegralResult,
+    pub steps: Vec<Step>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PolarRegion<'a> {
     pub radial_lower: &'a str,
@@ -274,6 +299,96 @@ pub fn double_integral_steps_with_verbosity(
         .map(|step| step.tex.clone())
         .unwrap_or_default();
     Ok(DoubleIntegralStepResult { result, steps })
+}
+
+pub fn triple_integral(
+    engine: &mut dyn Engine,
+    expression: &str,
+    inner: IntegralBound<'_>,
+    middle: IntegralBound<'_>,
+    outer: IntegralBound<'_>,
+) -> Result<TripleIntegralResult, EngineError> {
+    validate_triple_request(expression, inner, middle, outer)?;
+    evaluate_triple(engine, expression, inner, middle, outer, true)
+}
+
+pub fn triple_integral_steps(
+    engine: &mut dyn Engine,
+    expression: &str,
+    inner: IntegralBound<'_>,
+    middle: IntegralBound<'_>,
+    outer: IntegralBound<'_>,
+) -> Result<TripleIntegralStepResult, EngineError> {
+    triple_integral_steps_with_verbosity(
+        engine,
+        expression,
+        inner,
+        middle,
+        outer,
+        StepVerbosity::Detailed,
+    )
+}
+
+pub fn triple_integral_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    inner: IntegralBound<'_>,
+    middle: IntegralBound<'_>,
+    outer: IntegralBound<'_>,
+    verbosity: StepVerbosity,
+) -> Result<TripleIntegralStepResult, EngineError> {
+    validate_triple_request(expression, inner, middle, outer)?;
+    let mut result = evaluate_triple(engine, expression, inner, middle, outer, false)?;
+    let setup = nested_triple_expression(expression, inner, middle, outer);
+    let mut events = vec![StepEvent::new(
+        "triple-integral-setup",
+        &setup,
+        "按给定次序建立三重迭代积分。",
+        StepImportance::Routine,
+    )];
+    let rules = [
+        "triple-integral-inner",
+        "triple-integral-middle",
+        "triple-integral-outer",
+    ];
+    let explanations = [
+        "先计算内层定积分，结果作为两个外层变量的函数。",
+        "对内层结果计算中层定积分。",
+        "对中层结果计算最外层定积分。",
+    ];
+    for (index, layer) in result.layers.iter().enumerate() {
+        events.push(StepEvent::new(
+            rules[index],
+            &layer.value,
+            if layer.completed {
+                explanations[index]
+            } else {
+                "该层积分未得到解析结果，停止后续解析积分。"
+            },
+            if layer.completed {
+                StepImportance::Normal
+            } else {
+                StepImportance::Key
+            },
+        ));
+    }
+    events.push(StepEvent::new(
+        "triple-integral-result",
+        &result.value,
+        match result.status {
+            TripleIntegralStatus::Evaluated => "得到三重积分的解析结果。",
+            TripleIntegralStatus::InnerUnresolved => "内层积分未解析完成。",
+            TripleIntegralStatus::MiddleUnresolved => "中层积分未解析完成。",
+            TripleIntegralStatus::OuterUnresolved => "外层积分未解析完成。",
+        },
+        StepImportance::Key,
+    ));
+    let steps = render_events(engine, events, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(TripleIntegralStepResult { result, steps })
 }
 
 fn validate_polar_request(
@@ -543,6 +658,128 @@ fn evaluate(
     })
 }
 
+fn validate_triple_request(
+    expression: &str,
+    inner: IntegralBound<'_>,
+    middle: IntegralBound<'_>,
+    outer: IntegralBound<'_>,
+) -> Result<(), EngineError> {
+    validate_expression(expression, "三重积分被积表达式")?;
+    let bounds = [inner, middle, outer];
+    for (label, bound) in [("内层", inner), ("中层", middle), ("外层", outer)] {
+        validate_symbol(bound.variable, &format!("{label}积分变量"))?;
+        validate_expression(bound.lower, &format!("{label}积分下限"))?;
+        validate_expression(bound.upper, &format!("{label}积分上限"))?;
+    }
+    let mut variables = bounds.map(|bound| bound.variable);
+    variables.sort_unstable();
+    if variables.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(EngineError::InvalidInput(
+            "三重积分的三个变量必须不同".into(),
+        ));
+    }
+    for (index, bound) in bounds.iter().enumerate() {
+        let symbols = analyze_expression(
+            &format!("{{{},{}}}", bound.lower, bound.upper),
+            "三重积分上下限",
+        )?
+        .symbols;
+        if bounds[..=index]
+            .iter()
+            .any(|forbidden| symbols.iter().any(|symbol| symbol == forbidden.variable))
+        {
+            return Err(EngineError::InvalidInput(
+                match index {
+                    0 => "内层积分上下限不能依赖内层积分变量",
+                    1 => "中层积分上下限只能依赖最外层积分变量",
+                    _ => "外层积分上下限不能依赖积分变量",
+                }
+                .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn evaluate_triple(
+    engine: &mut dyn Engine,
+    expression: &str,
+    inner: IntegralBound<'_>,
+    middle: IntegralBound<'_>,
+    outer: IntegralBound<'_>,
+    render_value: bool,
+) -> Result<TripleIntegralResult, EngineError> {
+    let inner_call = format!(
+        "Integrate({},{},{})({expression})",
+        inner.variable, inner.lower, inner.upper
+    );
+    let data = engine.eval_expr(&format!(
+        "[Local(i,m,o,ic,mc,oc); i:={inner_call}; ic:=IsFreeOf(Integrate,i); \
+         If(ic,[m:=Integrate({},{},{})i;mc:=IsFreeOf(Integrate,m);],[m:=Undefined;mc:=False;]); \
+         If(mc,[o:=Integrate({},{},{})m;oc:=IsFreeOf(Integrate,o);],[o:=Undefined;oc:=False;]); \
+         {{i,ic,m,mc,o,oc}};]",
+        middle.variable, middle.lower, middle.upper, outer.variable, outer.lower, outer.upper,
+    ))?;
+    let Expr::Call { head, args } = data else {
+        return Err(EngineError::Parse("三重积分结果不是列表".into()));
+    };
+    if head != "List" || args.len() != 6 {
+        return Err(EngineError::Parse("三重积分结果形态异常".into()));
+    }
+    let completed = [
+        boolean(&args[1], "内层积分状态")?,
+        boolean(&args[3], "中层积分状态")?,
+        boolean(&args[5], "外层积分状态")?,
+    ];
+    let status = match completed {
+        [false, _, _] => TripleIntegralStatus::InnerUnresolved,
+        [true, false, _] => TripleIntegralStatus::MiddleUnresolved,
+        [true, true, false] => TripleIntegralStatus::OuterUnresolved,
+        [true, true, true] => TripleIntegralStatus::Evaluated,
+    };
+    let values = [&args[0], &args[2], &args[4]];
+    let bounds = [inner, middle, outer];
+    let reached = if !completed[0] {
+        1
+    } else if !completed[1] {
+        2
+    } else {
+        3
+    };
+    let mut layers = Vec::with_capacity(reached);
+    for index in 0..reached {
+        layers.push(IntegralLayerResult {
+            variable: bounds[index].variable.into(),
+            lower: bounds[index].lower.into(),
+            upper: bounds[index].upper.into(),
+            integrand: if index == 0 {
+                expression.into()
+            } else {
+                values[index - 1].to_string()
+            },
+            value: values[index].to_string(),
+            completed: completed[index],
+        });
+    }
+    let value = layers
+        .last()
+        .expect("a triple integral always reaches its inner layer")
+        .value
+        .clone();
+    let tex = if render_value {
+        strip_tex_delimiters(&engine.render_tex_batch(std::slice::from_ref(&value))?[0])
+    } else {
+        String::new()
+    };
+    Ok(TripleIntegralResult {
+        status,
+        expression: expression.into(),
+        layers,
+        value,
+        tex,
+    })
+}
+
 fn nested_expression(
     expression: &str,
     inner: IntegralBound<'_>,
@@ -551,6 +788,26 @@ fn nested_expression(
     format!(
         "Integrate({},{},{})Integrate({},{},{})({expression})",
         outer.variable, outer.lower, outer.upper, inner.variable, inner.lower, inner.upper
+    )
+}
+
+fn nested_triple_expression(
+    expression: &str,
+    inner: IntegralBound<'_>,
+    middle: IntegralBound<'_>,
+    outer: IntegralBound<'_>,
+) -> String {
+    format!(
+        "Integrate({},{},{})Integrate({},{},{})Integrate({},{},{})({expression})",
+        outer.variable,
+        outer.lower,
+        outer.upper,
+        middle.variable,
+        middle.lower,
+        middle.upper,
+        inner.variable,
+        inner.lower,
+        inner.upper,
     )
 }
 
@@ -931,5 +1188,165 @@ mod tests {
         )
         .unwrap();
         assert_eq!(engine.batch_sizes, [polar.steps.len()]);
+    }
+
+    #[test]
+    fn evaluates_rectangular_and_variable_bound_triple_integrals() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let rectangular = triple_integral(
+            &mut engine,
+            "x+y+z",
+            IntegralBound {
+                variable: "z",
+                lower: "0",
+                upper: "1",
+            },
+            IntegralBound {
+                variable: "y",
+                lower: "0",
+                upper: "1",
+            },
+            IntegralBound {
+                variable: "x",
+                lower: "0",
+                upper: "1",
+            },
+        )
+        .unwrap();
+        assert_eq!(rectangular.status, TripleIntegralStatus::Evaluated);
+        assert_eq!(rectangular.layers.len(), 3);
+        assert_eq!(
+            engine
+                .eval(&format!("IsZero(({})-3/2)", rectangular.value))
+                .unwrap()
+                .expr
+                .to_string(),
+            "True"
+        );
+
+        let variable_bounds = triple_integral(
+            &mut engine,
+            "1",
+            IntegralBound {
+                variable: "z",
+                lower: "0",
+                upper: "x+y",
+            },
+            IntegralBound {
+                variable: "y",
+                lower: "0",
+                upper: "x",
+            },
+            IntegralBound {
+                variable: "x",
+                lower: "0",
+                upper: "1",
+            },
+        )
+        .unwrap();
+        assert_eq!(variable_bounds.status, TripleIntegralStatus::Evaluated);
+        assert_eq!(
+            engine
+                .eval(&format!("IsZero(({})-1/2)", variable_bounds.value))
+                .unwrap()
+                .expr
+                .to_string(),
+            "True"
+        );
+    }
+
+    #[test]
+    fn triple_integral_stops_at_unresolved_layer_and_filters_steps() {
+        let inner = IntegralBound {
+            variable: "z",
+            lower: "0",
+            upper: "1",
+        };
+        let middle = IntegralBound {
+            variable: "y",
+            lower: "0",
+            upper: "1",
+        };
+        let outer = IntegralBound {
+            variable: "x",
+            lower: "0",
+            upper: "1",
+        };
+        let mut engine = CountingEngine::spawn();
+        let unresolved = triple_integral(&mut engine, "Sin(y^y)", inner, middle, outer).unwrap();
+        assert_eq!(unresolved.status, TripleIntegralStatus::MiddleUnresolved);
+        assert_eq!(unresolved.layers.len(), 2);
+
+        engine.reset_counts();
+        let detailed = triple_integral_steps(&mut engine, "x+y+z", inner, middle, outer).unwrap();
+        assert_eq!(engine.batch_sizes, [detailed.steps.len()]);
+        engine.reset_counts();
+        let concise = triple_integral_steps_with_verbosity(
+            &mut engine,
+            "x+y+z",
+            inner,
+            middle,
+            outer,
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        assert!(concise.steps.len() < detailed.steps.len());
+        assert_eq!(engine.batch_sizes, [concise.steps.len()]);
+    }
+
+    #[test]
+    fn triple_integral_rejects_invalid_bound_dependencies() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let valid_inner = IntegralBound {
+            variable: "z",
+            lower: "0",
+            upper: "x+y",
+        };
+        let valid_middle = IntegralBound {
+            variable: "y",
+            lower: "0",
+            upper: "x",
+        };
+        let valid_outer = IntegralBound {
+            variable: "x",
+            lower: "0",
+            upper: "1",
+        };
+        assert!(triple_integral(
+            &mut engine,
+            "1",
+            IntegralBound {
+                variable: "z",
+                lower: "0",
+                upper: "z",
+            },
+            valid_middle,
+            valid_outer,
+        )
+        .is_err());
+        assert!(triple_integral(
+            &mut engine,
+            "1",
+            valid_inner,
+            IntegralBound {
+                variable: "y",
+                lower: "0",
+                upper: "z",
+            },
+            valid_outer,
+        )
+        .is_err());
+        assert!(triple_integral(
+            &mut engine,
+            "1",
+            valid_inner,
+            valid_middle,
+            IntegralBound {
+                variable: "x",
+                lower: "0",
+                upper: "y",
+            },
+        )
+        .is_err());
     }
 }
