@@ -2,7 +2,8 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{
-    analyze_expression, strip_tex_delimiters, validate_expression, validate_symbol,
+    analyze_expression, direct_function_equation, strip_tex_delimiters, validate_expression,
+    validate_symbol,
 };
 use serde::Serialize;
 
@@ -27,7 +28,27 @@ pub enum VariableSource {
 pub enum SolveCompleteness {
     Complete,
     Parametric,
+    Periodic,
+    Representative,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterDomain {
+    Integers,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SolutionParameter {
+    pub symbol: String,
+    pub domain: ParameterDomain,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SolutionFamily {
+    pub assignments: Vec<Assignment>,
+    pub parameters: Vec<SolutionParameter>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -49,6 +70,9 @@ pub struct SolveResult {
     /// Symbols left in solved values, interpreted as parameters.
     pub parameters: Vec<String>,
     pub completeness: SolveCompleteness,
+    /// Complete structured families when the solution requires bound integer
+    /// parameters. `solutions` remains the finite representative-root view.
+    pub families: Vec<SolutionFamily>,
 }
 
 pub fn solve(
@@ -121,11 +145,11 @@ pub fn solve(
         ));
     }
     let raw = raw_expr.to_string();
-    let tex = engine
-        .eval(&raw)
-        .map(|result| strip_tex_delimiters(&result.tex))
-        .unwrap_or_else(|_| raw.clone());
     if failed {
+        let tex = engine
+            .eval(&raw)
+            .map(|result| strip_tex_delimiters(&result.tex))
+            .unwrap_or_else(|_| raw.clone());
         return Ok(SolveResult {
             status: SolveStatus::Unresolved,
             solutions: vec![],
@@ -135,6 +159,7 @@ pub fn solve(
             variable_source,
             parameters: vec![],
             completeness: SolveCompleteness::Unknown,
+            families: vec![],
         });
     }
 
@@ -168,11 +193,50 @@ pub fn solve(
     }
     parameters.sort();
     parameters.dedup();
-    let completeness = if parameters.is_empty() {
+    let mut completeness = if parameters.is_empty() {
         SolveCompleteness::Complete
     } else {
         SolveCompleteness::Parametric
     };
+    let mut tex = String::new();
+    let mut families = Vec::new();
+    let has_trigonometric_function = equations.iter().try_fold(false, |found, equation| {
+        let analysis = analyze_expression(equation, "方程")?;
+        Ok::<_, EngineError>(
+            found
+                || analysis
+                    .function_heads
+                    .iter()
+                    .any(|head| matches!(head.as_str(), "Sin" | "Cos" | "Tan")),
+        )
+    })?;
+    if status == SolveStatus::Solved && has_trigonometric_function {
+        completeness = SolveCompleteness::Representative;
+        if scalar && parameters.is_empty() {
+            if let Some(function) =
+                direct_function_equation(equations[0], variables[0], &["Sin", "Cos", "Tan"])?
+            {
+                let parameter = unused_integer_parameter(equations, &variables)?;
+                families = periodic_families(&solutions, &function, &parameter);
+                if !families.is_empty() {
+                    let display = families
+                        .iter()
+                        .flat_map(|family| family.assignments.iter())
+                        .map(|assignment| format!("{}=={}", assignment.variable, assignment.value))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    tex = strip_tex_delimiters(&engine.eval(&format!("{{{display}}}"))?.tex);
+                    completeness = SolveCompleteness::Periodic;
+                }
+            }
+        }
+    }
+    if tex.is_empty() {
+        tex = engine
+            .eval(&raw)
+            .map(|result| strip_tex_delimiters(&result.tex))
+            .unwrap_or_else(|_| raw.clone());
+    }
     Ok(SolveResult {
         status,
         solutions,
@@ -182,6 +246,7 @@ pub fn solve(
         variable_source,
         parameters,
         completeness,
+        families,
     })
 }
 
@@ -266,7 +331,46 @@ fn solve_rectangular(
         } else {
             SolveCompleteness::Complete
         },
+        families: Vec::new(),
     })
+}
+
+fn unused_integer_parameter(equations: &[&str], variables: &[&str]) -> Result<String, EngineError> {
+    let mut used = infer_variables(equations)?;
+    used.extend(variables.iter().map(|value| (*value).to_string()));
+    for index in 0usize.. {
+        let candidate = if index == 0 {
+            "k".to_string()
+        } else {
+            format!("k{index}")
+        };
+        if !used.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    unreachable!("an unused indexed parameter always exists")
+}
+
+fn periodic_families(
+    representatives: &[Vec<Assignment>],
+    function: &str,
+    parameter: &str,
+) -> Vec<SolutionFamily> {
+    let period = if function == "Tan" { "Pi" } else { "2*Pi" };
+    representatives
+        .iter()
+        .filter(|solution| solution.len() == 1)
+        .map(|solution| SolutionFamily {
+            assignments: vec![Assignment {
+                variable: solution[0].variable.clone(),
+                value: format!("({})+({period}*{parameter})", solution[0].value),
+            }],
+            parameters: vec![SolutionParameter {
+                symbol: parameter.to_string(),
+                domain: ParameterDomain::Integers,
+            }],
+        })
+        .collect()
 }
 
 fn combinations<T: Copy>(items: &[T], choose: usize, limit: usize) -> Vec<Vec<T>> {
@@ -564,5 +668,37 @@ mod tests {
 
         assert!(!combinations_exceed(3, 2, 32));
         assert!(combinations_exceed(20, 10, 32));
+    }
+
+    #[test]
+    fn exposes_direct_trigonometric_roots_as_periodic_families() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (equation, expected_families, period) in [
+            ("Sin(x)==0", 2, "2*Pi"),
+            ("Cos(x)==0", 2, "2*Pi"),
+            ("Tan(x)==1", 1, "Pi*k"),
+        ] {
+            let result = solve(&mut engine, &[equation], &["x"]).unwrap();
+            assert_eq!(result.completeness, SolveCompleteness::Periodic);
+            assert_eq!(result.families.len(), expected_families);
+            assert!(result.families.iter().all(|family| {
+                family.parameters[0].domain == ParameterDomain::Integers
+                    && family.assignments[0].value.contains(period)
+            }));
+            for family in &result.families {
+                for integer in [-2, 0, 3] {
+                    let mut instantiated = family.assignments.clone();
+                    instantiated.push(Assignment {
+                        variable: family.parameters[0].symbol.clone(),
+                        value: integer.to_string(),
+                    });
+                    assert!(candidate_satisfies(&mut engine, &instantiated, &[equation]).unwrap());
+                }
+            }
+        }
+
+        let composite = solve(&mut engine, &["Sin(2*x)==0"], &["x"]).unwrap();
+        assert_eq!(composite.completeness, SolveCompleteness::Representative);
+        assert!(composite.families.is_empty());
     }
 }

@@ -43,6 +43,57 @@ pub fn validate_expression(input: &str, label: &str) -> Result<(), EngineError> 
     analyze_expression(input, label).map(|_| ())
 }
 
+/// Return the function head when an equation has the exact form
+/// `Function(variable) == expression` (in either order) and the other side is
+/// free of the solved variable.
+pub fn direct_function_equation(
+    input: &str,
+    variable: &str,
+    functions: &[&str],
+) -> Result<Option<String>, EngineError> {
+    validate_safe_text(input, "方程")?;
+    let tree = PARSE_ENV.with(|env| {
+        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
+    });
+    let tree = tree
+        .map_err(|error| EngineError::InvalidInput(format!("方程语法错误: {error:?}")))?
+        .ok_or_else(|| EngineError::InvalidInput("方程为空".into()))?;
+    let ObjectKind::Sublist(first) = &tree.kind else {
+        return Ok(None);
+    };
+    let nodes: Vec<_> = spine_refs(first).collect();
+    if nodes.len() != 3
+        || !nodes[0]
+            .atom_string()
+            .is_some_and(|head| matches!(head.as_ref(), "=" | "=="))
+    {
+        return Ok(None);
+    }
+    for (call, other) in [(nodes[1], nodes[2]), (nodes[2], nodes[1])] {
+        if contains_atom(other, variable) {
+            continue;
+        }
+        let ObjectKind::Sublist(call_first) = &call.kind else {
+            continue;
+        };
+        let call_nodes: Vec<_> = spine_refs(call_first).collect();
+        if call_nodes.len() == 2
+            && call_nodes[1]
+                .atom_string()
+                .is_some_and(|argument| argument.as_ref() == variable)
+        {
+            if let Some(function) = call_nodes[0].atom_string().filter(|function| {
+                functions
+                    .iter()
+                    .any(|candidate| *candidate == function.as_ref())
+            }) {
+                return Ok(Some(function.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
 pub fn contains_exact_power(
     input: &str,
     symbol: &str,
@@ -265,5 +316,26 @@ mod tests {
         assert!(contains_ratio_symbols("y'==(x+y)/x", "x", "y", "ODE").unwrap());
         assert!(contains_ratio_symbols("y'==(y/x)^2", "x", "y", "ODE").unwrap());
         assert!(!contains_ratio_symbols("y'==x+y", "x", "y", "ODE").unwrap());
+    }
+
+    #[test]
+    fn recognizes_only_direct_function_equations() {
+        let functions = ["Sin", "Cos", "Tan"];
+        assert_eq!(
+            direct_function_equation("Sin(x)==1/2", "x", &functions).unwrap(),
+            Some("Sin".into())
+        );
+        assert_eq!(
+            direct_function_equation("0==Cos(x)", "x", &functions).unwrap(),
+            Some("Cos".into())
+        );
+        assert_eq!(
+            direct_function_equation("Sin(2*x)==0", "x", &functions).unwrap(),
+            None
+        );
+        assert_eq!(
+            direct_function_equation("Sin(x)==x", "x", &functions).unwrap(),
+            None
+        );
     }
 }

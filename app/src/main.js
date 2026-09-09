@@ -275,9 +275,12 @@ async function calculate() {
         `状态：${result.status}`,
         `完整性：${result.completeness}`,
         `求解变量：${result.variables.join(", ")}（${source}）`,
-        `${result.solutions.length} 组解`,
+        result.families?.length
+          ? `${result.families.length} 组周期解族`
+          : `${result.solutions.length} 组解`,
       ];
       if (result.parameters.length) details.push(`参数化结果：${result.parameters.join(", ")}`);
+      if (result.completeness === "representative") details.push("当前仅返回代表根");
       summary("方程结果", result.tex, details);
       showStructured(result);
     } else if (mode === "limit") {

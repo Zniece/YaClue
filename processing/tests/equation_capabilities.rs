@@ -1,5 +1,5 @@
 use processing::engine::{Engine, Expr, RustEngine};
-use processing::equations::{solve, SolveCompleteness, SolveResult, SolveStatus};
+use processing::equations::{solve, ParameterDomain, SolveCompleteness, SolveResult, SolveStatus};
 
 struct CapabilityCase {
     category: &'static str,
@@ -136,7 +136,7 @@ const CASES: &[CapabilityCase] = &[
         variables: &["x"],
         status: SolveStatus::Solved,
         solution_count: 2,
-        completeness: None,
+        completeness: Some(SolveCompleteness::Periodic),
     },
     CapabilityCase {
         category: "trigonometric",
@@ -145,7 +145,25 @@ const CASES: &[CapabilityCase] = &[
         variables: &["x"],
         status: SolveStatus::Solved,
         solution_count: 2,
-        completeness: None,
+        completeness: Some(SolveCompleteness::Periodic),
+    },
+    CapabilityCase {
+        category: "trigonometric",
+        name: "cosine-zero-periodic",
+        equations: &["Cos(x)==0"],
+        variables: &["x"],
+        status: SolveStatus::Solved,
+        solution_count: 2,
+        completeness: Some(SolveCompleteness::Periodic),
+    },
+    CapabilityCase {
+        category: "trigonometric",
+        name: "tangent-one-periodic",
+        equations: &["Tan(x)==1"],
+        variables: &["x"],
+        status: SolveStatus::Solved,
+        solution_count: 1,
+        completeness: Some(SolveCompleteness::Periodic),
     },
     CapabilityCase {
         category: "system",
@@ -237,11 +255,20 @@ fn assert_solutions_satisfy_equations(
 }
 
 #[test]
-#[ignore = "known defect: representative trigonometric roots are reported as complete"]
 fn trigonometric_representatives_are_not_claimed_as_complete() {
     let mut engine = RustEngine::spawn().unwrap();
     let result = solve(&mut engine, &["Sin(x)==0"], &["x"]).unwrap();
-    assert_ne!(result.completeness, SolveCompleteness::Complete);
+    assert_eq!(result.completeness, SolveCompleteness::Periodic);
+    assert_eq!(result.families.len(), 2);
+    assert!(result.families.iter().all(|family| {
+        family.parameters.len() == 1
+            && family.parameters[0].domain == ParameterDomain::Integers
+            && family.assignments[0].value.contains("2*Pi")
+    }));
+
+    let composite = solve(&mut engine, &["Sin(2*x)==0"], &["x"]).unwrap();
+    assert_eq!(composite.completeness, SolveCompleteness::Representative);
+    assert!(composite.families.is_empty());
 }
 
 #[test]
