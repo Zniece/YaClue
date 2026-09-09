@@ -8,9 +8,9 @@ The audit created an `Environment` with current `yacas-rs`, loaded `yacasinit.ys
 
 | Item | Count |
 |---|---:|
-| Level-three reference headings | 526 |
-| Headings recognizable as functions or operators | 510 |
-| Names directly discoverable after full startup | 506 |
+| Level-three reference headings | 527 |
+| Headings recognizable as functions or operators | 511 |
+| Names directly discoverable after full startup | 507 |
 | Names available after package loading | 4 |
 
 Four package-local names become available when their packages load.
@@ -40,7 +40,7 @@ Load the package through a registered public entry before checking its internal 
 | Page | Function headings | Discoverable at startup | `.yts` test mentions |
 |---|---:|---:|---:|
 | `arithmetic.md` | 30 | 30 | 28 |
-| `calc.md` | 26 | 26 | 19 |
+| `calc.md` | 27 | 27 | 20 |
 | `controlflow.md` | 15 | 15 | 11 |
 | `elementary.md` | 11 | 11 | 11 |
 | `functional.md` | 5 | 5 | 4 |

@@ -14,6 +14,10 @@ Verify(SeriesConvergence(k,0,(1/2)^k), {"absolutely_convergent","geometric",1/2,
 Verify(SeriesConvergence(k,1,1/k), {"divergent","p_series",1,{},Undefined});
 Verify(SeriesConvergence(k,1,k/2^k), {"absolutely_convergent","ratio",1/2,{},Undefined});
 Verify(SeriesConvergence(k,1,(1/2)^(k^2)), {"absolutely_convergent","root",0,{},Undefined});
+Verify(SeriesConvergence(k,1,(-1)^(k-1)/k), {"conditionally_convergent","alternating",1,{},Ln(2)});
+Verify(SeriesConvergence(k,1,1/(k^2+1)), {"absolutely_convergent","comparison",1,{},Undefined});
+Verify(PowerSeriesConvergence(k,2,1/k), {"convergent","root",1,1,3,"conditionally_convergent","divergent",True,False});
+Verify(PowerSeriesConvergence(k,0,1/k!), {"convergent","ratio",Infinity,-Infinity,Infinity,"none","none",False,False});
 
 // New tests for Sum() ->
 Verify( Sum(k,0,n,k), n*(n+1)/2 );

@@ -405,33 +405,81 @@ UnFence("SeriesConvergence", 3);
     <-- {"divergent", "p_series", p, {}, Undefined};
 15 # SeriesConvergence(_k, from_IsInteger, 1/(_k)!)_(from>=0)
     <-- {"absolutely_convergent", "ratio", 0, {}, Exp(1)-Sum(k,0,from-1,1/k!)};
-16 # SeriesConvergence(_k, from_IsInteger, _k^_p/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(p) And IsRationalOrNumber(r) And Abs(r)>1)
+16 # SeriesConvergence(_k, from_IsInteger, (-1)^(_k-1)/_k)_(from=1)
+    <-- {"conditionally_convergent", "alternating", 1, {}, Ln(2)};
+17 # SeriesConvergence(_k, from_IsInteger, (-1)^_k/_k)_(from=1)
+    <-- {"conditionally_convergent", "alternating", 1, {}, -Ln(2)};
+18 # SeriesConvergence(_k, from_IsInteger, (-1)^_k/(_k^_p))_(from>=1 And IsRationalOrNumber(p) And p>1)
+    <-- {"absolutely_convergent", "alternating", p, {}, Undefined};
+19 # SeriesConvergence(_k, from_IsInteger, (-1)^_k/(_k^_p))_(from>=1 And IsRationalOrNumber(p) And p>0 And p<=1)
+    <-- {"conditionally_convergent", "alternating", p, {}, Undefined};
+20 # SeriesConvergence(_k, from_IsInteger, _k^_p/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(p) And IsRationalOrNumber(r) And Abs(r)>1)
     <-- {"absolutely_convergent", "ratio", 1/Abs(r), {}, Undefined};
-17 # SeriesConvergence(_k, from_IsInteger, _k^_p/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(p) And IsRationalOrNumber(r) And Abs(r)<1)
+21 # SeriesConvergence(_k, from_IsInteger, _k^_p/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(p) And IsRationalOrNumber(r) And Abs(r)<1)
     <-- {"divergent", "ratio", 1/Abs(r), {}, Undefined};
-18 # SeriesConvergence(_k, from_IsInteger, _k/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(r) And Abs(r)>1)
+22 # SeriesConvergence(_k, from_IsInteger, _k/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(r) And Abs(r)>1)
     <-- {"absolutely_convergent", "ratio", 1/Abs(r), {}, Undefined};
-19 # SeriesConvergence(_k, from_IsInteger, _k/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(r) And Abs(r)<1)
+23 # SeriesConvergence(_k, from_IsInteger, _k/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(r) And Abs(r)<1)
     <-- {"divergent", "ratio", 1/Abs(r), {}, Undefined};
 
-20 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And Abs(r)<1)
+30 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And Abs(r)<1)
     <-- {"absolutely_convergent", "geometric", Abs(r), {}, r^from/(1-r)};
-21 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And Abs(r)>=1)
+31 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And Abs(r)>=1)
     <-- {"divergent", "geometric", Abs(r), {}, Undefined};
-22 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^_k)
+32 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^_k)
     <-- {"conditional", "geometric", Abs(r), {Abs(r)<1}, Undefined};
-23 # SeriesConvergence(_k, from_IsInteger, c_IsFreeOf(k)*(r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And Abs(r)<1)
+33 # SeriesConvergence(_k, from_IsInteger, c_IsFreeOf(k)*(r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And Abs(r)<1)
     <-- {"absolutely_convergent", "geometric", Abs(r), {}, c*r^from/(1-r)};
-24 # SeriesConvergence(_k, from_IsInteger, c_IsFreeOf(k)*(r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And Abs(r)>=1)
+34 # SeriesConvergence(_k, from_IsInteger, c_IsFreeOf(k)*(r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And Abs(r)>=1)
     <-- {"divergent", "geometric", Abs(r), {}, Undefined};
-25 # SeriesConvergence(_k, from_IsInteger, c_IsFreeOf(k)*(r_IsFreeOf(k))^_k)
+35 # SeriesConvergence(_k, from_IsInteger, c_IsFreeOf(k)*(r_IsFreeOf(k))^_k)
     <-- {"conditional", "geometric", Abs(r), {Abs(r)<1}, Undefined};
 
-30 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^(_k^_p))_(IsRationalOrNumber(r) And IsRationalOrNumber(p) And p>1 And Abs(r)<1)
+40 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^(_k^_p))_(IsRationalOrNumber(r) And IsRationalOrNumber(p) And p>1 And Abs(r)<1)
     <-- {"absolutely_convergent", "root", 0, {}, Undefined};
-31 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^(_k^_p))_(IsRationalOrNumber(r) And IsRationalOrNumber(p) And p>1 And Abs(r)>1)
+41 # SeriesConvergence(_k, from_IsInteger, (r_IsFreeOf(k))^(_k^_p))_(IsRationalOrNumber(r) And IsRationalOrNumber(p) And p>1 And Abs(r)>1)
     <-- {"divergent", "root", Infinity, {}, Undefined};
+
+50 # SeriesConvergence(_k, from_IsInteger, 1/(_k^_p+c_IsFreeOf(k)))_(from>=1 And IsRationalOrNumber(p) And IsRationalOrNumber(c) And c>=0 And p>1)
+    <-- {"absolutely_convergent", "comparison", 1, {}, Undefined};
+51 # SeriesConvergence(_k, from_IsInteger, 1/(_k^_p+c_IsFreeOf(k)))_(from>=1 And IsRationalOrNumber(p) And IsRationalOrNumber(c) And c>=0 And p>0 And p<=1)
+    <-- {"divergent", "comparison", 1, {}, Undefined};
+52 # SeriesConvergence(_k, from_IsInteger, 1/(c_IsFreeOf(k)+_k^_p))_(from>=1 And IsRationalOrNumber(p) And IsRationalOrNumber(c) And c>=0 And p>1)
+    <-- {"absolutely_convergent", "comparison", 1, {}, Undefined};
+53 # SeriesConvergence(_k, from_IsInteger, 1/(c_IsFreeOf(k)+_k^_p))_(from>=1 And IsRationalOrNumber(p) And IsRationalOrNumber(c) And c>=0 And p>0 And p<=1)
+    <-- {"divergent", "comparison", 1, {}, Undefined};
+54 # SeriesConvergence(_k, from_IsInteger, 1/(_k+c_IsFreeOf(k)))_(from>=1 And IsRationalOrNumber(c) And c>=0)
+    <-- {"divergent", "comparison", 1, {}, Undefined};
+55 # SeriesConvergence(_k, from_IsInteger, 1/(c_IsFreeOf(k)+_k))_(from>=1 And IsRationalOrNumber(c) And c>=0)
+    <-- {"divergent", "comparison", 1, {}, Undefined};
 
 100 # SeriesConvergence(_k, from_IsInteger, _term) <--
     {"inconclusive", "none", Undefined, {}, Undefined};
+];
+
+/* Radius and endpoint contract for common power-series coefficients a_k. */
+LocalSymbols(k,center,p,r) [
+RuleBase("PowerSeriesConvergence", {powerindex, powercenter, coefficient});
+HoldArg("PowerSeriesConvergence", powerindex);
+HoldArg("PowerSeriesConvergence", coefficient);
+UnFence("PowerSeriesConvergence", 3);
+
+10 # PowerSeriesConvergence(_k, _center, 1/(_k)!)
+    <-- {"convergent", "ratio", Infinity, -Infinity, Infinity, "none", "none", False, False};
+19 # PowerSeriesConvergence(_k, _center, 1/_k)
+    <-- {"convergent", "root", 1, center-1, center+1, "conditionally_convergent", "divergent", True, False};
+20 # PowerSeriesConvergence(_k, _center, 1/(_k^_p))_(IsRationalOrNumber(p) And p>1)
+    <-- {"convergent", "root", 1, center-1, center+1, "absolutely_convergent", "absolutely_convergent", True, True};
+21 # PowerSeriesConvergence(_k, _center, 1/(_k^_p))_(IsRationalOrNumber(p) And p>0 And p<=1)
+    <-- {"convergent", "root", 1, center-1, center+1, "conditionally_convergent", "divergent", True, False};
+22 # PowerSeriesConvergence(_k, _center, 1/(_k^_p))_(IsRationalOrNumber(p) And p<=0)
+    <-- {"convergent", "root", 1, center-1, center+1, "divergent", "divergent", False, False};
+30 # PowerSeriesConvergence(_k, _center, 1/(r_IsFreeOf(k)^_k))_(IsRationalOrNumber(r) And r!=0)
+    <-- {"convergent", "ratio", Abs(r), center-Abs(r), center+Abs(r), "divergent", "divergent", False, False};
+31 # PowerSeriesConvergence(_k, _center, (r_IsFreeOf(k))^_k)_(IsRationalOrNumber(r) And r!=0)
+    <-- {"convergent", "ratio", 1/Abs(r), center-1/Abs(r), center+1/Abs(r), "divergent", "divergent", False, False};
+40 # PowerSeriesConvergence(_k, _center, 1)
+    <-- {"convergent", "geometric", 1, center-1, center+1, "divergent", "divergent", False, False};
+100 # PowerSeriesConvergence(_k, _center, _coefficient)
+    <-- {"inconclusive", "none", Undefined, Undefined, Undefined, "none", "none", False, False};
 ];

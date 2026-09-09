@@ -306,11 +306,14 @@ analyze a common infinite series
 
 `SeriesConvergence` returns
 `{status, method, testValue, conditions, value}`. It recognizes geometric
-and p-series directly and applies bounded shape-specific ratio and root
-tests to common exponential forms. `status` is one of
-`"absolutely_convergent"`, `"divergent"`, `"conditional"`, or
-`"inconclusive"`. A symbolic geometric ratio produces the condition
-`Abs(r)<1`; an unavailable closed form is represented by `Undefined`.
+and p-series directly and applies bounded shape-specific alternating,
+comparison, ratio, and root tests. `status` is one of
+`"absolutely_convergent"`, `"conditionally_convergent"`, `"divergent"`,
+`"conditional"`, or `"inconclusive"`. `"conditional"` means that symbolic
+conditions remain, while `"conditionally_convergent"` is the mathematical
+classification for a convergent series that is not absolutely convergent.
+A symbolic geometric ratio produces the condition `Abs(r)<1`; an unavailable
+closed form is represented by `Undefined`.
 
 The analyzer deliberately returns `inconclusive` for unsupported shapes
 instead of running an unbounded chain of symbolic limits. Product code can
@@ -321,6 +324,23 @@ In> SeriesConvergence(k, 0, (1/2)^k);
 Out> {"absolutely_convergent","geometric",1/2,{},2};
 In> SeriesConvergence(k, 1, 1/k);
 Out> {"divergent","p_series",1,{},Undefined};
+```
+
+### PowerSeriesConvergence(index, center, coefficient)
+
+analyze a common power series
+
+This command analyzes a series of the form
+`Sum(index, from, Infinity, coefficient*(x-center)^index)`. It returns
+`{status, method, radius, left, right, leftStatus, rightStatus,
+leftIncluded, rightIncluded}`. The current bounded rules cover factorial,
+p-series, geometric, and constant coefficients. Infinite-radius series use
+`-Infinity` and `Infinity` as interval endpoints and `"none"` for endpoint
+tests. Unsupported coefficient shapes return `"inconclusive"`.
+
+```
+In> PowerSeriesConvergence(k, 2, 1/k);
+Out> {"convergent","root",1,1,3,"conditionally_convergent","divergent",True,False};
 ```
 
 
