@@ -5,6 +5,7 @@ use crate::input::{
     analyze_expression, direct_function_equation, strip_tex_delimiters, validate_expression,
     validate_symbol,
 };
+use crate::steps::{Step, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -73,6 +74,192 @@ pub struct SolveResult {
     /// Complete structured families when the solution requires bound integer
     /// parameters. `solutions` remains the finite representative-root view.
     pub families: Vec<SolutionFamily>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EquationStepResult {
+    pub result: SolveResult,
+    pub steps: Vec<Step>,
+}
+
+pub fn solve_steps(
+    engine: &mut dyn Engine,
+    equation: &str,
+    variable: &str,
+) -> Result<EquationStepResult, EngineError> {
+    solve_steps_with_verbosity(engine, equation, variable, StepVerbosity::Detailed)
+}
+
+pub fn solve_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    equation: &str,
+    variable: &str,
+    verbosity: StepVerbosity,
+) -> Result<EquationStepResult, EngineError> {
+    let result = solve(engine, &[equation], &[variable])?;
+    let steps = algebraic_equation_steps(engine, equation, variable, &result, verbosity)?;
+    Ok(EquationStepResult { result, steps })
+}
+
+struct EquationEvent {
+    rule: &'static str,
+    expr: String,
+    why: String,
+    importance: StepImportance,
+}
+
+fn algebraic_equation_steps(
+    engine: &mut dyn Engine,
+    equation: &str,
+    variable: &str,
+    result: &SolveResult,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    let residual = equation
+        .split_once("==")
+        .map(|(left, right)| format!("({left})-({right})"))
+        .unwrap_or_else(|| equation.to_string());
+    let verification_checks = result
+        .solutions
+        .iter()
+        .filter(|solution| solution.len() == 1)
+        .map(|solution| {
+            let assignment = &solution[0];
+            format!(
+                "IsZero(Simplify(Eval(ApplyPure(\"Subst\",{{{},{},{residual}}}))))",
+                assignment.variable, assignment.value
+            )
+        })
+        .collect::<Vec<_>>();
+    let checks = verification_checks.join(",");
+    let diagnostic = engine.eval_expr(&format!(
+        "[Local(p,d,f); p:=NormalForm({residual}); If(CanBeUni({variable},p), [d:=Degree(p,{variable}); f:=If(d<=8,Factor(p),p); {{True,p,d,f,{{{checks}}}}};], {{False,p,0,p,{{{checks}}}}});]"
+    ))?;
+    let Expr::Call { head, args } = diagnostic else {
+        return Err(EngineError::Parse("方程步骤诊断不是列表".into()));
+    };
+    if head != "List" || args.len() != 5 {
+        return Err(EngineError::Parse("方程步骤诊断形态异常".into()));
+    }
+    let polynomial = matches!(&args[0], Expr::Symbol(value) if value == "True");
+    let normalized = args[1].to_string();
+    let degree = match &args[2] {
+        Expr::Number(value) => value.parse::<usize>().ok(),
+        _ => None,
+    };
+    let factored = args[3].to_string();
+    let verified = match &args[4] {
+        Expr::Call { head, args } if head == "List" => args
+            .iter()
+            .map(|value| matches!(value, Expr::Symbol(symbol) if symbol == "True"))
+            .collect::<Vec<_>>(),
+        _ => return Err(EngineError::Parse("候选解残差证书不是列表".into())),
+    };
+
+    let mut events = vec![EquationEvent {
+        rule: "equation-start",
+        expr: equation.to_string(),
+        why: format!("建立关于 {variable} 的方程。"),
+        importance: StepImportance::Routine,
+    }];
+    if polynomial {
+        events.push(EquationEvent {
+            rule: "equation-normalize",
+            expr: format!("{normalized}==0"),
+            why: "将方程移到一边并整理为多项式标准形。".into(),
+            importance: StepImportance::Normal,
+        });
+        match degree {
+            Some(1) => events.push(EquationEvent {
+                rule: "equation-linear",
+                expr: result.raw.clone(),
+                why: format!("合并同类项并解出 {variable}。"),
+                importance: StepImportance::Normal,
+            }),
+            Some(2) => events.push(EquationEvent {
+                rule: "equation-quadratic",
+                expr: format!("{normalized}==0"),
+                why: "使用二次方程求根公式求出各个分支。".into(),
+                importance: StepImportance::Normal,
+            }),
+            Some(3..=8) if factored != normalized => events.push(EquationEvent {
+                rule: "equation-factor",
+                expr: format!("{factored}==0"),
+                why: "因式分解后令每个因式分别为零。".into(),
+                importance: StepImportance::Key,
+            }),
+            _ => {}
+        }
+    }
+    if result.status == SolveStatus::Solved {
+        let mut certificate = 0;
+        for solution in &result.solutions {
+            if solution.len() == 1 {
+                if !verified.get(certificate).copied().unwrap_or(false) {
+                    return Err(EngineError::Parse(format!(
+                        "Solve 返回的候选解未通过原方程残差检查: {}=={}",
+                        solution[0].variable, solution[0].value
+                    )));
+                }
+                certificate += 1;
+                events.push(EquationEvent {
+                    rule: "equation-branch",
+                    expr: format!("{}=={}", solution[0].variable, solution[0].value),
+                    why: "得到一个候选解分支。".into(),
+                    importance: StepImportance::Normal,
+                });
+                events.push(EquationEvent {
+                    rule: "equation-verify",
+                    expr: "0".into(),
+                    why: "将该候选解代回原方程，残差为零。".into(),
+                    importance: StepImportance::Routine,
+                });
+            }
+        }
+    }
+    events.push(EquationEvent {
+        rule: "equation-result",
+        expr: result.raw.clone(),
+        why: match result.status {
+            SolveStatus::Solved => "得到方程的解集。",
+            SolveStatus::NoSolution => "方程没有满足条件的解。",
+            SolveStatus::Infinite => "方程对该变量恒成立。",
+            SolveStatus::Unresolved => "当前解析方法未能求解该方程。",
+        }
+        .into(),
+        importance: StepImportance::Key,
+    });
+
+    let last = events.len() - 1;
+    let events: Vec<_> = events
+        .into_iter()
+        .enumerate()
+        .filter(|(index, event)| {
+            *index == last
+                || match verbosity {
+                    StepVerbosity::Detailed => true,
+                    StepVerbosity::Standard => event.importance != StepImportance::Routine,
+                    StepVerbosity::Concise => event.importance == StepImportance::Key,
+                }
+        })
+        .map(|(_, event)| event)
+        .collect();
+    let expressions = events
+        .iter()
+        .map(|event| event.expr.clone())
+        .collect::<Vec<_>>();
+    let tex = engine.render_tex_batch(&expressions)?;
+    Ok(events
+        .into_iter()
+        .zip(tex)
+        .map(|(event, tex)| Step {
+            rule: event.rule.into(),
+            expr: event.expr,
+            why: event.why,
+            tex: strip_tex_delimiters(&tex),
+            importance: event.importance,
+        })
+        .collect())
 }
 
 pub fn solve(
@@ -700,5 +887,59 @@ mod tests {
         let composite = solve(&mut engine, &["Sin(2*x)==0"], &["x"]).unwrap();
         assert_eq!(composite.completeness, SolveCompleteness::Representative);
         assert!(composite.families.is_empty());
+    }
+
+    #[test]
+    fn algebraic_steps_cover_linear_quadratic_and_factored_polynomials() {
+        let mut engine = RustEngine::spawn().unwrap();
+
+        let linear = solve_steps(&mut engine, "2*x+3==7", "x").unwrap();
+        assert_eq!(linear.result.status, SolveStatus::Solved);
+        assert!(linear
+            .steps
+            .iter()
+            .any(|step| step.rule == "equation-linear"));
+        assert!(linear
+            .steps
+            .iter()
+            .any(|step| step.rule == "equation-verify"));
+
+        let quadratic = solve_steps(&mut engine, "x^2-3*x+2==0", "x").unwrap();
+        assert!(quadratic
+            .steps
+            .iter()
+            .any(|step| step.rule == "equation-quadratic"));
+        assert_eq!(
+            quadratic
+                .steps
+                .iter()
+                .filter(|step| step.rule == "equation-verify")
+                .count(),
+            2
+        );
+
+        let factored = solve_steps(&mut engine, "x^3-x==0", "x").unwrap();
+        assert!(factored
+            .steps
+            .iter()
+            .any(|step| step.rule == "equation-factor"));
+    }
+
+    #[test]
+    fn algebraic_step_verbosity_filters_semantic_events() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let detailed =
+            solve_steps_with_verbosity(&mut engine, "x^2-3*x+2==0", "x", StepVerbosity::Detailed)
+                .unwrap();
+        let standard =
+            solve_steps_with_verbosity(&mut engine, "x^2-3*x+2==0", "x", StepVerbosity::Standard)
+                .unwrap();
+        let concise =
+            solve_steps_with_verbosity(&mut engine, "x^2-3*x+2==0", "x", StepVerbosity::Concise)
+                .unwrap();
+        assert!(detailed.steps.len() > standard.steps.len());
+        assert!(standard.steps.len() > concise.steps.len());
+        assert_eq!(concise.steps.len(), 1);
+        assert_eq!(concise.steps[0].rule, "equation-result");
     }
 }

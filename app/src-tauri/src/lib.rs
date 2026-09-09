@@ -1,7 +1,7 @@
 use processing::algebra::{TransformKind, TransformResult};
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
-use processing::equations::SolveResult;
+use processing::equations::{EquationStepResult, SolveResult};
 use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
 use processing::numeric::{NumericResult, RootResult, TaylorResult};
@@ -124,6 +124,23 @@ async fn solve_equations(
     let variables: Vec<_> = variables.iter().map(String::as_str).collect();
     let mut engine = lock_engine(&engine)?;
     processing::equations::solve(&mut *engine, &equations, &variables).map_err(message)
+}
+
+#[tauri::command]
+async fn solve_equation_steps(
+    equation: String,
+    variable: String,
+    verbosity: String,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<EquationStepResult, ErrorResponse> {
+    let mut engine = lock_engine(&engine)?;
+    processing::equations::solve_steps_with_verbosity(
+        &mut *engine,
+        &equation,
+        &variable,
+        parse_verbosity(&verbosity)?,
+    )
+    .map_err(message)
 }
 
 #[tauri::command]
@@ -440,6 +457,7 @@ pub fn run() {
             calculate_steps,
             transform_expression,
             solve_equations,
+            solve_equation_steps,
             calculate_limit,
             calculate_limit_steps,
             solve_ode,
