@@ -54,6 +54,133 @@ pub struct ExtremaStepResult {
     pub steps: Vec<Step>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LagrangeStatus {
+    Candidates,
+    Unresolved,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LagrangeCandidate {
+    pub coordinates: Vec<Assignment>,
+    pub multiplier: String,
+    pub value: String,
+    pub stationarity_residuals: Vec<String>,
+    pub constraint_residual: String,
+    pub stationarity_verified: bool,
+    pub constraint_verified: bool,
+    pub regular_constraint: bool,
+    pub real_verified: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LagrangeResult {
+    pub status: LagrangeStatus,
+    pub expression: String,
+    pub constraint: String,
+    pub variables: [String; 2],
+    pub multiplier_variable: String,
+    pub equations: Vec<String>,
+    pub candidates: Vec<LagrangeCandidate>,
+    pub tex: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LagrangeStepResult {
+    pub result: LagrangeResult,
+    pub steps: Vec<Step>,
+}
+
+pub fn analyze_lagrange(
+    engine: &mut dyn Engine,
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+) -> Result<LagrangeResult, EngineError> {
+    validate_lagrange_request(expression, constraint, x, y)?;
+    analyze_lagrange_internal(engine, expression, constraint, x, y, true)
+}
+
+pub fn analyze_lagrange_steps(
+    engine: &mut dyn Engine,
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+) -> Result<LagrangeStepResult, EngineError> {
+    analyze_lagrange_steps_with_verbosity(
+        engine,
+        expression,
+        constraint,
+        x,
+        y,
+        StepVerbosity::Detailed,
+    )
+}
+
+pub fn analyze_lagrange_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+    verbosity: StepVerbosity,
+) -> Result<LagrangeStepResult, EngineError> {
+    validate_lagrange_request(expression, constraint, x, y)?;
+    let mut result = analyze_lagrange_internal(engine, expression, constraint, x, y, false)?;
+    let system = format!("{{{}}}", result.equations.join(","));
+    let mut events = vec![StepEvent::new(
+        "lagrange-system",
+        &system,
+        "建立目标梯度等于乘子乘约束梯度的方程组，并同时满足约束。",
+        StepImportance::Key,
+    )];
+    for candidate in &result.candidates {
+        let coordinates = assignments_expression(&candidate.coordinates);
+        events.push(StepEvent::new(
+            "lagrange-candidate",
+            &coordinates,
+            "求得一个有限实数候选点。",
+            StepImportance::Normal,
+        ));
+        events.push(StepEvent::new(
+            "lagrange-verify",
+            &format!(
+                "{{{},{}}}",
+                candidate.stationarity_residuals.join(","),
+                candidate.constraint_residual
+            ),
+            "代回乘子方程和约束，所有残差为零；约束梯度在该点非零。",
+            StepImportance::Routine,
+        ));
+        events.push(StepEvent::new(
+            "lagrange-value",
+            &candidate.value,
+            "计算目标函数在该候选点的值。",
+            StepImportance::Key,
+        ));
+    }
+    let display = lagrange_display(&result.candidates);
+    events.push(StepEvent::new(
+        "lagrange-result",
+        &display,
+        if result.status == LagrangeStatus::Candidates {
+            "得到经过验证的约束极值候选；当前结果不自动宣称全局最值。"
+        } else {
+            "当前方程求解能力未能完整确定 Lagrange 候选。"
+        },
+        StepImportance::Key,
+    ));
+    let steps = render_events(engine, events, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(LagrangeStepResult { result, steps })
+}
+
 pub fn analyze(
     engine: &mut dyn Engine,
     expression: &str,
@@ -142,6 +269,286 @@ pub fn analyze_steps_with_verbosity(
         .map(|step| step.tex.clone())
         .unwrap_or_default();
     Ok(ExtremaStepResult { result, steps })
+}
+
+fn analyze_lagrange_internal(
+    engine: &mut dyn Engine,
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+    render_value: bool,
+) -> Result<LagrangeResult, EngineError> {
+    let multiplier = unused_multiplier(expression, constraint, x, y)?;
+    let derivatives = engine.eval_expr(&format!(
+        "{{Deriv({x})({expression}),Deriv({y})({expression}),Deriv({x})({constraint}),Deriv({y})({constraint})}}"
+    ))?;
+    let derivatives = list(&derivatives, "Lagrange 梯度")?
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let equations = vec![
+        format!("{}=={multiplier}*({})", derivatives[0], derivatives[2]),
+        format!("{}=={multiplier}*({})", derivatives[1], derivatives[3]),
+        format!("({constraint})==0"),
+    ];
+    let eliminated = [
+        format!(
+            "({})*({})-({})*({})==0",
+            derivatives[0], derivatives[3], derivatives[1], derivatives[2]
+        ),
+        format!("({constraint})==0"),
+    ];
+    let solutions = if let Some(solutions) =
+        solve_lagrange_by_substitution(engine, &eliminated[0], constraint, x, y)?
+    {
+        solutions
+    } else {
+        let equation_refs = eliminated.iter().map(String::as_str).collect::<Vec<_>>();
+        let solve = equations::solve(engine, &equation_refs, &[x, y]);
+        match solve {
+            Ok(result) if complete_solution(&result) => result.solutions,
+            Ok(_) | Err(EngineError::Eval(_)) => Vec::new(),
+            Err(error) => return Err(error),
+        }
+    };
+    let candidates = verify_lagrange_candidates(
+        engine,
+        expression,
+        constraint,
+        x,
+        y,
+        &derivatives,
+        &solutions,
+    )?;
+    let status = if candidates.is_empty() {
+        LagrangeStatus::Unresolved
+    } else {
+        LagrangeStatus::Candidates
+    };
+    let display = lagrange_display(&candidates);
+    let tex = if render_value {
+        strip_tex_delimiters(&engine.render_tex_batch(&[display])?[0])
+    } else {
+        String::new()
+    };
+    Ok(LagrangeResult {
+        status,
+        expression: expression.into(),
+        constraint: constraint.into(),
+        variables: [x.into(), y.into()],
+        multiplier_variable: multiplier,
+        equations,
+        candidates,
+        tex,
+    })
+}
+
+fn solve_lagrange_by_substitution(
+    engine: &mut dyn Engine,
+    relation: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+) -> Result<Option<Vec<Vec<Assignment>>>, EngineError> {
+    for (primary, secondary) in [(x, y), (y, x)] {
+        let relation_solution = match equations::solve(engine, &[relation], &[primary]) {
+            Ok(result) => result,
+            Err(EngineError::Eval(_)) => continue,
+            Err(error) => return Err(error),
+        };
+        if relation_solution.status != SolveStatus::Solved
+            || relation_solution.solutions.len() != 1
+            || relation_solution.solutions[0].len() != 1
+            || relation_solution.solutions[0][0].variable != primary
+            || relation_solution
+                .parameters
+                .iter()
+                .any(|parameter| parameter != secondary)
+        {
+            continue;
+        }
+        let primary_value = &relation_solution.solutions[0][0].value;
+        let reduced = engine
+            .eval_expr(&format!(
+                "Simplify(Eval(ApplyPure(\"Subst\",{{{primary},{primary_value},{constraint}}})))"
+            ))?
+            .to_string();
+        let reduced_constraint = format!("({reduced})==0");
+        let secondary_solutions =
+            match equations::solve(engine, &[&reduced_constraint], &[secondary]) {
+                Ok(result) => result,
+                Err(EngineError::Eval(_)) => continue,
+                Err(error) => return Err(error),
+            };
+        if !complete_solution(&secondary_solutions) {
+            continue;
+        }
+        let secondary_solutions = secondary_solutions
+            .solutions
+            .into_iter()
+            .filter(|solution| solution.len() == 1 && solution[0].variable == secondary)
+            .collect::<Vec<_>>();
+        let resolved_commands = secondary_solutions
+            .iter()
+            .map(|solution| {
+                format!(
+                    "Simplify(Eval(ApplyPure(\"Subst\",{{{},{},{primary_value}}})))",
+                    secondary, solution[0].value
+                )
+            })
+            .collect::<Vec<_>>();
+        let resolved = engine.eval_expr(&format!("{{{}}}", resolved_commands.join(",")))?;
+        let resolved = list(&resolved, "Lagrange 降维回代")?;
+        let mut points = Vec::new();
+        for (solution, resolved_primary) in secondary_solutions.into_iter().zip(resolved) {
+            let mut point = vec![Assignment {
+                variable: primary.into(),
+                value: resolved_primary.to_string(),
+            }];
+            point.extend(solution);
+            points.push(point);
+        }
+        if !points.is_empty() {
+            return Ok(Some(points));
+        }
+    }
+    Ok(None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_lagrange_candidates(
+    engine: &mut dyn Engine,
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+    derivatives: &[String],
+    solutions: &[Vec<Assignment>],
+) -> Result<Vec<LagrangeCandidate>, EngineError> {
+    let solutions = solutions
+        .iter()
+        .filter(|solution| {
+            solution.len() == 2
+                && [x, y]
+                    .iter()
+                    .all(|variable| solution.iter().any(|item| item.variable == *variable))
+        })
+        .collect::<Vec<_>>();
+    if solutions.is_empty() {
+        return Ok(Vec::new());
+    }
+    let records = solutions
+        .iter()
+        .map(|solution| {
+            let fx = substitute_all(&derivatives[0], solution);
+            let fy = substitute_all(&derivatives[1], solution);
+            let gx = substitute_all(&derivatives[2], solution);
+            let gy = substitute_all(&derivatives[3], solution);
+            let constraint_at = substitute_all(constraint, solution);
+            let real_checks = [x, y]
+                .iter()
+                .map(|variable| {
+                    let value = solution
+                        .iter()
+                        .find(|item| item.variable == *variable)
+                        .map(|item| item.value.as_str())
+                        .unwrap_or("Undefined");
+                    format!("IsKnownReal({value})")
+                })
+                .collect::<Vec<_>>()
+                .join(" And ");
+            format!(
+                "[Local(fx,fy,gx,gy,l,a,b,c);fx:=Simplify({fx});fy:=Simplify({fy});gx:=Simplify({gx});gy:=Simplify({gy});l:=If(Not(IsZero(gx)),Simplify(fx/gx),If(Not(IsZero(gy)),Simplify(fy/gy),Undefined));a:=Simplify(fx-l*gx);b:=Simplify(fy-l*gy);c:=Simplify({constraint_at});{{Simplify({}),l,a,b,c,IsZero(a) And IsZero(b),IsZero(c),Not(IsZero(gx) And IsZero(gy)),{real_checks} And IsKnownReal(l)}};]",
+                substitute_all(expression, solution)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let evaluated = engine.eval_expr(&format!("{{{records}}}"))?;
+    let evaluated = list(&evaluated, "Lagrange 候选证书")?;
+    if evaluated.len() != solutions.len() {
+        return Err(EngineError::Parse("Lagrange 候选证书数量异常".into()));
+    }
+    let mut candidates = Vec::new();
+    for (solution, record) in solutions.into_iter().zip(evaluated) {
+        let fields = list(record, "Lagrange 候选记录")?;
+        if fields.len() != 9 {
+            return Err(EngineError::Parse("Lagrange 候选记录形态异常".into()));
+        }
+        let stationarity_verified = boolean(&fields[5], "Lagrange 驻点证书")?;
+        let constraint_verified = boolean(&fields[6], "Lagrange 约束证书")?;
+        let regular_constraint = boolean(&fields[7], "Lagrange 约束正则性")?;
+        let real_verified = boolean(&fields[8], "Lagrange 实数证书")?;
+        if !(stationarity_verified && constraint_verified && regular_constraint && real_verified) {
+            continue;
+        }
+        candidates.push(LagrangeCandidate {
+            coordinates: solution
+                .iter()
+                .filter(|item| item.variable == x || item.variable == y)
+                .cloned()
+                .collect(),
+            multiplier: fields[1].to_string(),
+            value: fields[0].to_string(),
+            stationarity_residuals: vec![fields[2].to_string(), fields[3].to_string()],
+            constraint_residual: fields[4].to_string(),
+            stationarity_verified,
+            constraint_verified,
+            regular_constraint,
+            real_verified,
+        });
+    }
+    Ok(candidates)
+}
+
+fn validate_lagrange_request(
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+) -> Result<(), EngineError> {
+    validate_request(expression, x, y)?;
+    validate_expression(constraint, "Lagrange 约束")?;
+    Ok(())
+}
+
+fn unused_multiplier(
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+) -> Result<String, EngineError> {
+    let mut used = analyze_expression(expression, "Lagrange 目标")?.symbols;
+    used.extend(analyze_expression(constraint, "Lagrange 约束")?.symbols);
+    used.push(x.into());
+    used.push(y.into());
+    for index in 0usize.. {
+        let candidate = if index == 0 {
+            "lambda".into()
+        } else {
+            format!("lambda{index}")
+        };
+        if !used.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    unreachable!("an unused multiplier always exists")
+}
+
+fn lagrange_display(candidates: &[LagrangeCandidate]) -> String {
+    if candidates.is_empty() {
+        "List()".into()
+    } else {
+        format!(
+            "{{{}}}",
+            candidates
+                .iter()
+                .map(|candidate| assignments_expression(&candidate.coordinates))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
 }
 
 fn analyze_internal(
@@ -504,5 +911,56 @@ mod tests {
 
         assert!(analyze(&mut engine, "x+y", "x", "x").is_err());
         assert!(analyze(&mut engine, "x);Echo(1);(x", "x", "y").is_err());
+    }
+
+    #[test]
+    fn returns_verified_lagrange_candidates_without_global_claims() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let linear = analyze_lagrange(&mut engine, "x+y", "x^2+y^2-1", "x", "y").unwrap();
+        assert_eq!(linear.status, LagrangeStatus::Candidates);
+        assert_eq!(linear.candidates.len(), 2);
+        assert!(linear.candidates.iter().all(|candidate| {
+            candidate.stationarity_verified
+                && candidate.constraint_verified
+                && candidate.regular_constraint
+                && candidate.real_verified
+                && candidate.stationarity_residuals == ["0", "0"]
+                && candidate.constraint_residual == "0"
+        }));
+
+        let quadratic = analyze_lagrange(&mut engine, "x^2+y^2", "x+y-1", "x", "y").unwrap();
+        assert_eq!(quadratic.status, LagrangeStatus::Candidates);
+        assert_eq!(quadratic.candidates.len(), 1);
+        assert_eq!(
+            engine
+                .eval(&format!(
+                    "IsZero(Simplify(({})-1/2))",
+                    quadratic.candidates[0].value
+                ))
+                .unwrap()
+                .expr
+                .to_string(),
+            "True"
+        );
+    }
+
+    #[test]
+    fn lagrange_steps_and_unresolved_contract_are_explicit() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let stepped = analyze_lagrange_steps(&mut engine, "x+y", "x^2+y^2-1", "x", "y").unwrap();
+        for rule in ["lagrange-system", "lagrange-verify", "lagrange-result"] {
+            assert!(stepped.steps.iter().any(|step| step.rule == rule));
+        }
+        assert!(stepped
+            .steps
+            .last()
+            .unwrap()
+            .why
+            .contains("不自动宣称全局最值"));
+
+        let irregular = analyze_lagrange(&mut engine, "x+y", "(x^2+y^2)^2", "x", "y").unwrap();
+        assert_eq!(irregular.status, LagrangeStatus::Unresolved);
+        assert!(irregular.candidates.is_empty());
+        assert!(analyze_lagrange(&mut engine, "x", "x);Echo(1);(x", "x", "y").is_err());
     }
 }

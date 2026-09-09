@@ -2,7 +2,7 @@ use processing::algebra::{TransformKind, TransformResult};
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::equations::{EquationStepResult, SolveResult};
-use processing::extrema::{ExtremaResult, ExtremaStepResult};
+use processing::extrema::{ExtremaResult, ExtremaStepResult, LagrangeResult, LagrangeStepResult};
 use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
 use processing::multiple_integrals::{
@@ -300,6 +300,49 @@ async fn analyze_extrema_steps(
     processing::extrema::analyze_steps_with_verbosity(
         &mut *engine,
         &request.expression,
+        &request.x_variable,
+        &request.y_variable,
+        verbosity,
+    )
+    .map_err(message)
+}
+
+#[derive(Deserialize)]
+struct LagrangeRequest {
+    expression: String,
+    constraint: String,
+    x_variable: String,
+    y_variable: String,
+    verbosity: Option<String>,
+}
+
+#[tauri::command]
+async fn analyze_lagrange(
+    request: LagrangeRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<LagrangeResult, ErrorResponse> {
+    let mut engine = lock_engine(&engine)?;
+    processing::extrema::analyze_lagrange(
+        &mut *engine,
+        &request.expression,
+        &request.constraint,
+        &request.x_variable,
+        &request.y_variable,
+    )
+    .map_err(message)
+}
+
+#[tauri::command]
+async fn analyze_lagrange_steps(
+    request: LagrangeRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<LagrangeStepResult, ErrorResponse> {
+    let verbosity = parse_verbosity(request.verbosity.as_deref().unwrap_or("detailed"))?;
+    let mut engine = lock_engine(&engine)?;
+    processing::extrema::analyze_lagrange_steps_with_verbosity(
+        &mut *engine,
+        &request.expression,
+        &request.constraint,
         &request.x_variable,
         &request.y_variable,
         verbosity,
@@ -628,6 +671,8 @@ pub fn run() {
             calculate_polar_integral_steps,
             analyze_extrema,
             analyze_extrema_steps,
+            analyze_lagrange,
+            analyze_lagrange_steps,
             calculate_limit,
             calculate_limit_steps,
             solve_ode,
