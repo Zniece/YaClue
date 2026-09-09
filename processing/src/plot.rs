@@ -55,6 +55,20 @@ pub enum SampleTermination {
     PointLimit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlotBreakKind {
+    NonFinite,
+    SuspectedVerticalAsymptote,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PlotBreak {
+    /// A renderer must not connect this point to the following point.
+    pub after_index: usize,
+    pub kind: PlotBreakKind,
+}
+
 /// A sampled curve: points in ascending x order, plus the indices (into
 /// `points`) after which a renderer must NOT draw a connecting line
 /// (non-finite values on either side of the break).
@@ -62,6 +76,7 @@ pub enum SampleTermination {
 pub struct SampledPlot {
     pub points: Vec<PlotPoint>,
     pub breaks: Vec<usize>,
+    pub discontinuities: Vec<PlotBreak>,
     pub segments: Vec<PlotSegment>,
     pub suggested_bounds: Option<PlotBounds>,
     pub evaluations: usize,
@@ -126,24 +141,22 @@ pub fn sample(
     let intervals: Vec<_> = base.windows(2).map(|pair| (pair[0], pair[1])).collect();
     let refined = refine_intervals(engine, func, var, intervals, options, n + 1)?;
 
-    // Compatibility view for existing renderers: each non-finite point index
-    // marks a place where no connecting line may pass.
-    let mut breaks = Vec::new();
-    for (i, (_, y)) in refined.points.iter().enumerate() {
-        if !y.is_finite() {
-            breaks.push(i);
-        }
-    }
     let points: Vec<_> = refined
         .points
         .into_iter()
         .map(|(x, y)| PlotPoint { x, y })
         .collect();
-    let segments = finite_segments(&points);
+    let discontinuities = detect_breaks(&points);
+    let breaks = discontinuities
+        .iter()
+        .map(|discontinuity| discontinuity.after_index)
+        .collect();
+    let segments = finite_segments(&points, &discontinuities);
     let suggested_bounds = suggested_bounds(&points, range);
     Ok(SampledPlot {
         points,
         breaks,
+        discontinuities,
         segments,
         suggested_bounds,
         evaluations: refined.evaluations,
@@ -250,10 +263,62 @@ fn refine_intervals(
     })
 }
 
-fn finite_segments(points: &[PlotPoint]) -> Vec<PlotSegment> {
+fn detect_breaks(points: &[PlotPoint]) -> Vec<PlotBreak> {
+    let typical_scale = typical_y_scale(points);
+    points
+        .windows(2)
+        .enumerate()
+        .filter_map(|(index, pair)| {
+            let left = pair[0].y;
+            let right = pair[1].y;
+            let kind = if !(left.is_finite() && right.is_finite()) {
+                PlotBreakKind::NonFinite
+            } else if left.is_sign_positive() != right.is_sign_positive()
+                && left.abs().min(right.abs()) > typical_scale * 16.0
+            {
+                PlotBreakKind::SuspectedVerticalAsymptote
+            } else {
+                return None;
+            };
+            Some(PlotBreak {
+                after_index: index,
+                kind,
+            })
+        })
+        .collect()
+}
+
+fn typical_y_scale(points: &[PlotPoint]) -> f64 {
+    let mut magnitudes: Vec<_> = points
+        .iter()
+        .map(|point| point.y.abs())
+        .filter(|value| value.is_finite())
+        .collect();
+    if magnitudes.is_empty() {
+        return 1.0;
+    }
+    magnitudes.sort_by(f64::total_cmp);
+    magnitudes[magnitudes.len() / 2].max(1.0)
+}
+
+fn finite_segments(points: &[PlotPoint], discontinuities: &[PlotBreak]) -> Vec<PlotSegment> {
     let mut segments = Vec::new();
     let mut start = None;
+    let mut breaks = discontinuities.iter().peekable();
     for (index, point) in points.iter().enumerate() {
+        let split_before = index > 0
+            && breaks
+                .peek()
+                .is_some_and(|discontinuity| discontinuity.after_index == index - 1);
+        if split_before {
+            if let Some(first) = start.take() {
+                segments.push(PlotSegment {
+                    start_index: first,
+                    end_index: index - 1,
+                });
+            }
+            breaks.next();
+        }
         match (start, point.y.is_finite()) {
             (None, true) => start = Some(index),
             (Some(first), false) => {
@@ -276,6 +341,21 @@ fn finite_segments(points: &[PlotPoint]) -> Vec<PlotSegment> {
 }
 
 fn suggested_bounds(points: &[PlotPoint], range: (f64, f64)) -> Option<PlotBounds> {
+    let (low, high) = robust_y_range(points)?;
+    let padding = if high > low {
+        (high - low) * 0.08
+    } else {
+        high.abs().mul_add(0.05, 1.0).max(1.0)
+    };
+    Some(PlotBounds {
+        x_min: range.0,
+        x_max: range.1,
+        y_min: low - padding,
+        y_max: high + padding,
+    })
+}
+
+fn robust_y_range(points: &[PlotPoint]) -> Option<(f64, f64)> {
     let mut ys: Vec<_> = points
         .iter()
         .map(|point| point.y)
@@ -288,17 +368,7 @@ fn suggested_bounds(points: &[PlotPoint], range: (f64, f64)) -> Option<PlotBound
     let last = ys.len() - 1;
     let low = ys[last.saturating_mul(2) / 100];
     let high = ys[(last.saturating_mul(98) / 100).min(last)];
-    let padding = if high > low {
-        (high - low) * 0.08
-    } else {
-        high.abs().mul_add(0.05, 1.0).max(1.0)
-    };
-    Some(PlotBounds {
-        x_min: range.0,
-        x_max: range.1,
-        y_min: low - padding,
-        y_max: high + padding,
-    })
+    Some((low, high))
 }
 
 #[cfg(test)]
@@ -413,6 +483,10 @@ mod tests {
         // The pole region must be flagged: some break exists near x=0.
         assert!(plot.breaks.iter().any(|&i| plot.points[i].x.abs() < 0.2));
         assert_eq!(plot.segments.len(), 2);
+        assert!(plot
+            .discontinuities
+            .iter()
+            .all(|item| item.kind == PlotBreakKind::NonFinite));
         for segment in &plot.segments {
             assert!(plot.points[segment.start_index..=segment.end_index]
                 .iter()
@@ -520,5 +594,21 @@ mod tests {
             engine.calls, 3,
             "65 base points and 64 midpoints need 3 batches"
         );
+    }
+
+    #[test]
+    fn separates_sampled_vertical_asymptotes_conservatively() {
+        let tan = sample_default("Tan(x)", (-3.0, 3.0));
+        let suspected: Vec<_> = tan
+            .discontinuities
+            .iter()
+            .filter(|item| item.kind == PlotBreakKind::SuspectedVerticalAsymptote)
+            .collect();
+        assert_eq!(suspected.len(), 2, "Tan has poles at ±Pi/2: {suspected:?}");
+        assert_eq!(tan.segments.len(), 3);
+
+        let steep_line = sample_default("100000*x", (-1.0, 1.0));
+        assert!(steep_line.discontinuities.is_empty());
+        assert_eq!(steep_line.segments.len(), 1);
     }
 }

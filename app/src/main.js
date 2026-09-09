@@ -368,6 +368,7 @@ async function calculate() {
       showStructured({
         points: result.points.length,
         breaks: result.breaks,
+        discontinuities: result.discontinuities,
         segments: result.segments,
         suggested_bounds: result.suggested_bounds,
         evaluations: result.evaluations,
