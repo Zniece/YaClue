@@ -162,15 +162,16 @@ function renderPlot(result) {
   ctx.clearRect(0, 0, width, height);
   const finite = result.points.filter((point) => Number.isFinite(point.y));
   if (!finite.length) throw new Error("采样结果中没有有限点");
+  const bounds = result.suggested_bounds;
   const xs = result.points.map((point) => point.x);
   const ys = finite.map((point) => point.y).sort((a, b) => a - b);
-  const xMin = Math.min(...xs);
-  const xMax = Math.max(...xs);
+  const xMin = bounds?.x_min ?? Math.min(...xs);
+  const xMax = bounds?.x_max ?? Math.max(...xs);
   const low = ys[Math.floor(ys.length * 0.02)];
   const high = ys[Math.min(ys.length - 1, Math.ceil(ys.length * 0.98))];
   const span = Math.max(high - low, 1e-9);
-  const yMin = low - span * 0.08;
-  const yMax = high + span * 0.08;
+  const yMin = bounds?.y_min ?? low - span * 0.08;
+  const yMax = bounds?.y_max ?? high + span * 0.08;
   const px = (x) => 34 + ((x - xMin) / (xMax - xMin)) * (width - 52);
   const py = (y) => height - 24 - ((y - yMin) / (yMax - yMin)) * (height - 48);
 
@@ -181,22 +182,45 @@ function renderPlot(result) {
   if (yMin <= 0 && yMax >= 0) { ctx.moveTo(26, py(0)); ctx.lineTo(width - 10, py(0)); }
   ctx.stroke();
 
-  const breaks = new Set(result.breaks);
   ctx.strokeStyle = "#3767d6";
   ctx.lineWidth = 2;
   ctx.beginPath();
-  let drawing = false;
-  result.points.forEach((point, index) => {
-    const visible = Number.isFinite(point.y) && point.y >= yMin && point.y <= yMax;
-    if (!visible || breaks.has(index) || breaks.has(index - 1)) {
-      drawing = false;
-      return;
-    }
-    if (drawing) ctx.lineTo(px(point.x), py(point.y));
-    else { ctx.moveTo(px(point.x), py(point.y)); drawing = true; }
-  });
+  if (result.segments?.length) {
+    result.segments.forEach((segment) => {
+      let drawing = false;
+      for (let index = segment.start_index; index <= segment.end_index; index += 1) {
+        const point = result.points[index];
+        const visible = point.y >= yMin && point.y <= yMax;
+        if (!visible) {
+          drawing = false;
+        } else if (drawing) {
+          ctx.lineTo(px(point.x), py(point.y));
+        } else {
+          ctx.moveTo(px(point.x), py(point.y));
+          drawing = true;
+        }
+      }
+    });
+  } else {
+    const breaks = new Set(result.breaks || []);
+    let drawing = false;
+    result.points.forEach((point, index) => {
+      const visible = Number.isFinite(point.y) && point.y >= yMin && point.y <= yMax;
+      if (!visible || breaks.has(index) || breaks.has(index - 1)) {
+        drawing = false;
+      } else if (drawing) {
+        ctx.lineTo(px(point.x), py(point.y));
+      } else {
+        ctx.moveTo(px(point.x), py(point.y));
+        drawing = true;
+      }
+    });
+  }
   ctx.stroke();
-  summary("采样完成", "", [`${result.points.length} 个点`, `${result.breaks.length} 个断点`]);
+  const details = [`${result.points.length} 个点`, `${result.breaks?.length || 0} 个断点`];
+  if (result.segments) details.push(`${result.segments.length} 个连续区段`);
+  if (result.termination && result.termination !== "complete") details.push(`终止：${result.termination}`);
+  summary("采样完成", "", details);
 }
 
 function renderNumericOdePlot(result) {
@@ -341,7 +365,14 @@ async function calculate() {
     } else if (mode === "plot") {
       result = await invoke("sample_plot", { expr, variable, min: Number($("#plot-min").value), max: Number($("#plot-max").value) });
       renderPlot(result);
-      showStructured({ points: result.points.length, breaks: result.breaks });
+      showStructured({
+        points: result.points.length,
+        breaks: result.breaks,
+        segments: result.segments,
+        suggested_bounds: result.suggested_bounds,
+        evaluations: result.evaluations,
+        termination: result.termination,
+      });
     } else {
       result = await invoke("evaluate", { expr });
       summary("求值结果", result.tex, [result.expression]);
