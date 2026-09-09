@@ -2,6 +2,7 @@ use processing::algebra::{TransformKind, TransformResult};
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::equations::{EquationStepResult, SolveResult};
+use processing::extrema::{ExtremaResult, ExtremaStepResult};
 use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
 use processing::multiple_integrals::{
@@ -261,6 +262,46 @@ async fn calculate_polar_integral_steps(
         &request.radius_variable,
         &request.angle_variable,
         region,
+        verbosity,
+    )
+    .map_err(message)
+}
+
+#[derive(Deserialize)]
+struct ExtremaRequest {
+    expression: String,
+    x_variable: String,
+    y_variable: String,
+    verbosity: Option<String>,
+}
+
+#[tauri::command]
+async fn analyze_extrema(
+    request: ExtremaRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<ExtremaResult, ErrorResponse> {
+    let mut engine = lock_engine(&engine)?;
+    processing::extrema::analyze(
+        &mut *engine,
+        &request.expression,
+        &request.x_variable,
+        &request.y_variable,
+    )
+    .map_err(message)
+}
+
+#[tauri::command]
+async fn analyze_extrema_steps(
+    request: ExtremaRequest,
+    engine: tauri::State<'_, Mutex<RustEngineProxy>>,
+) -> Result<ExtremaStepResult, ErrorResponse> {
+    let verbosity = parse_verbosity(request.verbosity.as_deref().unwrap_or("detailed"))?;
+    let mut engine = lock_engine(&engine)?;
+    processing::extrema::analyze_steps_with_verbosity(
+        &mut *engine,
+        &request.expression,
+        &request.x_variable,
+        &request.y_variable,
         verbosity,
     )
     .map_err(message)
@@ -585,6 +626,8 @@ pub fn run() {
             calculate_double_integral_steps,
             calculate_polar_integral,
             calculate_polar_integral_steps,
+            analyze_extrema,
+            analyze_extrema_steps,
             calculate_limit,
             calculate_limit_steps,
             solve_ode,

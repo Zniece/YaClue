@@ -8,6 +8,7 @@ pub mod algebra;
 pub mod assumptions;
 pub mod engine;
 pub mod equations;
+pub mod extrema;
 pub mod input;
 pub mod limits;
 pub mod linear_algebra;
