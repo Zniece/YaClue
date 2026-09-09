@@ -3,6 +3,7 @@ use processing::equations;
 use processing::extrema;
 use processing::limits::{self, LimitDirection};
 use processing::line_integrals::{self, LineIntegralKind, LineIntegralRequest};
+use processing::linear_algebra;
 use processing::multiple_integrals::{self, IntegralBound, PolarRegion};
 use processing::ode;
 use processing::steps::{self, Step, StepImportance};
@@ -186,4 +187,14 @@ fn multivariable_integral_steps_show_complete_formula_chains() {
     assert!(surface_steps
         .iter()
         .any(|step| step.expr.starts_with("Integrate(v,0,1)Integrate(u,0,1)")));
+}
+
+#[test]
+fn row_reduction_steps_have_complete_teaching_fields() {
+    let mut engine = RustEngine::spawn().unwrap();
+    let result = linear_algebra::linear_structure_steps(&mut engine, "{{0,2},{1,1}}").unwrap();
+    assert_teaching_steps("row reduction", &result.steps);
+    assert!(result.steps.iter().any(|step| step.rule == "row-swap"));
+    assert!(result.steps.iter().any(|step| step.rule == "row-scale"));
+    assert!(result.steps.iter().any(|step| step.rule == "row-eliminate"));
 }

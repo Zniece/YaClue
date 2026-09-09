@@ -868,6 +868,88 @@ MatrixPower(x_IsSquareMatrix, n_IsNegativeInteger) <--
 // Exact rational row reduction. One elimination produces the RREF, rank,
 // pivot columns, null-space basis, and column-space basis. The column-space
 // basis is selected from the original matrix, not from the reduced matrix.
+Function("LinearStructureDetailed", {A})
+[
+    Local(matrix, rows, columns, pivotRow, pivotColumn, scanRow,
+          row, column, pivot, factor, temporary, pivots,
+          freeColumn, vector, nullBasis, columnBasis, events);
+    Check(IsMatrix(A), "LinearStructure: argument must be a matrix");
+    rows := Length(A);
+    Check(rows > 0, "LinearStructure: matrix must not be empty");
+    columns := Length(A[1]);
+    Check(columns > 0, "LinearStructure: matrix must not have empty rows");
+    matrix := GenMatrix({{i,j}, A[i][j]}, rows, columns);
+    For(row := 1, row <= rows, row++)
+        For(column := 1, column <= columns, column++)
+            Check(IsRational(matrix[row][column]),
+                  "LinearStructure: entries must be exact rational numbers");
+
+    pivots := {};
+    events := {};
+    pivotRow := 1;
+    For(pivotColumn := 1,
+        pivotColumn <= columns And pivotRow <= rows,
+        pivotColumn++)
+    [
+        scanRow := pivotRow;
+        While(scanRow <= rows And IsZero(matrix[scanRow][pivotColumn]))
+            scanRow++;
+        If(scanRow <= rows,
+        [
+            If(scanRow != pivotRow,
+            [
+                temporary := matrix[pivotRow];
+                matrix[pivotRow] := matrix[scanRow];
+                matrix[scanRow] := temporary;
+                DestructiveAppend(events,
+                    {"swap", pivotRow, scanRow, 0,
+                     GenMatrix({{i,j}, matrix[i][j]}, rows, columns)});
+            ]);
+            pivot := matrix[pivotRow][pivotColumn];
+            For(column := pivotColumn, column <= columns, column++)
+                matrix[pivotRow][column] :=
+                    matrix[pivotRow][column] / pivot;
+            If(pivot != 1,
+                DestructiveAppend(events,
+                    {"scale", pivotRow, pivotRow, 1 / pivot,
+                     GenMatrix({{i,j}, matrix[i][j]}, rows, columns)}));
+            For(row := 1, row <= rows, row++)
+                If(row != pivotRow,
+                [
+                    factor := matrix[row][pivotColumn];
+                    If(Not(IsZero(factor)),
+                    [
+                        For(column := pivotColumn, column <= columns, column++)
+                            matrix[row][column] :=
+                                matrix[row][column] -
+                                factor * matrix[pivotRow][column];
+                        DestructiveAppend(events,
+                            {"eliminate", row, pivotRow, -factor,
+                             GenMatrix({{i,j}, matrix[i][j]}, rows, columns)});
+                    ]);
+                ]);
+            DestructiveAppend(pivots, pivotColumn);
+            pivotRow++;
+        ]);
+    ];
+
+    nullBasis := {};
+    For(freeColumn := 1, freeColumn <= columns, freeColumn++)
+        If(Not(Contains(pivots, freeColumn)),
+        [
+            vector := ZeroVector(columns);
+            vector[freeColumn] := 1;
+            For(row := 1, row <= Length(pivots), row++)
+                vector[pivots[row]] := -matrix[row][freeColumn];
+            DestructiveAppend(nullBasis, vector);
+        ]);
+
+    columnBasis := {};
+    ForEach(pivotColumn, pivots)
+        DestructiveAppend(columnBasis, MatrixColumn(A, pivotColumn));
+    {matrix, Length(pivots), pivots, nullBasis, columnBasis, events};
+];
+
 Function("LinearStructure", {A})
 [
     Local(matrix, rows, columns, pivotRow, pivotColumn, scanRow,

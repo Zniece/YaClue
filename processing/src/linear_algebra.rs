@@ -2,6 +2,7 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression};
+use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 pub const MAX_LINEAR_STRUCTURE_DIMENSION: usize = 16;
@@ -88,6 +89,31 @@ pub struct LinearStructureResult {
     pub null_space_basis: Vec<Vec<String>>,
     pub column_space_basis: Vec<Vec<String>>,
     pub tex: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RowOperationKind {
+    Swap,
+    Scale,
+    AddMultiple,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RowOperation {
+    pub kind: RowOperationKind,
+    /// One-based row index, matching mathematical notation and Yacas.
+    pub target_row: usize,
+    pub source_row: Option<usize>,
+    pub factor: String,
+    pub matrix: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LinearStructureStepResult {
+    pub result: LinearStructureResult,
+    pub operations: Vec<RowOperation>,
+    pub steps: Vec<Step>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -323,13 +349,111 @@ pub fn linear_structure(
          LinearStructure(a);]"
     );
     let evaluated = engine.eval(&command)?;
-    let fields = list_items(&evaluated.expr, "LinearStructure result")?;
-    if fields.len() != 5 {
-        return Err(EngineError::Parse(format!(
-            "LinearStructure 返回 {} 个字段，预期 5 个",
-            fields.len()
-        )));
+    let fields = exact_fields(&evaluated.expr, "LinearStructure result", 5)?;
+    parse_linear_structure(fields, strip_tex_delimiters(&evaluated.tex))
+}
+
+pub fn linear_structure_steps(
+    engine: &mut dyn Engine,
+    matrix: &str,
+) -> Result<LinearStructureStepResult, EngineError> {
+    linear_structure_steps_with_verbosity(engine, matrix, StepVerbosity::Detailed)
+}
+
+pub fn linear_structure_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    matrix: &str,
+    verbosity: StepVerbosity,
+) -> Result<LinearStructureStepResult, EngineError> {
+    validate_expression(matrix, "矩阵")?;
+    let command = format!(
+        "[Local(a); a:={matrix}; \
+         Check(IsMatrix(a),\"argument must be a matrix\"); \
+         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+               \"matrix row limit exceeded\"); \
+         Check(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+               \"matrix column limit exceeded\"); \
+         LinearStructureDetailed(a);]"
+    );
+    let evaluated = engine.eval_expr(&command)?;
+    let fields = exact_fields(&evaluated, "LinearStructureDetailed result", 6)?;
+    let mut result = parse_linear_structure(&fields[..5], String::new())?;
+    let operations = list_items(&fields[5], "行操作事件")?
+        .iter()
+        .map(parse_row_operation)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut events = vec![StepEvent::new(
+        "row-reduction-start",
+        matrix,
+        "从原矩阵开始进行高斯–若尔当消元。",
+        StepImportance::Routine,
+    )];
+    for operation in &operations {
+        let (rule, why, importance) = match operation.kind {
+            RowOperationKind::Swap => (
+                "row-swap",
+                format!(
+                    "交换第 {} 行与第 {} 行，使当前列获得非零主元。",
+                    operation.target_row,
+                    operation
+                        .source_row
+                        .expect("swap operations have a source row")
+                ),
+                StepImportance::Key,
+            ),
+            RowOperationKind::Scale => (
+                "row-scale",
+                format!(
+                    "第 {} 行乘以 {}，将主元化为 1。",
+                    operation.target_row, operation.factor
+                ),
+                StepImportance::Normal,
+            ),
+            RowOperationKind::AddMultiple => (
+                "row-eliminate",
+                format!(
+                    "第 {} 行加上第 {} 行的 {} 倍，消去当前列元素。",
+                    operation.target_row,
+                    operation
+                        .source_row
+                        .expect("elimination operations have a source row"),
+                    operation.factor
+                ),
+                StepImportance::Normal,
+            ),
+        };
+        events.push(StepEvent::new(
+            rule,
+            &matrix_expression(&operation.matrix),
+            &why,
+            importance,
+        ));
     }
+    events.push(StepEvent::new(
+        "row-reduction-result",
+        &matrix_expression(&result.rref),
+        &format!(
+            "得到行最简形；秩为 {}，主元列为 {:?}。",
+            result.rank, result.pivot_columns
+        ),
+        StepImportance::Key,
+    ));
+    let steps = render_events(engine, events, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(LinearStructureStepResult {
+        result,
+        operations,
+        steps,
+    })
+}
+
+fn parse_linear_structure(
+    fields: &[Expr],
+    tex: String,
+) -> Result<LinearStructureResult, EngineError> {
     let rref = matrix_items(&fields[0], "RREF")?;
     let rows = rref.len();
     let columns = rref.first().map_or(0, Vec::len);
@@ -356,8 +480,39 @@ pub fn linear_structure(
         columns_linearly_independent: rank == columns,
         null_space_basis,
         column_space_basis,
-        tex: strip_tex_delimiters(&evaluated.tex),
+        tex,
     })
+}
+
+fn parse_row_operation(expression: &Expr) -> Result<RowOperation, EngineError> {
+    let fields = exact_fields(expression, "行操作事件", 5)?;
+    let kind = match fields[0].to_string().trim_matches('"') {
+        "swap" => RowOperationKind::Swap,
+        "scale" => RowOperationKind::Scale,
+        "eliminate" => RowOperationKind::AddMultiple,
+        other => return Err(EngineError::Parse(format!("未知行操作类型: {other}"))),
+    };
+    let target_row = usize_item(&fields[1], "目标行")?;
+    let source = usize_item(&fields[2], "来源行")?;
+    let source_row = (kind != RowOperationKind::Scale).then_some(source);
+    Ok(RowOperation {
+        kind,
+        target_row,
+        source_row,
+        factor: fields[3].to_string(),
+        matrix: matrix_items(&fields[4], "行操作后的矩阵")?,
+    })
+}
+
+fn matrix_expression(matrix: &[Vec<String>]) -> String {
+    format!(
+        "{{{}}}",
+        matrix
+            .iter()
+            .map(|row| format!("{{{}}}", row.join(",")))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 fn list_items<'a>(expression: &'a Expr, label: &str) -> Result<&'a [Expr], EngineError> {
@@ -482,6 +637,7 @@ fn unresolved(expr: &Expr, operation: MatrixOperation) -> bool {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::test_support::CountingEngine;
 
     #[test]
     fn computes_basic_matrix_operations() {
@@ -757,5 +913,49 @@ mod tests {
         assert!(orthonormal.verified);
         assert!(gram_schmidt(&mut engine, "{{1,0},{2,0}}", false).is_err());
         assert!(gram_schmidt(&mut engine, "{{1,0},{1}}", false).is_err());
+    }
+
+    #[test]
+    fn row_reduction_steps_reuse_detailed_elimination_events() {
+        let mut engine = CountingEngine::spawn();
+        let detailed = linear_structure_steps(&mut engine, "{{0,2},{1,1}}").unwrap();
+        assert_eq!(detailed.result.rref, vec![vec!["1", "0"], vec!["0", "1"]]);
+        assert!(detailed
+            .operations
+            .iter()
+            .any(|operation| operation.kind == RowOperationKind::Swap));
+        assert!(detailed
+            .operations
+            .iter()
+            .any(|operation| operation.kind == RowOperationKind::Scale));
+        assert!(detailed
+            .operations
+            .iter()
+            .any(|operation| operation.kind == RowOperationKind::AddMultiple));
+        assert_eq!(engine.eval_calls, 1);
+        assert_eq!(engine.batch_sizes, [detailed.steps.len()]);
+
+        engine.reset_counts();
+        let concise = linear_structure_steps_with_verbosity(
+            &mut engine,
+            "{{0,2},{1,1}}",
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        assert!(concise.steps.len() < detailed.steps.len());
+        assert_eq!(engine.eval_calls, 1);
+        assert_eq!(engine.batch_sizes, [concise.steps.len()]);
+    }
+
+    #[test]
+    fn detailed_row_reduction_matches_the_fast_structure_path() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for matrix in ["{{0,2},{1,1}}", "{{1,2,3},{2,4,6}}", "{{1,2},{3,4},{5,6}}"] {
+            let mut fast = linear_structure(&mut engine, matrix).unwrap();
+            let mut detailed = linear_structure_steps(&mut engine, matrix).unwrap().result;
+            fast.tex.clear();
+            detailed.tex.clear();
+            assert_eq!(detailed, fast, "structure mismatch for {matrix}");
+        }
     }
 }
