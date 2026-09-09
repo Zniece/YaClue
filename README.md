@@ -61,7 +61,9 @@ Red lines kept by design:
 
 ## Build & run
 
-The product path is pure Rust — no C++ toolchain needed.
+The product path is implemented in Rust.
+
+### Desktop
 
 ```bash
 # run the desktop app
@@ -80,11 +82,44 @@ cargo test -p yacas-rs
 cargo test -p processing
 ```
 
+### Android
+
+The Android shell is included in the repository. Building it requires a JDK,
+the Android SDK, Android NDK 27, and the Rust target for the device. For a
+typical 64-bit ARM phone or ARM-based emulator:
+
+```bash
+rustup target add aarch64-linux-android
+
+export ANDROID_HOME="$HOME/Library/Android/sdk" # use your SDK location
+export NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
+export JAVA_HOME="/path/to/your/jdk"
+
+cd app
+npm ci
+npm run tauri -- android build --debug --target aarch64 --apk --ci
+```
+
+The APK is written to
+`app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/` and can be
+installed on a connected device or emulator with `adb install -r <apk>`.
+Use `npm run tauri -- android dev --target aarch64` for development against a
+running device or emulator.
+
+The build packages the Yacas and processing scripts as Android assets. On
+first launch, YaClue copies them into its private application storage so the
+CAS can load them as ordinary files. Android removes that storage when the
+application is uninstalled.
+
+The Android port is currently intended for development testing. A distributable
+release APK requires a persistent signing key; the repository does not contain
+one.
+
 Contributor checks and CI/release-build details are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md). GitHub Actions runs formatting, Clippy,
 fast engine and processing tests, and the frontend JavaScript check on every
-push and pull request. Prerelease tags build bundled three-platform packages
-after the complete test suite passes.
+push and pull request. Prerelease tags currently build bundled Linux, macOS,
+and Windows packages after the complete test suite passes.
 
 The engine boots the script library through a `DefaultDirectory` +
 `Load("yacasinit.ys")` sequence (see `processing/src/engine/rust.rs`); the step

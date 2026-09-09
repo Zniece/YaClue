@@ -1308,6 +1308,14 @@ async fn evaluate(
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            #[cfg(target_os = "android")]
+            let resources = app
+                .path()
+                .app_data_dir()?
+                .join("files")
+                .join("bundled")
+                .join(env!("CARGO_PKG_VERSION"));
+            #[cfg(not(target_os = "android"))]
             let resources = app.path().resource_dir()?;
             let scripts = std::env::var("YACAS_SCRIPTS").unwrap_or_else(|_| {
                 resources
