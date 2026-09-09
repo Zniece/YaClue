@@ -11,6 +11,7 @@ pub mod equations;
 pub mod extrema;
 pub mod input;
 pub mod limits;
+pub mod line_integrals;
 pub mod linear_algebra;
 pub mod multiple_integrals;
 pub mod multivariate;
