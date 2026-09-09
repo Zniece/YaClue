@@ -34,7 +34,7 @@ const MODES = {
   ode_numeric: { domain: "numeric", label: "常微分方程数值解", title: "输入微分方程初值问题", help: "一阶导数写作 y'；还需要填写初值和积分终点。", examples: ["y'+y==x", "y'==y", "y''==-y"] },
   transform: { domain: "algebra", label: "化简与变换", title: "要变换的表达式", help: "选择展开、因式分解、约分等操作。", examples: ["(x+1)^2", "x^2-1", "(x^2-1)/(x-1)"] },
   evaluate: { domain: "algebra", label: "高级：脚本求值", title: "Yacas 脚本表达式", help: "面向熟悉 Yacas 语法的用户，可直接调用当前引擎会话。", examples: ["Factor(x^4-1)", "Expand((x+1)^4)", "Simplify(Sin(x)^2+Cos(x)^2)"] },
-  matrix: { domain: "linear", label: "矩阵运算", title: "输入矩阵", help: "矩阵按行填写为 {{1,2},{3,4}}。", examples: ["{{1,2},{3,4}}", "{{1,0,2},{-1,3,1},{3,2,0}}"] },
+  matrix: { domain: "linear", label: "矩阵运算", title: "输入矩阵表达式", help: "矩阵按行填写；相加或相乘时可直接输入完整算式。", examples: ["{{1,2},{3,4}}*{{5,6},{7,8}}", "{{1,2},{3,4}}+{{5,6},{7,8}}", "{{1,0,2},{-1,3,1},{3,2,0}}"] },
   approximate: { domain: "numeric", label: "高精度近似", title: "要近似的数值表达式", help: "选择需要的小数精度。", examples: ["Pi", "Sqrt(2)", "Exp(1)"] },
   root: { domain: "numeric", label: "数值求根", title: "令这个表达式等于零", help: "填写左边表达式即可，例如 Cos(x)-x；无需再写 ==0。", examples: ["Cos(x)-x", "x^3-2", "Exp(x)-3"] },
   plot: { domain: "numeric", label: "函数绘图", title: "要绘制的函数", help: "填写关于横轴变量的函数，并选择显示范围。", examples: ["Sin(x)", "1/x", "Exp(-x^2)"] },
@@ -101,6 +101,7 @@ function updateMode(setExample = true) {
   $("#expression-title").textContent = MODES[task].title;
   $("#input-help").textContent = MODES[task].help;
   $("#output-mode-field").hidden = !MODES[task].variants;
+  updateMatrixFields();
   renderExamples(task);
   variableEl.placeholder = mode === "equation" ? "自动发现（如 x,y）" : "x";
   if (setExample) {
@@ -111,6 +112,28 @@ function updateMode(setExample = true) {
       if (mode === "ode_numeric") $("#ode-conditions").value = "0,0,1";
     }
   }
+}
+
+function updateMatrixFields() {
+  const mode = modeEl.value;
+  const operation = $("#matrix-operation").value;
+  $("#matrix-right-field").hidden = mode !== "matrix" || !["add", "multiply", "solve"].includes(operation);
+}
+
+function parseMatrixExpression(expression) {
+  let depth = 0;
+  for (let index = 0; index < expression.length; index += 1) {
+    const character = expression[index];
+    if ("{([".includes(character)) depth += 1;
+    else if ("})]".includes(character)) depth -= 1;
+    else if (depth === 0 && (character === "+" || character === "*")) {
+      const left = expression.slice(0, index).trim();
+      const right = expression.slice(index + 1).trim();
+      if (!left || !right) break;
+      return { left, right, operation: character === "+" ? "add" : "multiply" };
+    }
+  }
+  throw new Error("请输入两个矩阵的完整加法或乘法算式，例如 {{1,2},{3,4}}*{{5,6},{7,8}}");
 }
 
 function setBusy(busy) {
@@ -419,12 +442,15 @@ async function calculate() {
       summary("Taylor 多项式", result.tex, [`次数：${result.degree}`, result.unresolved ? "未完成" : "已完成"]);
       showStructured(result);
     } else if (mode === "matrix") {
-      const operation = $("#matrix-operation").value;
+      let operation = $("#matrix-operation").value;
+      let left = expr;
+      let right = $("#matrix-right").value.trim();
+      if (operation === "auto") ({ operation, left, right } = parseMatrixExpression(expr));
       const binary = ["add", "multiply", "solve"].includes(operation);
       result = await invoke("calculate_matrix", {
-        left: expr,
+        left,
         operation,
-        right: binary ? $("#matrix-right").value.trim() : null,
+        right: binary ? right : null,
       });
       summary("线性代数结果", result.tex, [`运算：${result.operation}`, result.unresolved ? "未完成" : "已完成"]);
       showStructured(result);
@@ -498,6 +524,7 @@ async function clearAssumptions() {
 }
 
 modeEl.addEventListener("change", () => updateMode(true));
+$("#matrix-operation").addEventListener("change", updateMatrixFields);
 $("#output-mode").addEventListener("change", () => updateMode(false));
 $("#go").addEventListener("click", calculate);
 $("#add-assumption").addEventListener("click", addAssumption);

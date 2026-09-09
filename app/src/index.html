@@ -75,6 +75,7 @@
           <label data-for="taylor">次数<input id="taylor-degree" type="number" min="0" max="64" value="6" /></label>
           <label data-for="matrix">矩阵运算
             <select id="matrix-operation">
+              <option value="auto">从表达式识别</option>
               <option value="add">相加</option>
               <option value="multiply">相乘</option>
               <option value="transpose">转置</option>
@@ -84,7 +85,7 @@
               <option value="eigenvalues">特征值</option>
             </select>
           </label>
-          <label data-for="matrix" class="wide">右操作数<input id="matrix-right" value="{{5,6},{7,8}}" /></label>
+          <label id="matrix-right-field" data-for="matrix" class="wide">右操作数<input id="matrix-right" value="{{5,6},{7,8}}" /></label>
           <label data-for="plot">横轴最小值<input id="plot-min" type="number" value="-6.28" step="any" /></label>
           <label data-for="plot">横轴最大值<input id="plot-max" type="number" value="6.28" step="any" /></label>
         </div>
