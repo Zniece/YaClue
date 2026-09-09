@@ -853,6 +853,11 @@ RuleBase("Steps'Text", {key});
 
 /* ---------- 两侧通用 ---------- */
 10 # Steps'Text("definite-eval-rule") <-- "牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)";
+10 # Steps'Text("definite-integral-rule") <-- "写出定积分及其积分区间";
+10 # Steps'Text("definite-antiderivative-rule") <-- "求出一个原函数 F(x)";
+10 # Steps'Text("definite-substitution-rule") <-- "将上限和下限代入原函数";
+10 # Steps'Text("definite-odd-symmetry-rule") <-- "对称区间上的奇函数积分为 0";
+10 # Steps'Text("definite-even-symmetry-rule") <-- "对称区间上的偶函数积分等于半区间积分的 2 倍";
 
 10 # Steps'Text("simplify") <-- "化简";
 
@@ -904,6 +909,11 @@ RuleBase("Steps'Importance", {key});
 10 # Steps'Importance("tan-power-reduction-rule") <-- 2;
 10 # Steps'Importance("sec-power-reduction-rule") <-- 2;
 10 # Steps'Importance("definite-eval-rule") <-- 2;
+10 # Steps'Importance("definite-integral-rule") <-- 0;
+10 # Steps'Importance("definite-antiderivative-rule") <-- 1;
+10 # Steps'Importance("definite-substitution-rule") <-- 1;
+10 # Steps'Importance("definite-odd-symmetry-rule") <-- 2;
+10 # Steps'Importance("definite-even-symmetry-rule") <-- 2;
 
 StepsD'Full(expr, var) := Steps'Annotate(StepsD(expr, var), "d");
 
@@ -1057,35 +1067,54 @@ StepsL'GeneralData(_expr, _var, _at, _dir) <--
    教学化引擎 IntegrateRange(Where 代限值)的思路:先走完整不定积分
    步骤链得原函数 F,再追加"代限值"步骤 F(b) - F(a) 并求值。
    上下限代入用 Subst + Eval(Where 语义,数值立即折叠)。
-   兜底:不定积分链以 direct 结尾(无解析原函数)时,留 Hold 的
-   定限 Integrate 不求值,数值方法待接入。 */
+   兜底:不定积分链以 direct 结尾(无解析原函数)时,保留惰性的
+   定限 Integrate 展示节点,由 processing 选择数值求积。 */
 
 RuleBase("StepsI'Def", {expr, var, from, to});
 
 StepsI'Def(expr, var, from, to) :=
 [
-  Local(p, F, upper, lower, final, tidied);
+  Local(p, F, upper, lower, final, tidied, integral, steps, symmetric,
+        odd, even, effectiveFrom, factor, substituted);
+  integral := Steps'DefiniteIntegral(expr, var, from, to);
+  steps := {{"definite-integral-rule", integral}};
+  symmetric := (from = -to);
+  odd := symmetric And IsOddFunction(expr, var);
+  even := symmetric And Not(odd) And IsEvenFunction(expr, var);
+  If (odd,
+    Append(steps, {"definite-odd-symmetry-rule", 0}),
+  [
+  effectiveFrom := If(even, 0, from);
+  factor := If(even, 2, 1);
   p := SD'Merge(Int(expr), SI'Diff(expr, var), "Int");
   F := p[1][Length(p[1])][2];
   /* 兜底判定看链尾规则名(direct = 引擎直积,无解析原函数);
      不用 IsFreeOf(Integrate, F) —— IsFreeOf 对函数头有误判(见引擎缺陷清单) */
   If (p[1][Length(p[1])][1] = "direct",
     /* 无解析原函数:留 Hold 不求值(引擎直积在此上下文会触发
-       IntegrateMultiplicative 的 MatchLinear 重试错误),数值方法待接入 */
-    SD'Merge(Int(expr),
+       IntegrateMultiplicative 的 MatchLinear 重试错误),processing 随后数值求积 */
+    Concat(steps, SD'Merge(Int(expr),
              {{{"direct", "p", expr, `Hold(Integrate(@var, @from, @to)(@expr))}},
               `Hold(Integrate(@var, @from, @to)(@expr))},
-             "Int")[1],
+             "Int")[1]),
     [
       upper := Eval(ApplyPure("Subst", {var, to, F}));
-      lower := Eval(ApplyPure("Subst", {var, from, F}));
-      final := upper - lower;
+      lower := Eval(ApplyPure("Subst", {var, effectiveFrom, F}));
+      substituted := Steps'DefiniteSubstitution(factor, upper, lower);
+      final := factor * (upper - lower);
       tidied := Tidy(final);
+      steps := Concat(steps, p[1]);
+      steps := Append(steps, {"definite-antiderivative-rule", F});
+      If (even,
+        steps := Append(steps, {"definite-even-symmetry-rule",
+                               2 * Steps'DefiniteIntegral(expr, var, 0, to)}));
+      steps := Append(steps, {"definite-substitution-rule", substituted});
       If (tidied = final,
-        Append(p[1], {"definite-eval-rule", final}),
-        Append(Append(p[1], {"definite-eval-rule", final}),
+        Append(steps, {"definite-eval-rule", final}),
+        Append(Append(steps, {"definite-eval-rule", final}),
                {"simplify", tidied}));
     ]);
+  ]);
 ];
 
 StepsI'Def'Full(expr, var, from, to) :=
@@ -1098,3 +1127,19 @@ StepsI'Def'Full(expr, var, from, to) :=
    (已装载则跳过),再登记规则。 */
 Use("texform.rep/code.ys");
 100 # TeXForm(DPrime(_x), _p) <-- ConcatStrings("\\left(", TeXForm(x, TeXFormMaxPrec()), "\\right)'");
+100 # TeXForm(Steps'DefiniteIntegral(_expr, _var, _from, _to), _p) <--
+  ConcatStrings("\\int _{", TeXForm(from, TeXFormMaxPrec()), "} ^{",
+                TeXForm(to, TeXFormMaxPrec()), " } ",
+                TeXForm(expr, OpPrecedence("*")), " d",
+                TeXForm(var, TeXFormMaxPrec()));
+100 # TeXForm(Steps'DefiniteSubstitution(_factor, _upper, _lower), _p) <--
+[
+  Local(body, lowerText);
+  lowerText := TeXForm(lower, TeXFormMaxPrec());
+  If (IsNegativeNumber(lower),
+      lowerText := ConcatStrings("\\left(", lowerText, "\\right)"));
+  body := ConcatStrings("\\left[", TeXForm(upper, TeXFormMaxPrec()),
+                        " - ", lowerText, "\\right]");
+  If (factor = 1, body,
+      ConcatStrings(TeXForm(factor, OpPrecedence("*")), " ", body));
+];

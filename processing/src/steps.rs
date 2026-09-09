@@ -489,4 +489,93 @@ mod tests {
         assert!((value - 0.2458433897).abs() < 1e-8, "{value}");
         assert!(last.why.contains("估计误差"));
     }
+
+    #[test]
+    fn definite_integral_exposes_bounds_substitution_and_symmetry() {
+        let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
+
+        let ordinary = derive_definite(&mut engine, "x^2", "x", "0", "2").expect("解析定积分失败");
+        for rule in [
+            "definite-integral-rule",
+            "definite-antiderivative-rule",
+            "definite-substitution-rule",
+            "definite-eval-rule",
+        ] {
+            assert!(ordinary.iter().any(|step| step.rule == rule), "缺少 {rule}");
+        }
+        assert_eq!(
+            engine
+                .eval(&format!(
+                    "Simplify(({}) - 8/3)",
+                    ordinary.last().unwrap().expr
+                ))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0"
+        );
+
+        let odd = derive_definite(&mut engine, "x^3", "x", "-1", "1").expect("奇函数对称积分失败");
+        assert_eq!(odd.len(), 2, "奇函数捷径不应求原函数: {odd:?}");
+        assert_eq!(odd.last().unwrap().rule, "definite-odd-symmetry-rule");
+        assert_eq!(odd.last().unwrap().expr, "0");
+
+        let even = derive_definite(&mut engine, "x^2", "x", "-1", "1").expect("偶函数对称积分失败");
+        assert!(even
+            .iter()
+            .any(|step| step.rule == "definite-even-symmetry-rule"));
+        assert_eq!(
+            engine
+                .eval(&format!("Simplify(({}) - 2/3)", even.last().unwrap().expr))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0"
+        );
+    }
+
+    #[test]
+    fn definite_integral_verbosity_filters_new_events_before_tex() {
+        let mut engine = CountingEngine {
+            inner: RustEngine::spawn().unwrap(),
+            eval_calls: 0,
+            batch_sizes: Vec::new(),
+        };
+        let detailed = derive_definite_with_verbosity(
+            &mut engine,
+            "x^2",
+            "x",
+            "0",
+            "2",
+            StepVerbosity::Detailed,
+        )
+        .unwrap();
+        let standard = derive_definite_with_verbosity(
+            &mut engine,
+            "x^2",
+            "x",
+            "0",
+            "2",
+            StepVerbosity::Standard,
+        )
+        .unwrap();
+        let concise = derive_definite_with_verbosity(
+            &mut engine,
+            "x^2",
+            "x",
+            "0",
+            "2",
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+
+        assert!(detailed.len() > standard.len());
+        assert!(standard.len() > concise.len());
+        assert_eq!(detailed.last().unwrap().expr, concise.last().unwrap().expr);
+        assert_eq!(engine.eval_calls, 3);
+        assert_eq!(
+            engine.batch_sizes,
+            vec![detailed.len(), standard.len(), concise.len()]
+        );
+    }
 }

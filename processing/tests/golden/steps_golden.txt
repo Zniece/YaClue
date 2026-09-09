@@ -313,18 +313,35 @@ trig-sub-back	(2 * (theta - (((x / 2) * Cos(theta)) * ((2 * (Cos(theta) ^ 2)) - 
 trig-sub-back	(2 * (theta - ((((2 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 2)) - 1) * ((Sqrt((4 - (x ^ 2))) / 2) * x)) / 2)))	2 \left( \theta  - \frac{\left( 2 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{2} - 1\right)  x \sqrt{4 - x ^{2}}}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 back-sub-rule	(2 * (ArcSin((x / 2)) - ((((2 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 2)) - 1) * (x * Sqrt((4 - (x ^ 2))))) / 4)))	2 \left( \arcsin \frac{x}{2}  - \frac{\left( 2 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{2} - 1\right)  x \sqrt{4 - x ^{2}}}{4} \right) 	回代: u → g(x)
 ### ID x^2 @ x [0,2]
+definite-integral-rule	Steps'DefiniteIntegral((x ^ 2),x,0,2)	\int _{0} ^{2 } x ^{2} dx	写出定积分及其积分区间
 power-rule	((x ^ 3) / 3)	\frac{x ^{3}}{3} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+definite-antiderivative-rule	((x ^ 3) / 3)	\frac{x ^{3}}{3} 	求出一个原函数 F(x)
+definite-substitution-rule	Steps'DefiniteSubstitution(1,(8 / 3),0)	\left[\frac{8}{3}  - 0\right]	将上限和下限代入原函数
 definite-eval-rule	(8 / 3)	\frac{8}{3} 	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
 ### ID Sin(x) @ x [0,Pi]
+definite-integral-rule	Steps'DefiniteIntegral(Sin(x),x,0,Pi)	\int _{0} ^{\pi  } \sin x dx	写出定积分及其积分区间
 sin-rule	(- Cos(x))	 - \cos x	正弦积分: ∫Sin(x) dx = -Cos(x)
+definite-antiderivative-rule	(- Cos(x))	 - \cos x	求出一个原函数 F(x)
+definite-substitution-rule	Steps'DefiniteSubstitution(1,1,-1)	\left[1 - \left(-1\right)\right]	将上限和下限代入原函数
 definite-eval-rule	2	2	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
 ### ID Exp(x) @ x [0,1]
+definite-integral-rule	Steps'DefiniteIntegral(Exp(x),x,0,1)	\int _{0} ^{1 } \exp \left( x\right)  dx	写出定积分及其积分区间
 exp-rule	Exp(x)	\exp \left( x\right) 	自然指数积分: ∫Exp(x) dx = Exp(x)
+definite-antiderivative-rule	Exp(x)	\exp \left( x\right) 	求出一个原函数 F(x)
+definite-substitution-rule	Steps'DefiniteSubstitution(1,Exp(1),1)	\left[\exp \left( 1\right)  - 1\right]	将上限和下限代入原函数
 definite-eval-rule	(Exp(1) - 1)	\exp \left( 1\right)  - 1	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
 ### ID x^3 @ x [-1,1]
-power-rule	((x ^ 4) / 4)	\frac{x ^{4}}{4} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
-definite-eval-rule	0	0	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
+definite-integral-rule	Steps'DefiniteIntegral((x ^ 3),x,-1,1)	\int _{-1} ^{1 } x ^{3} dx	写出定积分及其积分区间
+definite-odd-symmetry-rule	0	0	对称区间上的奇函数积分为 0
+### ID x^2 @ x [-1,1]
+definite-integral-rule	Steps'DefiniteIntegral((x ^ 2),x,-1,1)	\int _{-1} ^{1 } x ^{2} dx	写出定积分及其积分区间
+power-rule	((x ^ 3) / 3)	\frac{x ^{3}}{3} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+definite-antiderivative-rule	((x ^ 3) / 3)	\frac{x ^{3}}{3} 	求出一个原函数 F(x)
+definite-even-symmetry-rule	(2 * Steps'DefiniteIntegral((x ^ 2),x,0,1))	2 \int _{0} ^{1 } x ^{2} dx	对称区间上的偶函数积分等于半区间积分的 2 倍
+definite-substitution-rule	Steps'DefiniteSubstitution(2,(1 / 3),0)	2 \left[\frac{1}{3}  - 0\right]	将上限和下限代入原函数
+definite-eval-rule	(2 / 3)	\frac{2}{3} 	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
 ### ID x^2/Sqrt(4 - x^2) @ x [0,2]
+definite-integral-rule	Steps'DefiniteIntegral(((x ^ 2) / Sqrt((4 - (x ^ 2)))),x,0,2)	\int _{0} ^{2 } \frac{x ^{2}}{\sqrt{4 - x ^{2}}}  dx	写出定积分及其积分区间
 method-trig-sub	Int(((x ^ 2) / Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( \frac{x ^{2}}{\sqrt{4 - x ^{2}}} \right) 	方法: 三角换元
 trig-sub-rule	Int((4 * (Sin(theta) ^ 2)))	\mathrm{ Int }\left( 4 \left( \sin \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
 constant-multiple-rule	(4 * Int((Sin(theta) ^ 2)))	4 \mathrm{ Int }\left( \left( \sin \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
@@ -333,8 +350,11 @@ const-integral-rule	(4 * ((theta / 2) - ((Sin(theta) * Cos(theta)) / 2)))	4 \lef
 trig-sub-back	(4 * ((theta / 2) - (((x / 2) * Cos(theta)) / 2)))	4 \left( \frac{\theta }{2}  - \frac{\cos \theta  x}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 trig-sub-back	(4 * ((theta / 2) - (((Sqrt((4 - (x ^ 2))) / 2) * x) / 4)))	4 \left( \frac{\theta }{2}  - \frac{x \sqrt{4 - x ^{2}}}{8} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 back-sub-rule	(4 * ((ArcSin((x / 2)) / 2) - ((x * Sqrt((4 - (x ^ 2)))) / 8)))	4 \left( \frac{\arcsin \frac{x}{2} }{2}  - \frac{x \sqrt{4 - x ^{2}}}{8} \right) 	回代: u → g(x)
+definite-antiderivative-rule	(4 * ((ArcSin((x / 2)) / 2) - ((x * Sqrt((4 - (x ^ 2)))) / 8)))	4 \left( \frac{\arcsin \frac{x}{2} }{2}  - \frac{x \sqrt{4 - x ^{2}}}{8} \right) 	求出一个原函数 F(x)
+definite-substitution-rule	Steps'DefiniteSubstitution(1,Pi,0)	\left[\pi  - 0\right]	将上限和下限代入原函数
 definite-eval-rule	Pi	\pi 	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
 ### ID x*Sqrt(4 - x^2) @ x [0,2]
+definite-integral-rule	Steps'DefiniteIntegral((x * Sqrt((4 - (x ^ 2)))),x,0,2)	\int _{0} ^{2 } x \sqrt{4 - x ^{2}} dx	写出定积分及其积分区间
 method-trig-sub	Int((x * Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( x \sqrt{4 - x ^{2}}\right) 	方法: 三角换元
 trig-sub-rule	Int((8 * (Sin(theta) * (Cos(theta) ^ 2))))	\mathrm{ Int }\left( 8 \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
 constant-multiple-rule	(8 * Int((Sin(theta) * (Cos(theta) ^ 2))))	8 \mathrm{ Int }\left( \sin \theta  \left( \cos \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
@@ -346,7 +366,10 @@ back-sub-rule	((-8 * (Cos(theta) ^ 3)) / 3)	\frac{ - 8 \left( \cos \theta \right
 trig-sub-back	((-8 * (Cos(theta) ^ 3)) / 3)	\frac{ - 8 \left( \cos \theta \right)  ^{3}}{3} 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 trig-sub-back	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 back-sub-rule	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	回代: u → g(x)
+definite-antiderivative-rule	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{3}}{3} 	求出一个原函数 F(x)
+definite-substitution-rule	Steps'DefiniteSubstitution(1,0,(-8 / 3))	\left[0 - \frac{-8}{3} \right]	将上限和下限代入原函数
 definite-eval-rule	(8 / 3)	\frac{8}{3} 	牛顿-莱布尼茨公式: ∫[a,b] f(x) dx = F(b) - F(a)
 ### ID Sin(x)/Sqrt(4 - x^2) @ x [0,1]
+definite-integral-rule	Steps'DefiniteIntegral((Sin(x) / Sqrt((4 - (x ^ 2)))),x,0,1)	\int _{0} ^{1 } \frac{\sin x}{\sqrt{4 - x ^{2}}}  dx	写出定积分及其积分区间
 direct	Integrate(x,0,1,(Sin(x) / Sqrt((4 - (x ^ 2)))))	\int _{0} ^{1 } \frac{\sin x}{\sqrt{4 - x ^{2}}}  dx	直接积分
 numeric-integration-rule	0.245843389690556	0.245843389690556	自适应辛普森数值积分（估计误差 3.40e-10，57 次采样）

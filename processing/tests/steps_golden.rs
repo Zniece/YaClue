@@ -110,6 +110,7 @@ const DEF_CASES: &[(&str, &str, &str, &str)] = &[
     ("Sin(x)", "x", "0", "Pi"),
     ("Exp(x)", "x", "0", "1"),
     ("x^3", "x", "-1", "1"),              // 奇对称区间,FTC 得 0
+    ("x^2", "x", "-1", "1"),              // 偶对称区间,化为半区间的两倍
     ("x^2/Sqrt(4 - x^2)", "x", "0", "2"), // θ 链 + 代限值 → Pi
     ("x*Sqrt(4 - x^2)", "x", "0", "2"),
     ("Sin(x)/Sqrt(4 - x^2)", "x", "0", "1"), // 无解析原函数 → 数值求积兜底
@@ -128,6 +129,11 @@ const EXPECTED_RULES: &[&str] = &[
     "const-integral-rule",
     "const-rule",
     "definite-eval-rule",
+    "definite-integral-rule",
+    "definite-antiderivative-rule",
+    "definite-substitution-rule",
+    "definite-odd-symmetry-rule",
+    "definite-even-symmetry-rule",
     "constant-multiple-rule",
     "cos-rule",
     "cosh-rule",
