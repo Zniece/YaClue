@@ -98,7 +98,10 @@ pub fn compute_steps_with_verbosity(
     ));
     events.push(StepEvent::new(
         "line-integral-integrand",
-        &result.integrand,
+        &format!(
+            "Integrate({},{},{})({})",
+            request.parameter, request.lower, request.upper, result.integrand
+        ),
         match request.kind {
             LineIntegralKind::ScalarArcLength => "乘以曲线速度，化为参数上的定积分。",
             LineIntegralKind::VectorWork => "与切向量作点积，化为参数上的定积分。",

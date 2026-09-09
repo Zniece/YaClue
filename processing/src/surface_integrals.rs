@@ -121,7 +121,16 @@ pub fn compute_steps_with_verbosity(
     ));
     events.push(StepEvent::new(
         "surface-integral-integrand",
-        &result.integrand,
+        &format!(
+            "Integrate({},{},{})Integrate({},{},{})({})",
+            request.parameters[1],
+            request.lower[1],
+            request.upper[1],
+            request.parameters[0],
+            request.lower[0],
+            request.upper[0],
+            result.integrand
+        ),
         match request.kind {
             SurfaceIntegralKind::ScalarArea => "乘以面积因子，化为参数域上的二重积分。",
             SurfaceIntegralKind::VectorFlux => "与定向法向量作点积，化为参数域上的二重积分。",

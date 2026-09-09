@@ -63,9 +63,12 @@ impl StepEvent {
 
 pub(crate) fn render_events(
     engine: &mut dyn Engine,
-    events: Vec<StepEvent>,
+    mut events: Vec<StepEvent>,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
+    if let Some(final_event) = events.last_mut() {
+        final_event.importance = StepImportance::Key;
+    }
     let last = events.len().saturating_sub(1);
     let events: Vec<_> = events
         .into_iter()
