@@ -401,7 +401,7 @@ fn solve_internal(
     } else {
         OdeStatus::Unresolved
     };
-    let mut constants = solution_constants(&solution)?;
+    let mut constants = solution_constants(&solution, &analysis.symbols)?;
     let mut condition_status = if initial_conditions.is_empty() {
         InitialConditionStatus::NotRequested
     } else if status != OdeStatus::Solved {
@@ -411,7 +411,7 @@ fn solve_internal(
         let mut applied_constants = Vec::new();
         let mut saw_unresolved = false;
         for mut candidate in candidates {
-            let mut candidate_constants = solution_constants(&candidate)?;
+            let mut candidate_constants = solution_constants(&candidate, &analysis.symbols)?;
             match apply_initial_conditions(
                 engine,
                 &mut candidate,
@@ -444,13 +444,18 @@ fn solve_internal(
         condition_status = InitialConditionStatus::Unresolved;
     }
 
+    let display_constants = display_constant_names(equation, &constants)?;
+    let constant_mapping: Vec<_> = constants.iter().zip(&display_constants).collect();
     let (solution, solutions, solution_branches, tex) = if status == OdeStatus::Solved {
         let mut rendered_solutions = Vec::new();
         let mut branches = Vec::new();
         let mut primary_tex = String::new();
         for (index, candidate) in candidates.iter().enumerate() {
-            let user_solution =
+            let mut user_solution =
                 from_canonical(&candidate.to_string(), independent, dependent, order);
+            for (internal, display) in &constant_mapping {
+                user_solution = substitute(&user_solution, internal, display);
+            }
             let rendered = engine.eval(&user_solution)?;
             if index == 0 {
                 primary_tex = strip_tex_delimiters(&rendered.tex);
@@ -500,7 +505,7 @@ fn solve_internal(
             solution_branches,
             tex,
             residual: residual.to_string(),
-            constants,
+            constants: display_constants,
         },
         solver_events,
     ))
@@ -897,12 +902,36 @@ fn elementary_growth_events(
     ])
 }
 
-fn solution_constants(solution: &Expr) -> Result<Vec<String>, EngineError> {
+fn solution_constants(
+    solution: &Expr,
+    equation_symbols: &[String],
+) -> Result<Vec<String>, EngineError> {
     let mut constants = analyze_expression(&solution.to_string(), "ODE 解")?.symbols;
-    constants.retain(|symbol| symbol != "x" && symbol != "y");
+    constants.retain(|symbol| symbol != "x" && symbol != "y" && !equation_symbols.contains(symbol));
     constants.sort();
     constants.dedup();
     Ok(constants)
+}
+
+fn display_constant_names(
+    equation: &str,
+    internal_constants: &[String],
+) -> Result<Vec<String>, EngineError> {
+    let occupied = analyze_expression(equation, "微分方程")?.symbols;
+    let mut next_index = if internal_constants.len() == 1 { 0 } else { 1 };
+    let mut names = Vec::with_capacity(internal_constants.len());
+    while names.len() < internal_constants.len() {
+        let candidate = if next_index == 0 {
+            "C".to_string()
+        } else {
+            format!("C{next_index}")
+        };
+        next_index += 1;
+        if !occupied.contains(&candidate) {
+            names.push(candidate);
+        }
+    }
+    Ok(names)
 }
 
 fn is_implicit_solution(solution: &Expr) -> bool {
@@ -1059,6 +1088,11 @@ mod tests {
             .parse()
             .unwrap();
         assert!((initial_value - 2.0).abs() < 1e-8);
+
+        let parameterized = solve(&mut engine, "y'==a*y", "x", "y", &[]).unwrap();
+        assert_eq!(parameterized.status, OdeStatus::Solved);
+        assert_eq!(parameterized.constants, ["C"]);
+        assert!(parameterized.solution.contains('a'));
     }
 
     #[test]
@@ -1069,14 +1103,9 @@ mod tests {
             assert_eq!(result.status, OdeStatus::Solved, "{equation}");
             assert_eq!(result.method, OdeMethod::LinearFirstOrder);
             assert_eq!(result.residual, "0");
-            assert_eq!(result.constants.len(), 1, "{equation}: {result:#?}");
-            assert!(
-                result.constants[0].starts_with('C')
-                    && result.constants[0][1..]
-                        .chars()
-                        .all(|character| character.is_ascii_digit()),
-                "{equation}: {result:#?}"
-            );
+            assert_eq!(result.constants, ["C"], "{equation}: {result:#?}");
+            assert!(result.solution.contains('C'), "{equation}: {result:#?}");
+            assert!(!result.solution.contains("C7"), "{equation}: {result:#?}");
             assert!(!result.solution.contains("UniqueSymbol"), "{result:#?}");
             assert!(!result.solution.contains("niqueSymbol"), "{result:#?}");
         }
@@ -1470,6 +1499,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(elementary.result.method, OdeMethod::Separable);
+        assert_eq!(elementary.result.constants, ["C"]);
+        assert!(!elementary.result.solution.contains("C7"));
         assert!(elementary
             .steps
             .iter()
