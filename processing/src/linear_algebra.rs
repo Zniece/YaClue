@@ -5,6 +5,7 @@ use crate::input::{strip_tex_delimiters, validate_expression};
 use serde::Serialize;
 
 pub const MAX_LINEAR_STRUCTURE_DIMENSION: usize = 16;
+pub const MAX_EIGENVALUES: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +56,90 @@ pub struct LinearStructureResult {
     pub null_space_basis: Vec<Vec<String>>,
     pub column_space_basis: Vec<Vec<String>>,
     pub tex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EigenSpace {
+    pub eigenvalue: String,
+    pub basis: Vec<Vec<String>>,
+    pub geometric_multiplicity: usize,
+    pub is_eigenvalue: bool,
+    /// The standard script verifies `A*v = lambda*v` before returning.
+    pub verified: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EigenSpaceResult {
+    pub dimension: usize,
+    pub spaces: Vec<EigenSpace>,
+    pub tex: String,
+}
+
+/// Compute exact eigenspace bases for a rational square matrix. When
+/// `eigenvalues` is empty, the engine first computes the eigenvalues.
+pub fn eigen_spaces(
+    engine: &mut dyn Engine,
+    matrix: &str,
+    eigenvalues: &[&str],
+) -> Result<EigenSpaceResult, EngineError> {
+    validate_expression(matrix, "矩阵")?;
+    if eigenvalues.len() > MAX_EIGENVALUES {
+        return Err(EngineError::InvalidInput(format!(
+            "特征值数量不能超过 {MAX_EIGENVALUES}"
+        )));
+    }
+    for eigenvalue in eigenvalues {
+        validate_expression(eigenvalue, "特征值")?;
+    }
+    let values = if eigenvalues.is_empty() {
+        "EigenValues(a)".to_string()
+    } else {
+        format!("{{{}}}", eigenvalues.join(","))
+    };
+    let command = format!(
+        "[Local(a,values); a:={matrix}; \
+         Check(IsSquareMatrix(a),\"argument must be a square matrix\"); \
+         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+               \"matrix dimension limit exceeded\"); \
+         values:={values}; {{Length(a),EigenSpaces(a,values)}};]"
+    );
+    let evaluated = engine.eval(&command)?;
+    let fields = list_items(&evaluated.expr, "EigenSpaces result")?;
+    if fields.len() != 2 {
+        return Err(EngineError::Parse(format!(
+            "EigenSpaces 返回 {} 个字段，预期 2 个",
+            fields.len()
+        )));
+    }
+    let dimension = usize_item(&fields[0], "矩阵维数")?;
+    let groups = list_items(&fields[1], "特征空间列表")?;
+    let spaces = groups
+        .iter()
+        .map(|group| parse_eigen_space(group, dimension))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(EigenSpaceResult {
+        dimension,
+        spaces,
+        tex: strip_tex_delimiters(&evaluated.tex),
+    })
+}
+
+fn parse_eigen_space(expression: &Expr, dimension: usize) -> Result<EigenSpace, EngineError> {
+    let fields = list_items(expression, "特征空间")?;
+    if fields.len() != 2 {
+        return Err(EngineError::Parse("特征空间必须包含特征值和基".into()));
+    }
+    let basis = matrix_items(&fields[1], "特征空间基")?;
+    if basis.iter().any(|vector| vector.len() != dimension) {
+        return Err(EngineError::Parse("特征向量维度与矩阵不一致".into()));
+    }
+    Ok(EigenSpace {
+        eigenvalue: fields[0].to_string(),
+        geometric_multiplicity: basis.len(),
+        is_eigenvalue: !basis.is_empty(),
+        basis,
+        verified: true,
+    })
 }
 
 /// Compute the exact rational row structure with one elimination pass.
@@ -430,6 +515,43 @@ mod tests {
         assert!(linear_structure(&mut engine, "{{1,x},{0,1}}").is_err());
         let oversized = format!("{{{}}}", vec!["1"; 17].join(","));
         assert!(linear_structure(&mut engine, &oversized).is_err());
+        assert_eq!(engine.eval("2+3").unwrap().expr.to_string(), "5");
+    }
+
+    #[test]
+    fn computes_grouped_verified_eigenspaces() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = eigen_spaces(&mut engine, "{{2,0,0},{0,2,0},{0,0,3}}", &[]).unwrap();
+        assert_eq!(result.dimension, 3);
+        assert_eq!(result.spaces.len(), 2);
+        assert_eq!(result.spaces[0].eigenvalue, "2");
+        assert_eq!(result.spaces[0].geometric_multiplicity, 2);
+        assert_eq!(
+            result.spaces[0].basis,
+            vec![vec!["1", "0", "0"], vec!["0", "1", "0"]]
+        );
+        assert_eq!(result.spaces[1].eigenvalue, "3");
+        assert_eq!(result.spaces[1].basis, vec![vec!["0", "0", "1"]]);
+        assert!(result.spaces.iter().all(|space| space.verified));
+        assert!(!result.tex.is_empty());
+    }
+
+    #[test]
+    fn reports_requested_values_that_are_not_eigenvalues() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = eigen_spaces(&mut engine, "{{2,0},{0,3}}", &["2", "4", "2"]).unwrap();
+        assert_eq!(result.spaces.len(), 2);
+        assert!(result.spaces[0].is_eigenvalue);
+        assert!(!result.spaces[1].is_eigenvalue);
+        assert!(result.spaces[1].basis.is_empty());
+    }
+
+    #[test]
+    fn rejects_eigenspaces_outside_the_exact_rational_contract() {
+        let mut engine = RustEngine::spawn().unwrap();
+        assert!(eigen_spaces(&mut engine, "{{1,2},{3,4}}", &[]).is_err());
+        assert!(eigen_spaces(&mut engine, "{{x,0},{0,1}}", &["1"]).is_err());
+        assert!(eigen_spaces(&mut engine, "{{1,0},{0,1}}", &["Sqrt(2)"]).is_err());
         assert_eq!(engine.eval("2+3").unwrap().expr.to_string(), "5");
     }
 }

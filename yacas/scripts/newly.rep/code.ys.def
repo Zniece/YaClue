@@ -7,6 +7,7 @@ IsZeroVector
 WithValue
 CharacteristicEquation
 EigenValues
+EigenSpaces
 EigenVectors
 Rationalize
 ContFrac

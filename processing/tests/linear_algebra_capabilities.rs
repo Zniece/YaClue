@@ -59,11 +59,18 @@ fn invalid_decomposition_input_does_not_poison_the_engine() {
 }
 
 #[test]
-#[ignore = "known defect: EigenVectors exposes internal symbolic equations instead of vectors"]
 fn eigenvectors_have_a_product_usable_vector_contract() {
     let mut engine = RustEngine::spawn().expect("engine boot");
     let result = engine
         .eval("EigenVectors({{2,0},{0,3}},{2,3})")
         .expect("diagonal matrix eigenvectors");
-    assert!(!result.expr.to_string().contains("=="));
+    assert_eq!(result.expr.to_string(), "List(List(1,0),List(0,1))");
+    assert_eq!(
+        engine
+            .eval("{Simplify({{2,0},{0,3}}*{1,0}-2*{1,0}),Simplify({{2,0},{0,3}}*{0,1}-3*{0,1})}")
+            .unwrap()
+            .expr
+            .to_string(),
+        "List(List(0,0),List(0,0))"
+    );
 }

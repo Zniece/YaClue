@@ -932,10 +932,10 @@ get eigenvectors of a matrix
 
 **param eigenvalues:**list of eigenvalues as returned by {EigenValues}
 
-{EigenVectors} returns a list of the eigenvectors of a matrix.  It
-uses the eigenvalues and the matrix to set up n equations with  n
-unknowns for each eigenvalue, and then calls {Solve} to determine
-the values of each vector.
+`EigenVectors` returns a flat list containing a basis for each requested
+eigenspace. The current exact implementation accepts rational matrices and
+rational eigenvalues. It derives the vectors from exact null spaces and
+verifies `A*v=lambda*v` before returning.
 
 **Example:**
 
@@ -945,11 +945,34 @@ Out> {{1,2},{2,1}};
 In> e:=EigenValues(M)
 Out> {3,-1};
 In> EigenVectors(M,e)
-Out> {{-ki2/ -1,ki2},{-ki2,ki2}};
+Out> {{1,1},{-1,1}};
 
 ```
 
-> **See also:** [EigenValues](linear-algebra.md#eigenvaluesmatrix), [CharacteristicEquation](linear-algebra.md#characteristicequationmatrixvar)
+> **See also:** [EigenValues](linear-algebra.md#eigenvaluesmatrix), [EigenSpaces](linear-algebra.md#eigenspacesaeigenvalues), [CharacteristicEquation](linear-algebra.md#characteristicequationmatrixvar)
+
+
+### EigenSpaces(A,eigenvalues)
+
+return exact eigenspace bases grouped by eigenvalue
+
+**param A:** square matrix of exact rational numbers
+
+**param eigenvalues:** list of exact rational candidate eigenvalues
+
+`EigenSpaces` returns `{{lambda1,basis1},...}`. Repeated candidates are
+deduplicated in their original order. A candidate that is not an eigenvalue
+has an empty basis. Each returned vector is verified against
+`A*v=lambda*v`.
+
+**Example:**
+
+```
+In> EigenSpaces({{2,0,0},{0,2,0},{0,0,3}},{2,3})
+Out> {{2,{{1,0,0},{0,1,0}}},{3,{{0,0,1}}}};
+```
+
+> **See also:** [EigenValues](linear-algebra.md#eigenvaluesmatrix), [EigenVectors](linear-algebra.md#eigenvectorsaeigenvalues), [LinearStructure](linear-algebra.md#linearstructurea)
 
 
 ## Matrix decompositions
@@ -1230,4 +1253,3 @@ zeros if $a=3$.
 ```
 
 > **See also:** [Determinant](linear-algebra.md#determinantm), [Simplify](simplify.md#simplifyexpr), [Solve](solvers.md#solveeq-var), [PSolve](solvers.md#psolvepoly-var)
-

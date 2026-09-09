@@ -68,26 +68,37 @@ HoldArg("CharacteristicEquation",var);
     Roots(CharacteristicEquation(matrix,xx));
 ];
 
-EigenVectors(_matrix,_eigenvalues) <--
+Function("EigenSpaces", {matrix, eigenvalues})
 [
-  Local(result,n);
-/*  eigenvalues:=N(Eval(eigenvalues));  */
-  n:=Length(eigenvalues);
-  result:={};
-  ForEach(e,eigenvalues)
-  [
-    Local(possible);
-/* Echo({"1...",result}); */
-    possible:=OldSolve(matrix*MakeVector(k,n)==e*MakeVector(k,n),MakeVector(k,n))[1];
-/* Echo({"2..."}); */
-/* Echo({"2..."}); */
+    Local(result, values, value, shifted, structure, basis, vector, n);
+    Check(IsSquareMatrix(matrix),
+          "EigenSpaces: argument must be a square matrix");
+    Check(IsList(eigenvalues),
+          "EigenSpaces: eigenvalues must be a list");
+    n := Length(matrix);
+    values := RemoveDuplicates(eigenvalues);
+    result := {};
+    ForEach(value, values)
+    [
+        shifted := matrix - value * Identity(n);
+        structure := LinearStructure(shifted);
+        basis := structure[4];
+        ForEach(vector, basis)
+            Check(matrix * vector = value * vector,
+                  "EigenSpaces: internal eigenvector verification failed");
+        DestructiveAppend(result, {value, basis});
+    ];
+    result;
+];
 
-    If(Not(IsZeroVector(possible)),
-      DestructiveAppend(result,possible)
-      );
-/* Echo({"3..."}); */
-  ];
-  result;
+Function("EigenVectors", {matrix, eigenvalues})
+[
+    Local(result, space, vector);
+    result := {};
+    ForEach(space, EigenSpaces(matrix, eigenvalues))
+        ForEach(vector, space[2])
+            DestructiveAppend(result, vector);
+    result;
 ];
 
 
