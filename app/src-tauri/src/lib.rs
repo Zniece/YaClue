@@ -56,7 +56,7 @@ struct StepRequest {
 }
 
 #[tauri::command]
-fn calculate_steps(
+async fn calculate_steps(
     request: StepRequest,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
 ) -> Result<Vec<Step>, ErrorResponse> {
@@ -90,7 +90,7 @@ fn calculate_steps(
 }
 
 #[tauri::command]
-fn transform_expression(
+async fn transform_expression(
     expr: String,
     operation: String,
     variable: String,
@@ -115,7 +115,7 @@ fn transform_expression(
 }
 
 #[tauri::command]
-fn solve_equations(
+async fn solve_equations(
     equations: Vec<String>,
     variables: Vec<String>,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
@@ -127,7 +127,7 @@ fn solve_equations(
 }
 
 #[tauri::command]
-fn calculate_limit(
+async fn calculate_limit(
     expr: String,
     variable: String,
     at: String,
@@ -149,7 +149,7 @@ fn parse_limit_direction(direction: &str) -> Result<LimitDirection, ErrorRespons
 }
 
 #[tauri::command]
-fn calculate_limit_steps(
+async fn calculate_limit_steps(
     expr: String,
     variable: String,
     at: String,
@@ -188,7 +188,7 @@ fn ode_conditions(requests: &[OdeInitialConditionRequest]) -> Vec<InitialConditi
 }
 
 #[tauri::command]
-fn solve_ode(
+async fn solve_ode(
     equation: String,
     independent: String,
     dependent: String,
@@ -208,7 +208,7 @@ fn solve_ode(
 }
 
 #[tauri::command]
-fn solve_ode_steps(
+async fn solve_ode_steps(
     equation: String,
     independent: String,
     dependent: String,
@@ -240,7 +240,7 @@ struct NumericOdeOptionsRequest {
 }
 
 #[tauri::command]
-fn solve_ode_numeric(
+async fn solve_ode_numeric(
     equation: String,
     independent: String,
     dependent: String,
@@ -275,7 +275,7 @@ fn solve_ode_numeric(
 }
 
 #[tauri::command]
-fn approximate_numeric(
+async fn approximate_numeric(
     expr: String,
     precision_digits: u32,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
@@ -285,7 +285,7 @@ fn approximate_numeric(
 }
 
 #[tauri::command]
-fn find_numeric_root(
+async fn find_numeric_root(
     expr: String,
     variable: String,
     initial: f64,
@@ -305,7 +305,7 @@ fn find_numeric_root(
 }
 
 #[tauri::command]
-fn calculate_taylor(
+async fn calculate_taylor(
     expr: String,
     variable: String,
     point: String,
@@ -317,7 +317,7 @@ fn calculate_taylor(
 }
 
 #[tauri::command]
-fn calculate_matrix(
+async fn calculate_matrix(
     left: String,
     operation: String,
     right: Option<String>,
@@ -339,7 +339,7 @@ fn calculate_matrix(
 }
 
 #[tauri::command]
-fn sample_plot(
+async fn sample_plot(
     expr: String,
     variable: String,
     min: f64,
@@ -369,7 +369,7 @@ fn parse_assumption_fact(value: &str) -> Result<AssumptionFact, ErrorResponse> {
 }
 
 #[tauri::command]
-fn set_assumption(
+async fn set_assumption(
     symbol: String,
     fact: String,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
@@ -380,7 +380,7 @@ fn set_assumption(
 }
 
 #[tauri::command]
-fn clear_assumptions(
+async fn clear_assumptions(
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
 ) -> Result<(), ErrorResponse> {
     let mut engine = lock_engine(&engine)?;
@@ -388,7 +388,7 @@ fn clear_assumptions(
 }
 
 #[tauri::command]
-fn get_assumptions(
+async fn get_assumptions(
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
 ) -> Result<Vec<AssumptionState>, ErrorResponse> {
     let mut engine = lock_engine(&engine)?;
@@ -402,7 +402,7 @@ struct RawResult {
 }
 
 #[tauri::command]
-fn evaluate(
+async fn evaluate(
     expr: String,
     engine: tauri::State<'_, Mutex<RustEngineProxy>>,
 ) -> Result<RawResult, ErrorResponse> {
