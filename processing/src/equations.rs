@@ -703,6 +703,7 @@ fn parse_assignment(expr: &Expr) -> Result<Assignment, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::test_support::CountingEngine;
 
     #[test]
     fn solves_single_equations_and_parameterized_linear_forms() {
@@ -905,5 +906,25 @@ mod tests {
         assert!(standard.steps.len() > concise.steps.len());
         assert_eq!(concise.steps.len(), 1);
         assert_eq!(concise.steps[0].rule, "equation-result");
+    }
+
+    #[test]
+    fn equation_steps_use_one_filtered_tex_batch() {
+        let mut engine = CountingEngine::spawn();
+        solve(&mut engine, &["x^2-3*x+2==0"], &["x"]).unwrap();
+        assert!(engine.batch_sizes.is_empty());
+
+        engine.reset_counts();
+        let detailed =
+            solve_steps_with_verbosity(&mut engine, "x^2-3*x+2==0", "x", StepVerbosity::Detailed)
+                .unwrap();
+        assert_eq!(engine.batch_sizes, [detailed.steps.len()]);
+
+        engine.reset_counts();
+        let concise =
+            solve_steps_with_verbosity(&mut engine, "x^2-3*x+2==0", "x", StepVerbosity::Concise)
+                .unwrap();
+        assert_eq!(engine.batch_sizes, [concise.steps.len()]);
+        assert!(concise.steps.len() < detailed.steps.len());
     }
 }

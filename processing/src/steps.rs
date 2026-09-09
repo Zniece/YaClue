@@ -337,38 +337,12 @@ fn format_number(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{EvalResult, ReplEngine, RustEngine};
-
-    struct CountingEngine {
-        inner: RustEngine,
-        eval_calls: usize,
-        batch_sizes: Vec<usize>,
-    }
-
-    impl Engine for CountingEngine {
-        fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
-            self.eval_calls += 1;
-            self.inner.eval(command)
-        }
-
-        fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
-            self.eval_calls += 1;
-            self.inner.eval_expr(command)
-        }
-
-        fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
-            self.batch_sizes.push(expressions.len());
-            self.inner.render_tex_batch(expressions)
-        }
-    }
+    use crate::engine::{ReplEngine, RustEngine};
+    use crate::test_support::CountingEngine;
 
     #[test]
     fn verbosity_filters_before_rendering_visible_steps() {
-        let mut engine = CountingEngine {
-            inner: RustEngine::spawn().unwrap(),
-            eval_calls: 0,
-            batch_sizes: Vec::new(),
-        };
+        let mut engine = CountingEngine::spawn();
         let detailed =
             derive_steps_with_verbosity(&mut engine, "x^2", "x", StepVerbosity::Detailed).unwrap();
         assert!(detailed.iter().all(|step| !step.tex.is_empty()));
@@ -574,11 +548,7 @@ mod tests {
 
     #[test]
     fn definite_integral_verbosity_filters_new_events_before_tex() {
-        let mut engine = CountingEngine {
-            inner: RustEngine::spawn().unwrap(),
-            eval_calls: 0,
-            batch_sizes: Vec::new(),
-        };
+        let mut engine = CountingEngine::spawn();
         let detailed = derive_definite_with_verbosity(
             &mut engine,
             "x^2",

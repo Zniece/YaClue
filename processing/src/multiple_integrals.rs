@@ -566,6 +566,7 @@ fn boolean(value: &Expr, label: &str) -> Result<bool, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::test_support::CountingEngine;
 
     #[test]
     fn evaluates_rectangular_and_variable_bound_regions() {
@@ -866,5 +867,69 @@ mod tests {
         )
         .is_err());
         assert!(polar_integral(&mut engine, "r+x", "x", "y", "r", "theta", region,).is_err());
+    }
+
+    #[test]
+    fn iterated_integral_steps_replace_result_tex_with_one_filtered_batch() {
+        let inner = IntegralBound {
+            variable: "y",
+            lower: "0",
+            upper: "1",
+        };
+        let outer = IntegralBound {
+            variable: "x",
+            lower: "0",
+            upper: "1",
+        };
+        let mut engine = CountingEngine::spawn();
+        double_integral(&mut engine, "x+y", inner, outer).unwrap();
+        assert_eq!(engine.batch_sizes, [1]);
+
+        engine.reset_counts();
+        let detailed = double_integral_steps_with_verbosity(
+            &mut engine,
+            "x+y",
+            inner,
+            outer,
+            StepVerbosity::Detailed,
+        )
+        .unwrap();
+        assert_eq!(engine.batch_sizes, [detailed.steps.len()]);
+
+        engine.reset_counts();
+        let concise = double_integral_steps_with_verbosity(
+            &mut engine,
+            "x+y",
+            inner,
+            outer,
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        assert_eq!(engine.batch_sizes, [concise.steps.len()]);
+        assert!(concise.steps.len() < detailed.steps.len());
+
+        let region = PolarRegion {
+            radial_lower: "0",
+            radial_upper: "1",
+            angle_lower: "0",
+            angle_upper: "Pi/2",
+        };
+        engine.reset_counts();
+        polar_integral(&mut engine, "1", "x", "y", "r", "theta", region).unwrap();
+        assert_eq!(engine.batch_sizes, [1]);
+
+        engine.reset_counts();
+        let polar = polar_integral_steps_with_verbosity(
+            &mut engine,
+            "1",
+            "x",
+            "y",
+            "r",
+            "theta",
+            region,
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        assert_eq!(engine.batch_sizes, [polar.steps.len()]);
     }
 }

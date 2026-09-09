@@ -844,6 +844,7 @@ fn boolean(expression: &Expr, label: &str) -> Result<bool, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::test_support::CountingEngine;
 
     #[test]
     fn classifies_minimum_maximum_saddle_and_degenerate_points() {
@@ -962,5 +963,41 @@ mod tests {
         assert_eq!(irregular.status, LagrangeStatus::Unresolved);
         assert!(irregular.candidates.is_empty());
         assert!(analyze_lagrange(&mut engine, "x", "x);Echo(1);(x", "x", "y").is_err());
+    }
+
+    #[test]
+    fn extrema_steps_replace_result_tex_with_one_filtered_batch() {
+        let mut engine = CountingEngine::spawn();
+        analyze(&mut engine, "x^2+y^2", "x", "y").unwrap();
+        assert_eq!(engine.batch_sizes, [1]);
+
+        engine.reset_counts();
+        let detailed =
+            analyze_steps_with_verbosity(&mut engine, "x^2+y^2", "x", "y", StepVerbosity::Detailed)
+                .unwrap();
+        assert_eq!(engine.batch_sizes, [detailed.steps.len()]);
+
+        engine.reset_counts();
+        let concise =
+            analyze_steps_with_verbosity(&mut engine, "x^2+y^2", "x", "y", StepVerbosity::Concise)
+                .unwrap();
+        assert_eq!(engine.batch_sizes, [concise.steps.len()]);
+        assert!(concise.steps.len() < detailed.steps.len());
+
+        engine.reset_counts();
+        analyze_lagrange(&mut engine, "x^2+y^2", "x+y-1", "x", "y").unwrap();
+        assert_eq!(engine.batch_sizes, [1]);
+
+        engine.reset_counts();
+        let lagrange = analyze_lagrange_steps_with_verbosity(
+            &mut engine,
+            "x^2+y^2",
+            "x+y-1",
+            "x",
+            "y",
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        assert_eq!(engine.batch_sizes, [lagrange.steps.len()]);
     }
 }
