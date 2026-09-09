@@ -11,6 +11,7 @@ pub mod equations;
 pub mod input;
 pub mod limits;
 pub mod linear_algebra;
+pub mod multivariate;
 pub mod numeric;
 pub mod ode;
 pub mod ode_numeric;
