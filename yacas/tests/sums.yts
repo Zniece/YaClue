@@ -10,6 +10,10 @@ Verify( Sum(k,1,Infinity,Sqrt(k)), Infinity );
 Verify( Sum(k,2,Infinity,x^k/k!), Exp(x)-(x+1) );
 Verify( Sum(k,1,n,Sin(a)+Sin(b)+p),(Sin(a)+Sin(b)+p)*n );
 Verify( Sum(i, 0, n-1, r^i), (1-r^(n-1+1))/(1-r) );
+Verify(SeriesConvergence(k,0,(1/2)^k), {"absolutely_convergent","geometric",1/2,{},2});
+Verify(SeriesConvergence(k,1,1/k), {"divergent","p_series",1,{},Undefined});
+Verify(SeriesConvergence(k,1,k/2^k), {"absolutely_convergent","ratio",1/2,{},Undefined});
+Verify(SeriesConvergence(k,1,(1/2)^(k^2)), {"absolutely_convergent","root",0,{},Undefined});
 
 // New tests for Sum() ->
 Verify( Sum(k,0,n,k), n*(n+1)/2 );
@@ -379,4 +383,3 @@ Verify(Taylor'LPS'Coeffs(pp, 0, 3), {1, 1, 1/2, 0});
 Verify(pp, Taylor'LPS(0, {1,1,1/2,0}, x, Taylor'LPS'Compose(p1,p2)));
 
 ]; // LocalSymbols(p*)
-

@@ -17,4 +17,5 @@ pub mod ode;
 pub mod ode_numeric;
 pub mod plot;
 pub mod quadrature;
+pub mod series;
 pub mod steps;

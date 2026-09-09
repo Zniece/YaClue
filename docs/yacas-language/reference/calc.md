@@ -300,6 +300,29 @@ Out> 14;
 
 > **See also:** [Factor](number-theory.md#factorx)
 
+### SeriesConvergence(var, from, term)
+
+analyze a common infinite series
+
+`SeriesConvergence` returns
+`{status, method, testValue, conditions, value}`. It recognizes geometric
+and p-series directly and applies bounded shape-specific ratio and root
+tests to common exponential forms. `status` is one of
+`"absolutely_convergent"`, `"divergent"`, `"conditional"`, or
+`"inconclusive"`. A symbolic geometric ratio produces the condition
+`Abs(r)<1`; an unavailable closed form is represented by `Undefined`.
+
+The analyzer deliberately returns `inconclusive` for unsupported shapes
+instead of running an unbounded chain of symbolic limits. Product code can
+therefore use it as a predictable companion to `Sum`.
+
+```
+In> SeriesConvergence(k, 0, (1/2)^k);
+Out> {"absolutely_convergent","geometric",1/2,{},2};
+In> SeriesConvergence(k, 1, 1/k);
+Out> {"divergent","p_series",1,{},Undefined};
+```
+
 
 ### Taylor(var, at, order) expr
 

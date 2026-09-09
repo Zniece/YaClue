@@ -45,6 +45,7 @@
 /// Bernoulli(n): interface to Bernoulli numbers
 10 # Bernoulli(0) <-- 1;
 10 # Bernoulli(1) <-- -1/2;
+10 # Bernoulli(2) <-- 1/6;
 15 # Bernoulli(n_IsInteger)_(n<0) <-- Undefined;
 30 # Bernoulli(n_IsOdd) <-- 0;
 
