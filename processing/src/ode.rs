@@ -9,7 +9,7 @@ use crate::engine::{Engine, EngineError, Expr};
 use crate::equations::{self, SolveCompleteness, SolveStatus};
 use crate::input::{
     analyze_expression, contains_exact_power, contains_product_factor, contains_ratio_symbols,
-    strip_tex_delimiters, validate_expression, validate_symbol,
+    fresh_internal_symbols, strip_tex_delimiters, validate_expression, validate_symbol,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -354,23 +354,29 @@ fn solve_internal(
     } else {
         None
     };
-    let (mut candidates, mut residual, mut method, mut solver_events) =
-        if let Some(extension) = preferred {
-            (
-                extension.candidates,
-                Expr::Number("0".into()),
-                extension.method,
-                extension.events,
-            )
-        } else {
-            let upstream = engine.eval_expr(&format!(
-                "[Local(sol,res); sol:=OdeSolve({canonical}); \
-             res:=If(sol=True,{canonical},Simplify(OdeTest({canonical},sol))); \
-             {{sol,res,Upstream}};]"
+    let (mut candidates, mut residual, mut method, mut solver_events) = if let Some(extension) =
+        preferred
+    {
+        (
+            extension.candidates,
+            Expr::Number("0".into()),
+            extension.method,
+            extension.events,
+        )
+    } else {
+        let [solution_symbol, residual_symbol] = fresh_internal_symbols(
+            "OdeUpstream",
+            &[equation, independent, dependent, &canonical],
+            ["Solution", "Residual"],
+        );
+        let upstream = engine.eval_expr(&format!(
+                "[Local({solution_symbol},{residual_symbol}); {solution_symbol}:=OdeSolve({canonical}); \
+             {residual_symbol}:=If({solution_symbol}=True,{canonical},Simplify(OdeTest({canonical},{solution_symbol}))); \
+             {{{solution_symbol},{residual_symbol},Upstream}};]"
             ))?;
-            let (solution, residual, method) = parse_wrapper(upstream)?;
-            (vec![solution], residual, method, vec![])
-        };
+        let (solution, residual, method) = parse_wrapper(upstream)?;
+        (vec![solution], residual, method, vec![])
+    };
     if collect_events && method == OdeMethod::Upstream && residual.to_string() == "0" {
         if let Some(events) = elementary_growth_events(equation, independent, dependent) {
             method = OdeMethod::Separable;
@@ -874,28 +880,33 @@ fn try_extension(
     likely_variation: bool,
 ) -> Result<Option<ExtensionResult>, EngineError> {
     let suffix = if collect_events { "Data" } else { "" };
+    let [ext] = fresh_internal_symbols(
+        "OdeExtension",
+        &[canonical, independent, dependent],
+        ["Result"],
+    );
     let euler_attempt = if likely_euler {
-        format!("if (Length(ext) < 2) [ext:=OdeExtSolveEulerCauchy{suffix}({canonical});]; ")
+        format!("if (Length({ext}) < 2) [{ext}:=OdeExtSolveEulerCauchy{suffix}({canonical});]; ")
     } else {
         String::new()
     };
     let variation_attempt = if likely_variation {
         format!(
-            "if (Length(ext) < 2) [ext:=OdeExtSolveVariationOfParameters{suffix}({canonical});]; "
+            "if (Length({ext}) < 2) [{ext}:=OdeExtSolveVariationOfParameters{suffix}({canonical});]; "
         )
     } else {
         String::new()
     };
     let extension = engine.eval_expr(&format!(
-        "[Local(ext); \
-         ext:=OdeExtSolveUndeterminedCoefficients{suffix}({canonical}); \
+        "[Local({ext}); \
+         {ext}:=OdeExtSolveUndeterminedCoefficients{suffix}({canonical}); \
          {variation_attempt}\
          {euler_attempt}\
-         if (Length(ext) < 2) [ext:=OdeExtSolveSeparable{suffix}({canonical});]; \
-         if (Length(ext) < 2) [ext:=OdeExtSolveLinearFirstOrder{suffix}({canonical});]; \
-         if (Length(ext) < 2) [ext:=OdeExtSolveBernoulli{suffix}({canonical});]; \
-         if (Length(ext) < 2) [ext:=OdeExtSolveExact{suffix}({canonical});]; \
-         if (Length(ext) < 2) [ext:=OdeExtSolveHomogeneous{suffix}({canonical});]; ext;]"
+         if (Length({ext}) < 2) [{ext}:=OdeExtSolveSeparable{suffix}({canonical});]; \
+         if (Length({ext}) < 2) [{ext}:=OdeExtSolveLinearFirstOrder{suffix}({canonical});]; \
+         if (Length({ext}) < 2) [{ext}:=OdeExtSolveBernoulli{suffix}({canonical});]; \
+         if (Length({ext}) < 2) [{ext}:=OdeExtSolveExact{suffix}({canonical});]; \
+         if (Length({ext}) < 2) [{ext}:=OdeExtSolveHomogeneous{suffix}({canonical});]; {ext};]"
     ))?;
     let Some(parsed) = parse_extension(extension, independent, dependent)? else {
         return Ok(None);
@@ -1169,6 +1180,15 @@ mod tests {
             assert!(!result.constants.is_empty());
             assert!(!result.tex.is_empty());
         }
+    }
+
+    #[test]
+    fn preserves_parameters_matching_former_wrapper_temporaries() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = solve(&mut engine, "y'==sol*y", "x", "y", &[]).unwrap();
+        assert_eq!(result.status, OdeStatus::Solved);
+        assert_eq!(result.residual, "0");
+        assert!(result.solution.contains("sol"));
     }
 
     #[test]

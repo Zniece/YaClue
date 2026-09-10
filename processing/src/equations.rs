@@ -2,8 +2,8 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{
-    analyze_expression, direct_function_equation, root_call, strip_tex_delimiters,
-    validate_expression, validate_symbol,
+    analyze_expression, direct_function_equation, fresh_internal_symbols, root_call,
+    strip_tex_delimiters, validate_expression, validate_symbol,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -231,8 +231,13 @@ fn algebraic_equation_steps(
             format!("NormalForm(GetNumerDenom({left})[2]*GetNumerDenom({right})[2])")
         })
         .unwrap_or_else(|| format!("GetNumerDenom({equation})[2]"));
+    let [p, d, f, q] = fresh_internal_symbols(
+        "EquationDiagnostic",
+        &[equation, variable, &residual, &denominator, &checks],
+        ["Polynomial", "Degree", "Factored", "Denominator"],
+    );
     let diagnostic = engine.eval_expr(&format!(
-        "[Local(p,d,f,q); p:=NormalForm({residual}); q:={denominator}; If(CanBeUni({variable},p), [d:=Degree(p,{variable}); f:=If(d<=8,Factor(p),p); {{True,p,d,f,{{{checks}}},q}};], {{False,p,0,p,{{{checks}}},q}});]"
+        "[Local({p},{d},{f},{q}); {p}:=NormalForm({residual}); {q}:={denominator}; If(CanBeUni({variable},{p}), [{d}:=Degree({p},{variable}); {f}:=If({d}<=8,Factor({p}),{p}); {{True,{p},{d},{f},{{{checks}}},{q}}};], {{False,{p},0,{p},{{{checks}}},{q}}});]"
     ))?;
     let Expr::Call { head, args } = diagnostic else {
         return Err(EngineError::Parse("方程步骤诊断不是列表".into()));
@@ -508,8 +513,13 @@ fn solve_configured(
     };
     // Solve returns {} both for valid no-solution cases and unsupported
     // equations. Capture its global status flags in the same request.
+    let [solution, failed, type_error] = fresh_internal_symbols(
+        "SolveWrapper",
+        &[&solve_call],
+        ["Solution", "Failed", "TypeError"],
+    );
     let command = format!(
-        "[ClearErrors(); Local(solution,failed,typeError); solution:={solve_call}; failed:=IsError(\"Solve'Fails\"); typeError:=IsError(\"Solve'TypeError\"); ClearErrors(); {{solution,failed,typeError}};]"
+        "[ClearErrors(); Local({solution},{failed},{type_error}); {solution}:={solve_call}; {failed}:=IsError(\"Solve'Fails\"); {type_error}:=IsError(\"Solve'TypeError\"); ClearErrors(); {{{solution},{failed},{type_error}}};]"
     );
     let wrapper = engine.eval_expr(&command)?;
     let (raw_expr, failed, type_error) = parse_wrapper(wrapper)?;
@@ -827,9 +837,11 @@ fn verify_candidates(
                         assignment.variable, assignment.value
                     );
                 }
+                let [residual] =
+                    fresh_internal_symbols("EquationResidual", &[&substituted], ["Value"]);
                 format!(
-                    "[Local(residual); residual:=Simplify({substituted}); \
-                     If(IsNumber(residual),residual,N(residual,30));]"
+                    "[Local({residual}); {residual}:=Simplify({substituted}); \
+                     If(IsNumber({residual}),{residual},N({residual},30));]"
                 )
             });
             format!("{{{}}}", checks.collect::<Vec<_>>().join(","))
@@ -989,6 +1001,26 @@ mod tests {
                 .to_string(),
             "0"
         );
+    }
+
+    #[test]
+    fn equation_results_and_steps_preserve_former_temporary_names() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let stepped = solve_steps(&mut engine, "x+p==0", "x").unwrap();
+        assert_eq!(stepped.result.status, SolveStatus::Solved);
+        let value = &stepped.result.solutions[0][0].value;
+        assert_eq!(
+            engine
+                .eval(&format!("Simplify(({value})+p)"))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0"
+        );
+        assert!(stepped.steps.last().unwrap().expr.contains('p'));
+
+        let result = solve(&mut engine, &["x==solution"], &["x"]).unwrap();
+        assert_eq!(result.solutions[0][0].value, "solution");
     }
 
     #[test]
