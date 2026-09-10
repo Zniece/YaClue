@@ -278,6 +278,27 @@ fn engine_eval_returns_structured() {
 }
 
 #[test]
+fn repl_eval_executes_input_once() {
+    if !crate::engine::cpp_reference_available() {
+        eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
+        return;
+    }
+    let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+    engine.eval("replReviewCounter:=0").unwrap();
+    assert_eq!(
+        engine
+            .eval("replReviewCounter:=replReviewCounter+1")
+            .unwrap()
+            .expr,
+        Expr::Number("1".into())
+    );
+    assert_eq!(
+        engine.eval("replReviewCounter").unwrap().expr,
+        Expr::Number("1".into())
+    );
+}
+
+#[test]
 fn stepsd_works_through_engine() {
     if !crate::engine::cpp_reference_available() {
         eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");

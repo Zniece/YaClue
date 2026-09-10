@@ -1,6 +1,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -10,6 +11,7 @@ use super::{Engine, EngineError, EvalResult, Expr};
 const SENTINEL: &str = "\"__YACAS_END__\"";
 const BANNER_END: &str = "keep typing Example();";
 const EVAL_TIMEOUT: Duration = Duration::from_secs(10);
+static RESULT_SYMBOL_ID: AtomicU64 = AtomicU64::new(0);
 
 /// yacas 命令出错时的输出特征(启发式,逐行匹配)
 const ERROR_MARKERS: [&str; 9] = [
@@ -41,6 +43,9 @@ pub struct ReplEngine {
     rx: mpsc::Receiver<String>,
     /// 引擎已终止(超时/崩溃);下次调用时自动重启
     dead: bool,
+    /// Process-unique scratch symbol holding the one evaluated result while
+    /// FullForm and TeXForm render it without re-running caller input.
+    result_symbol: String,
 }
 
 impl ReplEngine {
@@ -93,6 +98,11 @@ impl ReplEngine {
             stdin,
             rx,
             dead: false,
+            result_symbol: format!(
+                "YaClue'ReplResult{}'{}",
+                std::process::id(),
+                RESULT_SYMBOL_ID.fetch_add(1, Ordering::Relaxed)
+            ),
         })
     }
 
@@ -180,19 +190,20 @@ fn strip_suffix_lines(fullform_raw: &str, result_raw: &str) -> String {
 
 impl Engine for ReplEngine {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
-        let raw = self.eval_raw(command)?;
+        let result_symbol = self.result_symbol.clone();
+        let raw = self.eval_raw(&format!("{result_symbol}:=({command})"))?;
         if looks_like_error(&raw) {
             return Err(EngineError::Eval(raw));
         }
         // 结构化结果:FullForm(expr) 减去尾部重复的结果行
-        let fullform_raw = self.eval_raw(&format!("FullForm({command})"))?;
+        let fullform_raw = self.eval_raw(&format!("FullForm({result_symbol})"))?;
         if looks_like_error(&fullform_raw) {
             return Err(EngineError::Eval(fullform_raw));
         }
         let fullform = strip_suffix_lines(&fullform_raw, &raw);
         let expr = Expr::parse_fullform(&fullform).map_err(EngineError::Parse)?;
         // TeXForm(expr)
-        let tex_raw = self.eval_raw(&format!("TeXForm({command})"))?;
+        let tex_raw = self.eval_raw(&format!("TeXForm({result_symbol})"))?;
         let tex = tex_raw
             .trim()
             .strip_prefix('"')
