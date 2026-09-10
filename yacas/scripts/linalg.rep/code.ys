@@ -599,11 +599,11 @@ Function("OrthogonalBasis",{W})[
 	V:=ZeroMatrix(Length(W),Length(W[1]) );
 
 	V[1]:=W[1];
-	Check(Not IsZero(Norm(V[1])) ,
+	InputCheck(Not IsZero(Norm(V[1])) ,
 		"OrthogonalBasis: Input vectors must be linearly independent");
 	For(k:=2,k<=Length(W),k++)[
 		V[k]:=W[k]-Sum(j,1,k-1,InProduct(W[k],V[j])*V[j]/Norm(V[j])^2);
-		Check(Not IsZero(Norm(V[k])) ,
+		InputCheck(Not IsZero(Norm(V[k])) ,
 			"OrthogonalBasis: Input vectors must be linearly independent");
 	];
 	V;
