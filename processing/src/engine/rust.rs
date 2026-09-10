@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use super::repl::{default_scripts_dir, default_steps_dir, steps_boot_cmds_from_dir};
+use super::repl::{
+    default_scripts_dir, default_steps_dir, steps_boot_cmds_from_dir, yacas_string_literal,
+};
 use super::{Engine, EngineError, EvalResult, Expr};
 
 pub struct RustEngine {
@@ -24,8 +26,11 @@ impl RustEngine {
             scripts.push('/');
         }
         let mut env = yacas_rs::env::Environment::new();
-        eval_cmd(&mut env, &format!("DefaultDirectory(\"{scripts}\")"))
-            .map_err(|e| EngineError::Spawn(format!("DefaultDirectory 失败: {e:?}")))?;
+        eval_cmd(
+            &mut env,
+            &format!("DefaultDirectory({})", yacas_string_literal(&scripts)),
+        )
+        .map_err(|e| EngineError::Spawn(format!("DefaultDirectory 失败: {e:?}")))?;
         eval_cmd(&mut env, "Load(\"yacasinit.ys\")")
             .map_err(|e| EngineError::Spawn(format!("装载 yacasinit.ys 失败: {e:?}")))?;
         for cmd in steps_boot_cmds_from_dir(&steps) {

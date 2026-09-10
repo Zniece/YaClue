@@ -288,10 +288,27 @@ fn steps_boot_cmds() -> Vec<String> {
 }
 
 pub(super) fn steps_boot_cmds_from_dir(dir: &str) -> Vec<String> {
+    let directory = yacas_string_literal(&format!("{dir}/"));
     vec![
-        format!("DefaultDirectory(\"{dir}/\")"),
+        format!("DefaultDirectory({directory})"),
         "Load(\"steps.rep/code.ys\")".to_string(),
     ]
+}
+
+pub(super) fn yacas_string_literal(value: &str) -> String {
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => literal.push_str("\\\""),
+            '\\' => literal.push_str("\\\\"),
+            '\t' => literal.push_str("\\t"),
+            '\n' => literal.push_str("\\n"),
+            character => literal.push(character),
+        }
+    }
+    literal.push('"');
+    literal
 }
 
 #[cfg(test)]
@@ -327,5 +344,20 @@ mod lifecycle_tests {
 
         assert!(matches!(engine.eval_raw("1"), Err(EngineError::Io(_))));
         assert!(engine.dead);
+    }
+
+    #[test]
+    fn startup_paths_are_escaped_as_yacas_strings() {
+        assert_eq!(
+            yacas_string_literal("a\\b\";SystemCall(\"bad\")\n"),
+            "\"a\\\\b\\\";SystemCall(\\\"bad\\\")\\n\""
+        );
+        assert_eq!(
+            steps_boot_cmds_from_dir("a\";SystemCall(\"bad\")"),
+            [
+                "DefaultDirectory(\"a\\\";SystemCall(\\\"bad\\\")/\")",
+                "Load(\"steps.rep/code.ys\")"
+            ]
+        );
     }
 }
