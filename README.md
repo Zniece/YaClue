@@ -142,15 +142,15 @@ CAS can load them as ordinary files. Android removes that storage when the
 application is uninstalled.
 
 The Android port is currently intended for development testing. Prereleases
-include a test-signed arm64 APK that can be installed directly for evaluation.
-It is not an app-store package: a distributable release APK or AAB requires a
-persistent signing key, and the repository does not contain one.
+include an optimized Release arm64 APK signed with an ephemeral evaluation key
+so it can be installed directly. It is not an app-store package: a store APK or
+AAB requires a persistent signing key, and the repository does not contain one.
 
 Contributor checks and CI/release-build details are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md). GitHub Actions runs formatting, Clippy,
 fast engine and processing tests, and the frontend JavaScript check on every
 push and pull request. Prerelease tags build bundled Linux, macOS, and Windows
-packages plus an Android arm64 test APK after the complete test suite passes.
+packages plus an Android arm64 Release APK after the complete test suite passes.
 
 The engine boots the script library through a `DefaultDirectory` +
 `Load("yacasinit.ys")` sequence (see `processing/src/engine/rust.rs`); the step
