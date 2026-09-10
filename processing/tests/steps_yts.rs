@@ -113,11 +113,8 @@ const SPEC_FILES: [(&str, &str); 9] = [
     ("texts.yts", include_str!("steps/texts.yts")),
 ];
 
-// 默认不跑:全量逐语句求值约 3 分钟(重头是断言内 Simplify 对拍)。
-// 发布验收/改动 steps.rep 后显式运行:
-//   cargo test -p processing --test steps_yts -- --ignored
+// 全量逐语句规范门禁，本机约 40 秒；普通 workspace 测试必须覆盖。
 #[test]
-#[ignore = "规范门禁,约 3 分钟;显式运行见文件头注释"]
 fn steps_yts_spec_all_green() {
     let mut engine = RustEngine::spawn().expect("RustEngine 启动失败");
     // testers.rep 属上游标准库,提供 Verify/TestYacas(启动链已登记,须用 Use 装载)

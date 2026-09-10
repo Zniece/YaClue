@@ -15,7 +15,7 @@ Install frontend dependencies with `npm ci` in `app/`. The reviewed step
 language suite is opt-in because it is slower:
 
 ```bash
-cargo test -p processing --test steps_yts -- --ignored
+cargo test -p processing --test steps_yts -- --test-threads=1
 ```
 
 Only regenerate golden output while intentionally changing expected steps.
