@@ -401,6 +401,14 @@ fn solve_internal(
     } else {
         OdeStatus::Unresolved
     };
+    let generated_constants = candidates
+        .iter()
+        .try_fold(Vec::new(), |mut all, candidate| {
+            all.extend(solution_constants(candidate, &analysis.symbols)?);
+            all.sort();
+            all.dedup();
+            Ok::<_, EngineError>(all)
+        })?;
     let mut constants = solution_constants(&solution, &analysis.symbols)?;
     let mut condition_status = if initial_conditions.is_empty() {
         InitialConditionStatus::NotRequested
@@ -444,8 +452,40 @@ fn solve_internal(
         condition_status = InitialConditionStatus::Unresolved;
     }
 
-    let display_constants = display_constant_names(equation, &constants)?;
-    let constant_mapping: Vec<_> = constants.iter().zip(&display_constants).collect();
+    let generated_display_names = display_constant_names(equation, &generated_constants)?;
+    let mut constant_mapping: Vec<(String, String)> = generated_constants
+        .iter()
+        .zip(&generated_display_names)
+        .map(|(internal, display)| (internal.clone(), display.clone()))
+        .collect();
+    let mut event_only_symbols = solver_events
+        .iter()
+        .try_fold(Vec::new(), |mut all, event| {
+            all.extend(machine_symbols(&event.expr)?);
+            all.retain(|symbol| {
+                !generated_constants.contains(symbol) && !analysis.symbols.contains(symbol)
+            });
+            all.sort();
+            all.dedup();
+            Ok::<_, EngineError>(all)
+        })?;
+    let auxiliary_names =
+        display_auxiliary_names(equation, &generated_display_names, event_only_symbols.len())?;
+    constant_mapping.extend(event_only_symbols.drain(..).zip(auxiliary_names));
+    let display_constants = constants
+        .iter()
+        .filter_map(|constant| {
+            constant_mapping
+                .iter()
+                .find(|(internal, _)| internal == constant)
+                .map(|(_, display)| display.clone())
+        })
+        .collect::<Vec<_>>();
+    for event in &mut solver_events {
+        for (internal, display) in &constant_mapping {
+            event.expr = replace_identifier(&event.expr, internal, display);
+        }
+    }
     let (solution, solutions, solution_branches, tex) = if status == OdeStatus::Solved {
         let mut rendered_solutions = Vec::new();
         let mut branches = Vec::new();
@@ -482,7 +522,10 @@ fn solve_internal(
         // Unsolved output can contain internal derivative placeholders such as
         // y(1). Evaluating that residual again may try to define a user
         // function, so preserve the verified engine tree verbatim.
-        let raw = solution.to_string();
+        let mut raw = translate_event_expression(&solution.to_string(), independent, dependent);
+        for (internal, display) in &constant_mapping {
+            raw = replace_identifier(&raw, internal, display);
+        }
         (
             raw.clone(),
             vec![raw.clone()],
@@ -504,7 +547,11 @@ fn solve_internal(
             solutions,
             solution_branches,
             tex,
-            residual: residual.to_string(),
+            residual: constant_mapping
+                .iter()
+                .fold(residual.to_string(), |value, (internal, display)| {
+                    replace_identifier(&value, internal, display)
+                }),
             constants: display_constants,
         },
         solver_events,
@@ -791,6 +838,32 @@ fn translate_event_expression(expression: &str, independent: &str, dependent: &s
     output
 }
 
+fn replace_identifier(expression: &str, from: &str, to: &str) -> String {
+    if from == to {
+        return expression.to_string();
+    }
+    let mut output = String::with_capacity(expression.len());
+    let mut chars = expression.char_indices().peekable();
+    while let Some((start, character)) = chars.next() {
+        if character.is_ascii_alphabetic() {
+            let mut end = start + character.len_utf8();
+            while let Some(&(index, next)) = chars.peek() {
+                if next.is_ascii_alphanumeric() || next == '_' || next == '\'' {
+                    chars.next();
+                    end = index + next.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let token = &expression[start..end];
+            output.push_str(if token == from { to } else { token });
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
 fn try_extension(
     engine: &mut dyn Engine,
     canonical: &str,
@@ -934,6 +1007,36 @@ fn display_constant_names(
     Ok(names)
 }
 
+fn machine_symbols(expression: &str) -> Result<Vec<String>, EngineError> {
+    let mut symbols = analyze_expression(expression, "ODE 教学事件")?.symbols;
+    symbols.retain(|symbol| {
+        symbol
+            .strip_prefix('C')
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+            || symbol.contains("UniqueSymbol")
+            || symbol.contains("niqueSymbol")
+    });
+    Ok(symbols)
+}
+
+fn display_auxiliary_names(
+    equation: &str,
+    reserved: &[String],
+    count: usize,
+) -> Result<Vec<String>, EngineError> {
+    let occupied = analyze_expression(equation, "微分方程")?.symbols;
+    let mut names = Vec::with_capacity(count);
+    let mut next = 1usize;
+    while names.len() < count {
+        let candidate = format!("A{next}");
+        next += 1;
+        if !occupied.contains(&candidate) && !reserved.contains(&candidate) {
+            names.push(candidate);
+        }
+    }
+    Ok(names)
+}
+
 fn is_implicit_solution(solution: &Expr) -> bool {
     matches!(solution, Expr::Call { head, args } if (head == "=" || head == "==") && args.len() == 2)
 }
@@ -1036,6 +1139,20 @@ mod tests {
     use super::*;
     use crate::engine::RustEngine;
 
+    fn assert_stable_ode_constants(expression: &str, allowed: &[&str]) {
+        let analysis = analyze_expression(expression, "ODE 公开表达式").unwrap();
+        for symbol in analysis.symbols {
+            let generated_constant = symbol.strip_prefix('C').is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+            }) || symbol.contains("UniqueSymbol")
+                || symbol.contains("niqueSymbol");
+            assert!(
+                !generated_constant || allowed.contains(&symbol.as_str()),
+                "internal ODE constant leaked in {expression}: {symbol}"
+            );
+        }
+    }
+
     #[test]
     fn solves_first_and_second_order_equations() {
         let mut engine = RustEngine::spawn().unwrap();
@@ -1128,6 +1245,53 @@ mod tests {
         );
         assert!(result.constants.is_empty());
         assert_eq!(result.residual, "0");
+    }
+
+    #[test]
+    fn normalizes_internal_constants_across_results_events_and_initial_values() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for _ in 0..8 {
+            solve(&mut engine, "y'==y", "x", "y", &[]).unwrap();
+        }
+
+        let stepped = solve_steps(&mut engine, "y'==y+x", "x", "y", &[]).unwrap();
+        assert_eq!(stepped.result.constants, ["C"]);
+        assert_stable_ode_constants(&stepped.result.solution, &["C"]);
+        assert_stable_ode_constants(&stepped.result.residual, &["C"]);
+        for solution in &stepped.result.solutions {
+            assert_stable_ode_constants(solution, &["C"]);
+        }
+        for branch in &stepped.result.solution_branches {
+            assert_stable_ode_constants(&branch.expression, &["C"]);
+        }
+        for step in &stepped.steps {
+            assert_stable_ode_constants(&step.expr, &["C"]);
+            assert!(!step.tex.contains("C_{3"), "{step:#?}");
+        }
+
+        let initial = solve_steps(
+            &mut engine,
+            "y'==y+x",
+            "x",
+            "y",
+            &[InitialCondition {
+                derivative_order: 0,
+                point: "0",
+                value: "1",
+            }],
+        )
+        .unwrap();
+        assert!(initial.result.constants.is_empty());
+        for step in &initial.steps {
+            assert_stable_ode_constants(&step.expr, &["C"]);
+        }
+
+        let user_named_parameter = solve_steps(&mut engine, "y'==y+C311*x", "x", "y", &[]).unwrap();
+        assert!(user_named_parameter.result.solution.contains("C311"));
+        assert!(user_named_parameter
+            .steps
+            .iter()
+            .any(|step| step.expr.contains("C311")));
     }
 
     #[test]
@@ -1558,11 +1722,9 @@ mod tests {
             ),
         ] {
             let stepped = solve_steps(&mut engine, equation, "x", "y", &[]).unwrap();
-            assert!(stepped
-                .steps
-                .iter()
-                .all(|step| !step.expr.contains("UniqueSymbol")
-                    && !step.expr.contains("niqueSymbol")));
+            for step in &stepped.steps {
+                assert_stable_ode_constants(&step.expr, &["C", "C1", "C2"]);
+            }
             for rule in expected_rules {
                 assert!(
                     stepped.steps.iter().any(|step| step.rule == *rule),
