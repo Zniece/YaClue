@@ -13,6 +13,8 @@ val tauriProperties = Properties().apply {
     }
 }
 
+val releaseKeystorePath = System.getenv("YACLUE_ANDROID_KEYSTORE")
+
 android {
     compileSdk = 36
     namespace = "io.github.zniece.yaclue"
@@ -23,6 +25,16 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    if (releaseKeystorePath != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = System.getenv("YACLUE_ANDROID_STORE_PASSWORD")
+                keyAlias = System.getenv("YACLUE_ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("YACLUE_ANDROID_KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -38,6 +50,9 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = true
+            if (releaseKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))

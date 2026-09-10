@@ -97,7 +97,7 @@ jobs:
           prerelease: true
 
   android:
-    name: Android arm64 test APK
+    name: Android arm64 Release APK
     needs: [validate, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -122,16 +122,23 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
-      - name: Build Android test APK
+      - name: Create ephemeral alpha signing key
+        run: |
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/yaclue-alpha.jks" -storepass yaclue-alpha -alias yaclue-alpha -keypass yaclue-alpha -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=YaClue Alpha,OU=Testing,O=YaClue,L=Unknown,ST=Unknown,C=US"
+          echo "YACLUE_ANDROID_KEYSTORE=$RUNNER_TEMP/yaclue-alpha.jks" >> "$GITHUB_ENV"
+          echo "YACLUE_ANDROID_STORE_PASSWORD=yaclue-alpha" >> "$GITHUB_ENV"
+          echo "YACLUE_ANDROID_KEY_ALIAS=yaclue-alpha" >> "$GITHUB_ENV"
+          echo "YACLUE_ANDROID_KEY_PASSWORD=yaclue-alpha" >> "$GITHUB_ENV"
+      - name: Build Android Release APK
         working-directory: app
         run: |
           export NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
-          npm run tauri -- android build --debug --target aarch64 --apk --ci
+          npm run tauri -- android build --target aarch64 --apk --ci
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YaClue-Android-arm64-test-apk
-          path: app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
+          name: YaClue-Android-arm64-release-apk
+          path: app/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
           if-no-files-found: error
       - name: Attach APK to prerelease
         if: github.event_name == 'push'
@@ -139,4 +146,4 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           prerelease: true
-          files: app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
+          files: app/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
