@@ -508,7 +508,7 @@ mod tests {
             ("Limit(x,0)Sin(x)/x", "Limit", 3),
             ("N(Pi,30)", "N", 2),
             ("OdeSolve(y'==y)", "OdeSolve", 1),
-            ("OldSolve({x+y==3,x-y==1},{x,y})", "OldSolve", 2),
+            ("Solve({x+y==3,x-y==1},{x,y})", "Solve", 2),
             ("Plot(Sin(x),x,-6.28,6.28)", "Plot", 4),
         ] {
             let call = root_call(source, "表达式").unwrap().unwrap();

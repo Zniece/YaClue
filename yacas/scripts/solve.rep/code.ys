@@ -621,21 +621,6 @@ UnFence("Solve'SimpleBackSubstitution'FindAlternativeForms",1);
 
 
 
-/********** OldSolve **********/
-10 # OldSolve(eq_IsList,var_IsList) <-- Solve'SimpleBackSubstitution(eq,var);
-
-
-90 # OldSolve((left_IsList) == right_IsList,_var) <--
-      OldSolve(Map("==",{left,right}),var);
-
-
-100 # OldSolve(_left == _right,_var) <--
-     SuchThat(left - right , 0 , var);
-
-/* HoldArg("OldSolve",arg1); */
-/* HoldArg("OldSolve",arg2); */
-
-
 10 # ContainsExpression(_body,_body) <-- True;
 15 # ContainsExpression(body_IsAtom,_expr) <-- False;
 20 # ContainsExpression(body_IsFunction,_expr) <--
@@ -777,5 +762,4 @@ Function("Newton",{function,variable,initial,accuracy,min,max})
   if (result <= min Or result >= max) [result := Fail;];
   result;
 ];
-
 

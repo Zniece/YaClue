@@ -672,7 +672,7 @@ fn dispatch_expression_with_engine(
                     &result,
                 );
             }
-            ("Solve" | "OldSolve", [equations, variables]) => {
+            ("Solve", [equations, variables]) => {
                 let equations = list_or_single(equations, "方程列表")?;
                 let variables = list_or_single(variables, "变量列表")?;
                 let equation_refs: Vec<_> = equations.iter().map(String::as_str).collect();
@@ -1151,7 +1151,7 @@ mod tests {
         assert!(!ode.expression.contains("C7"));
 
         let equations = process_expression_with_engine(
-            request("OldSolve({x+y==3,x-y==1},{x,y})", false),
+            request("Solve({x+y==3,x-y==1},{x,y})", false),
             &mut engine,
         )
         .unwrap();

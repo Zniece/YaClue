@@ -28,61 +28,6 @@ solutions, or if {Solve} is  unable to find any, then an empty list
 is returned.    The current implementation is far from perfect. In
 particular, the  user should keep the following points in mind:
 
-### OldSolve(eq, var)
-
-old version of {Solve}
-
-**param eq:**single identity equation
-
-**param var:**single variable
-
-**param eqlist:**list of identity equations
-
-**param varlist:**list of variables
-
-This is an older version of {Solve}. It is retained for two
-reasons. The first one is philosophical: it is good to have
-multiple  algorithms available. The second reason is more
-practical: the newer  version cannot handle systems of equations,
-but {OldSolve} can.    This command tries to solve one or more
-equations. Use the first form  to solve a single equation and the
-second one for systems of  equations.    The first calling sequence
-solves the equation "eq" for the variable  "var". Use the {==}
-operator to form the equation.  The value of "var" which satisfies
-the equation, is returned. Note  that only one solution is found
-and returned.    To solve a system of equations, the second form
-should be used. It  solves the system of equations contained in the
-list "eqlist" for  the variables appearing in the list "varlist". A
-list of results is  returned, and each result is a list containing
-the values of the  variables in "varlist". Again, at most a single
-solution is  returned.    The task of solving a single equation is
-simply delegated to {SuchThat}. Multiple equations are solved
-recursively:  firstly, an equation is sought in which one of the
-variables occurs  exactly once; then this equation is solved with
-{SuchThat}; and finally the solution is substituted in the  other
-equations by {Eliminate} decreasing the number  of equations by
-one. This suffices for all linear equations and a  large group of
-simple nonlinear equations.
-
-**Example:**
-
-```
-In> OldSolve(a+x*y==z,x)
-Out> (z-a)/y;
-In> OldSolve({a*x+y==0,x+z==0},{x,y})
-Out> {{-z,z*a}};
-This means that "x = (z-a)/y" is a solution of the first equation
-and that "x = -z", "y = z*a" is a solution of the systems of
-equations in the second command.
-An example which {OldSolve} cannot solve:
-In> OldSolve({x^2-x == y^2-y,x^2-x == y^3+y},{x,y});
-Out> {};
-
-```
-
-> **See also:** [Solve](solvers.md#solveeq-var), [SuchThat](solvers.md#suchthatexpr-var), [Eliminate](solvers.md#eliminatevar-value-expr), [PSolve](solvers.md#psolvepoly-var), `==`
-
-
 ### SuchThat(expr, var)
 
 special purpose solver
@@ -114,7 +59,7 @@ Out> (-c)/(a+b);
 
 ```
 
-> **See also:** [Solve](solvers.md#solveeq-var), [OldSolve](solvers.md#oldsolveeq-var), `Subst`, [Simplify](simplify.md#simplifyexpr)
+> **See also:** [Solve](solvers.md#solveeq-var), `Subst`, [Simplify](simplify.md#simplifyexpr)
 
 
 ### Eliminate(var, value, expr)
@@ -392,5 +337,4 @@ And b==3,c==d And d==2};
 ```
 
 > **See also:** `Where`, [Solve](solvers.md#solveeq-var)
-
 

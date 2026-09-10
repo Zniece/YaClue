@@ -661,14 +661,6 @@ return `True`, otherwise  it will return `False`.
 **Example:**
 
 ```
-In> OldSolve({x+2==0},{x})
-Out> {{-2}};
-In> V(OldSolve({x+2==0},{x}))
-Entering OldSolve
-From  x+2==0  it follows that  x  = -2
-x+2==0  simplifies to  True
-Leaving OldSolve
-Out> {{-2}};
 In> InVerboseMode()
 Out> False
 In> V(InVerboseMode())
@@ -676,7 +668,7 @@ Out> True
 
 ```
 
-> **See also:** [Echo](io.md#echoitem), [N](arithmetic.md#nexpression), [OldSolve](solvers.md#oldsolveeq-var), [InVerboseMode](io.md#inverbosemode)
+> **See also:** [Echo](io.md#echoitem), [N](arithmetic.md#nexpression), [InVerboseMode](io.md#inverbosemode)
 
 
 ### InVerboseMode()
@@ -696,7 +688,7 @@ Out> True
 
 ```
 
-> **See also:** [Echo](io.md#echoitem), [N](arithmetic.md#nexpression), [OldSolve](solvers.md#oldsolveeq-var), [V](io.md#vexpression)
+> **See also:** [Echo](io.md#echoitem), [N](arithmetic.md#nexpression), [V](io.md#vexpression)
 
 
 ### XmlExplodeTag(xmltext)
@@ -1064,5 +1056,4 @@ Out> Infinity
 ```
 
 > **See also:** [OMRead](io.md#omread), [OMForm](io.md#omformexpression)
-
 

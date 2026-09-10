@@ -112,7 +112,7 @@ fn classify(
                 ValueKind::Equation
             } else if head
                 .as_ref()
-                .is_some_and(|head| matches!(head.as_ref(), "Solve" | "OldSolve" | "OdeSolve"))
+                .is_some_and(|head| matches!(head.as_ref(), "Solve" | "OdeSolve"))
             {
                 ValueKind::SolutionSet
             } else if head.as_ref().is_some_and(|head| head.as_ref() == "List") {
@@ -252,7 +252,7 @@ mod tests {
             })
         );
 
-        let solutions = analyze_input("OldSolve({x==1},{x})", "表达式").unwrap();
+        let solutions = analyze_input("Solve({x==1},{x})", "表达式").unwrap();
         assert_eq!(solutions.semantic.kind, ValueKind::SolutionSet);
         assert_eq!(solutions.semantic.completeness, Some(Completeness::Unknown));
 
