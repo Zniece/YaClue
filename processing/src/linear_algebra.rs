@@ -622,6 +622,14 @@ fn checked_command(left: &str, operation: MatrixOperation, right: Option<&str>) 
 }
 
 fn unresolved(expr: &Expr, operation: MatrixOperation) -> bool {
+    if operation == MatrixOperation::Eigenvalues
+        && matches!(expr, Expr::Call { head, args } if head == "List" && args.is_empty())
+    {
+        // Every non-empty square matrix has complex eigenvalues. The script
+        // library uses an empty list when it cannot construct them, so do not
+        // expose that sentinel as a successfully completed computation.
+        return true;
+    }
     let expected = match operation {
         MatrixOperation::Transpose => "Transpose",
         MatrixOperation::Determinant => "Determinant",
