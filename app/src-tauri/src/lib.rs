@@ -695,11 +695,30 @@ fn dispatch_expression_with_engine(
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
     let call = &analyzed.root_call;
     let verbosity = parse_verbosity(&request.verbosity)?;
+    if request.steps
+        && call
+            .as_ref()
+            .is_some_and(processing::composition::is_candidate)
+    {
+        if let Some(result) =
+            processing::composition::execute_steps(&mut *engine, &request.expression, verbosity)
+                .map_err(message)?
+        {
+            return unified_result(
+                "composition",
+                "组合运算",
+                result.value.clone(),
+                result.tex.clone(),
+                result.steps.clone(),
+                &result,
+            );
+        }
+    }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
             ("D", [variable, expression]) | ("Deriv", [variable, expression]) => {
                 if request.steps {
-                    let steps = processing::steps::derive_composed_steps_order_with_verbosity(
+                    let steps = processing::steps::derive_steps_order_with_verbosity(
                         &mut *engine,
                         expression,
                         variable,
@@ -716,7 +735,7 @@ fn dispatch_expression_with_engine(
                     .parse::<u32>()
                     .map_err(|_| invalid_input("导数阶数必须是非负整数"))?;
                 if request.steps {
-                    let steps = processing::steps::derive_composed_steps_order_with_verbosity(
+                    let steps = processing::steps::derive_steps_order_with_verbosity(
                         &mut *engine,
                         expression,
                         variable,
@@ -1422,6 +1441,7 @@ mod tests {
         let composed =
             process_expression_with_engine(request("D(x)Integrate(x)x*Exp(x)", true), &mut engine)
                 .unwrap();
+        assert_eq!(composed.kind, "composition");
         let integration = composed
             .steps
             .iter()
