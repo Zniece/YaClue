@@ -67,7 +67,11 @@ pub struct IntrinsicLoweringResult {
     pub value: String,
     pub tex: String,
     pub conditions: ConditionSet,
-    pub certificate: LoweringCertificate,
+    /// Omitted on the no-steps fast path to keep teaching history out of the
+    /// current-value metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<LoweringCertificate>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Step>,
 }
 
@@ -84,9 +88,10 @@ pub fn try_lower_improper_integral(
     request: &ImproperIntegralRequest,
     verbosity: Option<StepVerbosity>,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
-    if !cheap_gamma_feature(request) {
+    let Some(signature) = select_signature(request) else {
         return Ok(None);
-    }
+    };
+    debug_assert_eq!(signature.intrinsic, IntrinsicKind::Gamma);
     let Some(matched) = match_gamma_kernel(request)? else {
         return Ok(None);
     };
@@ -120,10 +125,10 @@ pub fn try_lower_improper_integral(
     let evaluated = engine.eval(&target)?;
     let value = evaluated.expr.to_string();
     let tex = strip_tex_delimiters(&evaluated.tex);
-    let certificate = LoweringCertificate {
+    let certificate = verbosity.map(|_| LoweringCertificate {
         rule: "gamma-euler-kernel".into(),
-        source_kind: DefinedObjectKind::ImproperIntegral,
-        intrinsic: IntrinsicKind::Gamma,
+        source_kind: signature.source,
+        intrinsic: signature.intrinsic,
         bindings: vec![
             RuleBinding {
                 name: "parameter".into(),
@@ -144,7 +149,7 @@ pub fn try_lower_improper_integral(
         ],
         conditions: conditions.clone(),
         verification: LoweringVerification::StructuralKernelMatch,
-    };
+    });
     let steps = verbosity
         .map(|_| {
             vec![Step {
@@ -173,6 +178,12 @@ fn cheap_gamma_feature(request: &ImproperIntegralRequest) -> bool {
         && request.upper.trim() == "Infinity"
         && request.singular_points.is_empty()
         && request.expression.contains("Exp")
+}
+
+fn select_signature(request: &ImproperIntegralRequest) -> Option<&'static IntrinsicSignature> {
+    // Feature selection is constant-time and points directly at its registry
+    // slot. It never walks unrelated recognizers.
+    cheap_gamma_feature(request).then_some(&INTRINSIC_SIGNATURES[0])
 }
 
 fn match_gamma_kernel(
@@ -349,7 +360,35 @@ fn source_expression(request: &ImproperIntegralRequest) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::RustEngine;
+    use crate::engine::{EvalResult, Expr, RustEngine};
+
+    struct CountingEngine {
+        inner: RustEngine,
+        evals: usize,
+        expression_evals: usize,
+    }
+
+    impl CountingEngine {
+        fn spawn() -> Self {
+            Self {
+                inner: RustEngine::spawn().unwrap(),
+                evals: 0,
+                expression_evals: 0,
+            }
+        }
+    }
+
+    impl Engine for CountingEngine {
+        fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
+            self.evals += 1;
+            self.inner.eval(command)
+        }
+
+        fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
+            self.expression_evals += 1;
+            self.inner.eval_expr(command)
+        }
+    }
 
     fn request(expression: &str) -> ImproperIntegralRequest {
         ImproperIntegralRequest {
@@ -429,5 +468,31 @@ mod tests {
             INTRINSIC_SIGNATURES[0].feature,
             SourceFeature::PositiveHalfLineExponentialKernel
         );
+    }
+
+    #[test]
+    fn fast_paths_bound_engine_work_and_teaching_metadata() {
+        let mut engine = CountingEngine::spawn();
+        let miss = try_lower_improper_integral(&mut engine, &request("Sin(t)"), None).unwrap();
+        assert!(miss.is_none());
+        assert_eq!((engine.evals, engine.expression_evals), (0, 0));
+
+        let lowered = try_lower_improper_integral(&mut engine, &request("t^(a-1)*Exp(-t)"), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!((engine.evals, engine.expression_evals), (1, 0));
+        assert!(lowered.steps.is_empty());
+        assert!(lowered.certificate.is_none());
+
+        let stepped = try_lower_improper_integral(
+            &mut engine,
+            &request("t^(a-1)*Exp(-t)"),
+            Some(StepVerbosity::Detailed),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((engine.evals, engine.expression_evals), (2, 0));
+        assert_eq!(stepped.steps.len(), 1);
+        assert_eq!(stepped.certificate.unwrap().bindings.len(), 4);
     }
 }
