@@ -64,7 +64,7 @@ pub fn transform(
 
     // Evaluate the input independently so `changed` describes the requested
     // transformation rather than ordinary parsing/canonicalization.
-    let before = engine.eval(input)?.expr;
+    let before = engine.eval_expr(input)?;
     let result = engine.eval(&command)?;
     let unresolved = matches!(&result.expr, Expr::Call { head, .. } if head == operation);
     Ok(TransformResult {
