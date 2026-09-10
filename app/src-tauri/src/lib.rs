@@ -722,7 +722,12 @@ fn result_metadata(
 
 fn condition_set_from_value(value: Option<&Value>) -> Result<ConditionSet, ErrorResponse> {
     let mut conditions = Vec::new();
-    if let Some(Value::Array(items)) = value {
+    let items = match value {
+        Some(Value::Array(items)) => Some(items),
+        Some(Value::Object(object)) => object.get("conditions").and_then(Value::as_array),
+        _ => None,
+    };
+    if let Some(items) = items {
         for item in items {
             collect_conditions(item, &mut conditions);
         }
@@ -739,6 +744,29 @@ fn collect_conditions(value: &Value, output: &mut Vec<Condition>) {
         }
         return;
     };
+    if let Some(predicate) = object.get("predicate").and_then(Value::as_str) {
+        let expression = object
+            .get("expression")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        output.push(match predicate {
+            "real_part_positive" => Condition::RealPartPositive { expression },
+            "positive" => Condition::Positive { expression },
+            "negative" => Condition::Negative { expression },
+            "non_zero" => Condition::NonZero { expression },
+            "real" => Condition::Real { expression },
+            "integer" => Condition::Integer { expression },
+            _ => Condition::Unknown {
+                description: object
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or("未知条件")
+                    .into(),
+            },
+        });
+        return;
+    }
     match object.get("kind").and_then(Value::as_str) {
         Some("property") => {
             let expression = object
@@ -885,6 +913,24 @@ fn dispatch_expression_with_engine(
                     singular_points: points,
                 };
                 let step_verbosity = request.steps.then_some(verbosity);
+                if head == "ImproperIntegral" {
+                    if let Some(lowered) = processing::intrinsics::try_lower_improper_integral(
+                        &mut *engine,
+                        &object_request,
+                        step_verbosity,
+                    )
+                    .map_err(message)?
+                    {
+                        return unified_result(
+                            "intrinsic",
+                            "原生特殊函数",
+                            lowered.value.clone(),
+                            lowered.tex.clone(),
+                            lowered.steps.clone(),
+                            &lowered,
+                        );
+                    }
+                }
                 let result = if head == "PrincipalValueIntegral" {
                     processing::improper_integrals::principal_value(
                         &mut *engine,
@@ -922,6 +968,22 @@ fn dispatch_expression_with_engine(
                     upper: upper.clone(),
                     singular_points: Vec::new(),
                 };
+                if let Some(lowered) = processing::intrinsics::try_lower_improper_integral(
+                    &mut *engine,
+                    &object_request,
+                    request.steps.then_some(verbosity),
+                )
+                .map_err(message)?
+                {
+                    return unified_result(
+                        "intrinsic",
+                        "原生特殊函数",
+                        lowered.value.clone(),
+                        lowered.tex.clone(),
+                        lowered.steps.clone(),
+                        &lowered,
+                    );
+                }
                 let result = processing::improper_integrals::evaluate(
                     &mut *engine,
                     &object_request,
@@ -1693,8 +1755,24 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(improper.kind, "defined_object");
+        assert_eq!(improper.kind, "intrinsic");
         assert_eq!(improper.expression, "1");
+
+        let parameterized_gamma = process_expression_with_engine(
+            request("Integrate(t,0,Infinity)t^(1/x-1)*Exp(-t)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(parameterized_gamma.kind, "intrinsic");
+        assert_eq!(
+            parameterized_gamma.outcome.conditionality,
+            processing::protocol::Conditionality::Conditional
+        );
+
+        let direct_gamma =
+            process_expression_with_engine(request("Gamma(3)", false), &mut engine).unwrap();
+        assert_eq!(direct_gamma.kind, "evaluation");
+        assert_eq!(direct_gamma.expression, "2");
 
         let principal_value = process_expression_with_engine(
             request("PrincipalValueIntegral(x,-1,1,{0},1/x)", false),

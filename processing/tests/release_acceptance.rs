@@ -9,6 +9,7 @@ use processing::algebra::{transform, TransformKind};
 use processing::engine::{EngineError, RustEngine};
 use processing::equations::{solve as solve_equations, SolveCompleteness, SolveStatus};
 use processing::improper_integrals::{evaluate as improper_integral, ImproperIntegralRequest};
+use processing::intrinsics::{try_lower_improper_integral, IntrinsicKind};
 use processing::limits::{limit, limit_steps, LimitDirection, LimitStatus};
 use processing::linear_algebra::{
     compute as matrix_compute, linear_structure_steps, MatrixOperation,
@@ -118,6 +119,23 @@ fn defined_object_release_contract() {
         },
         None,
     ));
+
+    let lowered = try_lower_improper_integral(
+        &mut engine,
+        &ImproperIntegralRequest {
+            expression: "t^(1/x-1)*Exp(-t)".into(),
+            variable: "t".into(),
+            lower: "0".into(),
+            upper: "Infinity".into(),
+            singular_points: Vec::new(),
+        },
+        None,
+    )
+    .unwrap()
+    .expect("Euler kernel should lower");
+    assert_eq!(lowered.intrinsic, IntrinsicKind::Gamma);
+    assert!(lowered.value.replace(' ', "").contains("Gamma((1/x))"));
+    assert!(!lowered.conditions.is_empty());
 }
 
 #[test]

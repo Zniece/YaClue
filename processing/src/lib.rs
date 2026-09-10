@@ -13,6 +13,7 @@ pub mod equations;
 pub mod extrema;
 pub mod improper_integrals;
 pub mod input;
+pub mod intrinsics;
 pub mod limits;
 pub mod line_integrals;
 pub mod linear_algebra;

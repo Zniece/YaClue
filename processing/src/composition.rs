@@ -43,7 +43,7 @@ pub enum ValueArgument {
 
 const D_ARITIES: &[usize] = &[2, 3];
 const UNARY_ARITY: &[usize] = &[1];
-const INTEGRATE_ARITIES: &[usize] = &[2];
+const INTEGRATE_ARITIES: &[usize] = &[2, 4];
 const SUBST_ARITIES: &[usize] = &[3];
 const APPROXIMATE_ARITIES: &[usize] = &[1, 2];
 
@@ -273,7 +273,18 @@ fn apply(
             from_steps(steps)
         }
         CompositionOperator::Integral => {
-            let steps = derive_integrals_with_verbosity(engine, current, &arguments[0], verbosity)?;
+            let steps = if arguments.len() == 4 {
+                crate::steps::derive_definite_with_verbosity(
+                    engine,
+                    current,
+                    &arguments[0],
+                    &arguments[1],
+                    &arguments[2],
+                    verbosity,
+                )?
+            } else {
+                derive_integrals_with_verbosity(engine, current, &arguments[0], verbosity)?
+            };
             from_steps(steps)
         }
         CompositionOperator::Factor => {
