@@ -154,6 +154,13 @@ fn numeric_kind(expr: &Expr) -> NumericKind {
         Expr::Symbol(value) if matches!(value.as_str(), "Infinity" | "Undefined") => {
             NumericKind::NonFinite
         }
+        Expr::Call { head, args }
+            if head == "-"
+                && args.len() == 1
+                && numeric_kind(&args[0]) == NumericKind::NonFinite =>
+        {
+            NumericKind::NonFinite
+        }
         Expr::Call { head, args } if head == "Complex" && args.len() == 2 => {
             if args
                 .iter()
@@ -259,6 +266,7 @@ mod tests {
             ("1", NumericKind::ExactReal),
             ("Ln(-2)", NumericKind::Complex),
             ("1/0", NumericKind::NonFinite),
+            ("-Infinity", NumericKind::NonFinite),
             ("x+1/2", NumericKind::Unresolved),
         ] {
             assert_eq!(
