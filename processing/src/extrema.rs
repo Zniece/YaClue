@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 #[serde(rename_all = "snake_case")]
 pub enum ExtremaStatus {
     Classified,
+    PartiallyClassified,
     NoCriticalPoints,
     Unresolved,
 }
@@ -56,6 +57,8 @@ pub struct ExtremaStepResult {
 #[serde(rename_all = "snake_case")]
 pub enum LagrangeStatus {
     Candidates,
+    NoCandidates,
+    SingularConstraint,
     Unresolved,
 }
 
@@ -164,10 +167,15 @@ pub fn analyze_lagrange_steps_with_verbosity(
     events.push(StepEvent::new(
         "lagrange-result",
         &display,
-        if result.status == LagrangeStatus::Candidates {
-            "得到经过验证的约束极值候选；当前结果不自动宣称全局最值。"
-        } else {
-            "当前方程求解能力未能完整确定 Lagrange 候选。"
+        match result.status {
+            LagrangeStatus::Candidates => {
+                "得到经过验证的约束极值候选；当前结果不自动宣称全局最值。"
+            }
+            LagrangeStatus::NoCandidates => "方程组已完整求解，但没有有限实数候选。",
+            LagrangeStatus::SingularConstraint => {
+                "候选处约束梯度为零，标准 Lagrange 乘子条件不适用，结果保持未分类。"
+            }
+            LagrangeStatus::Unresolved => "当前方程求解能力未能完整确定 Lagrange 候选。",
         },
         StepImportance::Key,
     ));
@@ -256,6 +264,9 @@ pub fn analyze_steps_with_verbosity(
         &final_expression,
         match result.status {
             ExtremaStatus::Classified => "得到所有已验证临界点的二阶分类。",
+            ExtremaStatus::PartiallyClassified => {
+                "已验证临界点，但 Hessian 退化或符号未知，二阶判别不能完成全部分类。"
+            }
             ExtremaStatus::NoCriticalPoints => "没有有限临界点。",
             ExtremaStatus::Unresolved => "当前方程求解能力未能完整确定临界点。",
         },
@@ -297,20 +308,21 @@ fn analyze_lagrange_internal(
         ),
         format!("({constraint})==0"),
     ];
-    let solutions = if let Some(solutions) =
+    let (solutions, resolution_complete) = if let Some(solutions) =
         solve_lagrange_by_substitution(engine, &eliminated[0], constraint, x, y)?
     {
-        solutions
+        (solutions, true)
     } else {
         let equation_refs = eliminated.iter().map(String::as_str).collect::<Vec<_>>();
         let solve = equations::solve_without_residual_verification(engine, &equation_refs, &[x, y]);
         match solve {
-            Ok(result) if complete_solution(&result) => result.solutions,
-            Ok(_) | Err(EngineError::Eval(_)) => Vec::new(),
+            Ok(result) if complete_solution(&result) => (result.solutions, true),
+            Ok(result) if result.status == SolveStatus::NoSolution => (Vec::new(), true),
+            Ok(_) | Err(EngineError::Eval(_)) => (Vec::new(), false),
             Err(error) => return Err(error),
         }
     };
-    let candidates = verify_lagrange_candidates(
+    let verification = verify_lagrange_candidates(
         engine,
         expression,
         constraint,
@@ -319,11 +331,26 @@ fn analyze_lagrange_internal(
         &derivatives,
         &solutions,
     )?;
-    let status = if candidates.is_empty() {
-        LagrangeStatus::Unresolved
-    } else {
+    let singular_constraint = verification.saw_singular_constraint
+        || (verification.candidates.is_empty()
+            && constraint_has_singular_point(
+                engine,
+                constraint,
+                x,
+                y,
+                &derivatives[2],
+                &derivatives[3],
+            )?);
+    let status = if !verification.candidates.is_empty() {
         LagrangeStatus::Candidates
+    } else if singular_constraint {
+        LagrangeStatus::SingularConstraint
+    } else if resolution_complete {
+        LagrangeStatus::NoCandidates
+    } else {
+        LagrangeStatus::Unresolved
     };
+    let candidates = verification.candidates;
     let display = lagrange_display(&candidates);
     let tex = if render_value {
         render_one_tex(engine, &display)?
@@ -340,6 +367,42 @@ fn analyze_lagrange_internal(
         candidates,
         tex,
     })
+}
+
+fn constraint_has_singular_point(
+    engine: &mut dyn Engine,
+    constraint: &str,
+    x: &str,
+    y: &str,
+    gx: &str,
+    gy: &str,
+) -> Result<bool, EngineError> {
+    let equations = [
+        format!("({constraint})==0"),
+        format!("({gx})==0"),
+        format!("({gy})==0"),
+    ];
+    let refs = equations.iter().map(String::as_str).collect::<Vec<_>>();
+    match equations::solve_without_residual_verification(engine, &refs, &[x, y]) {
+        Ok(result) if result.status == SolveStatus::Solved && !result.solutions.is_empty() => {
+            Ok(true)
+        }
+        Ok(_) | Err(EngineError::Eval(_) | EngineError::Timeout(_)) => {
+            let at_origin = |expression: &str| {
+                format!(
+                    "Eval(ApplyPure(\"Subst\",{{{y},0,Eval(ApplyPure(\"Subst\",{{{x},0,{expression}}}))}}))"
+                )
+            };
+            let check = engine.eval_expr(&format!(
+                "IsZero(Simplify({})) And IsZero(Simplify({})) And IsZero(Simplify({}))",
+                at_origin(constraint),
+                at_origin(gx),
+                at_origin(gy)
+            ))?;
+            Ok(matches!(check, Expr::Symbol(value) if value == "True"))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn solve_lagrange_by_substitution(
@@ -427,7 +490,7 @@ fn verify_lagrange_candidates(
     y: &str,
     derivatives: &[String],
     solutions: &[Vec<Assignment>],
-) -> Result<Vec<LagrangeCandidate>, EngineError> {
+) -> Result<LagrangeVerification, EngineError> {
     let solutions = solutions
         .iter()
         .filter(|solution| {
@@ -438,7 +501,7 @@ fn verify_lagrange_candidates(
         })
         .collect::<Vec<_>>();
     if solutions.is_empty() {
-        return Ok(Vec::new());
+        return Ok(LagrangeVerification::default());
     }
     let records = solutions
         .iter()
@@ -473,6 +536,7 @@ fn verify_lagrange_candidates(
         return Err(EngineError::Parse("Lagrange 候选证书数量异常".into()));
     }
     let mut candidates = Vec::new();
+    let mut saw_singular_constraint = false;
     for (solution, record) in solutions.into_iter().zip(evaluated) {
         let fields = list(record, "Lagrange 候选记录")?;
         if fields.len() != 9 {
@@ -482,6 +546,9 @@ fn verify_lagrange_candidates(
         let constraint_verified = boolean(&fields[6], "Lagrange 约束证书")?;
         let regular_constraint = boolean(&fields[7], "Lagrange 约束正则性")?;
         let real_verified = boolean(&fields[8], "Lagrange 实数证书")?;
+        if stationarity_verified && constraint_verified && real_verified && !regular_constraint {
+            saw_singular_constraint = true;
+        }
         if !(stationarity_verified && constraint_verified && regular_constraint && real_verified) {
             continue;
         }
@@ -501,7 +568,16 @@ fn verify_lagrange_candidates(
             real_verified,
         });
     }
-    Ok(candidates)
+    Ok(LagrangeVerification {
+        candidates,
+        saw_singular_constraint,
+    })
+}
+
+#[derive(Default)]
+struct LagrangeVerification {
+    candidates: Vec<LagrangeCandidate>,
+    saw_singular_constraint: bool,
 }
 
 fn validate_lagrange_request(
@@ -587,7 +663,19 @@ fn analyze_internal(
     };
     let status = match resolution {
         CandidateResolution::None => ExtremaStatus::NoCriticalPoints,
-        CandidateResolution::Complete if !critical_points.is_empty() => ExtremaStatus::Classified,
+        CandidateResolution::Complete
+            if critical_points.iter().all(|point| {
+                !matches!(
+                    point.kind,
+                    CriticalPointKind::Degenerate | CriticalPointKind::Inconclusive
+                )
+            }) =>
+        {
+            ExtremaStatus::Classified
+        }
+        CandidateResolution::Complete if !critical_points.is_empty() => {
+            ExtremaStatus::PartiallyClassified
+        }
         _ => ExtremaStatus::Unresolved,
     };
     let display = if critical_points.is_empty() {
@@ -859,7 +947,15 @@ mod tests {
             ("x^4+y^4", CriticalPointKind::Degenerate),
         ] {
             let result = analyze(&mut engine, expression, "x", "y").unwrap();
-            assert_eq!(result.status, ExtremaStatus::Classified, "{expression}");
+            assert_eq!(
+                result.status,
+                if expected == CriticalPointKind::Degenerate {
+                    ExtremaStatus::PartiallyClassified
+                } else {
+                    ExtremaStatus::Classified
+                },
+                "{expression}"
+            );
             assert_eq!(result.critical_points.len(), 1, "{expression}");
             let point = &result.critical_points[0];
             assert_eq!(point.kind, expected, "{expression}");
@@ -961,9 +1057,11 @@ mod tests {
             .why
             .contains("不自动宣称全局最值"));
 
-        let irregular = analyze_lagrange(&mut engine, "x+y", "(x^2+y^2)^2", "x", "y").unwrap();
-        assert_eq!(irregular.status, LagrangeStatus::Unresolved);
-        assert!(irregular.candidates.is_empty());
+        let irregular =
+            analyze_lagrange_steps(&mut engine, "x+y", "(x^2+y^2)^2", "x", "y").unwrap();
+        assert_eq!(irregular.result.status, LagrangeStatus::SingularConstraint);
+        assert!(irregular.steps.last().unwrap().why.contains("约束梯度为零"));
+        assert!(irregular.result.candidates.is_empty());
         assert!(analyze_lagrange(&mut engine, "x", "x);Echo(1);(x", "x", "y").is_err());
     }
 
@@ -1001,5 +1099,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(engine.batch_sizes, [lagrange.steps.len()]);
+    }
+
+    #[test]
+    fn extrema_boundaries_distinguish_degenerate_and_empty_candidates() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let degenerate = analyze_steps(&mut engine, "x^4+y^4", "x", "y").unwrap();
+        assert_eq!(degenerate.result.status, ExtremaStatus::PartiallyClassified);
+        assert!(degenerate.steps.iter().any(|step| {
+            step.rule == "extrema-classify" && step.why.contains("二阶判别法无法确定")
+        }));
+        assert!(degenerate
+            .steps
+            .last()
+            .unwrap()
+            .why
+            .contains("不能完成全部分类"));
+
+        let empty = analyze_lagrange_steps(&mut engine, "x+y", "x^2+y^2+1", "x", "y").unwrap();
+        assert_eq!(empty.result.status, LagrangeStatus::NoCandidates);
+        assert!(empty.result.candidates.is_empty());
+        assert!(!empty.steps.last().unwrap().why.contains("全局最值"));
     }
 }
