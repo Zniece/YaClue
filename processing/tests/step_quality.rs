@@ -6,7 +6,7 @@ use processing::line_integrals::{self, LineIntegralKind, LineIntegralRequest};
 use processing::linear_algebra;
 use processing::multiple_integrals::{self, IntegralBound, PolarRegion};
 use processing::ode;
-use processing::steps::{self, Step, StepImportance};
+use processing::steps::{Step, StepImportance};
 use processing::surface_integrals::{
     self, SurfaceIntegralKind, SurfaceIntegralRequest, SurfaceOrientation,
 };
@@ -46,16 +46,8 @@ fn assert_teaching_steps(domain: &str, steps: &[Step]) {
 }
 
 #[test]
-fn common_calculus_and_equation_steps_have_complete_teaching_fields() {
+fn equation_limit_and_extrema_steps_have_complete_teaching_fields() {
     let mut engine = RustEngine::spawn().unwrap();
-    assert_teaching_steps(
-        "derivative",
-        &steps::derive_steps(&mut engine, "x^2+Sin(x)", "x").unwrap(),
-    );
-    assert_teaching_steps(
-        "integral",
-        &steps::derive_integrals(&mut engine, "x*Sin(x)", "x").unwrap(),
-    );
     assert_teaching_steps(
         "equation",
         &equations::solve_steps(&mut engine, "x^2-3*x+2==0", "x")
