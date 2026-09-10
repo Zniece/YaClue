@@ -1356,6 +1356,33 @@ mod tests {
     }
 
     #[test]
+    fn unified_input_preserves_unlowered_structured_compositions() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for expression in [
+            "D(x)Solve({x==1},{x})",
+            "D(x)Limit(x,0)Sin(x)/x",
+            "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
+            "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
+        ] {
+            let result =
+                process_expression_with_engine(request(expression, true), &mut engine).unwrap();
+            assert_eq!(result.kind, "composition", "{expression}");
+            assert_eq!(result.expression, expression);
+            assert_eq!(
+                result.outcome.support,
+                processing::protocol::SupportState::Supported,
+                "{expression}"
+            );
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Unresolved,
+                "{expression}"
+            );
+            assert_eq!(result.steps[0].rule, "held-operator-application");
+        }
+    }
+
+    #[test]
     fn unified_outcome_distinguishes_reasons_and_registered_conditions() {
         let make = |expression: &str, data: Value| DispatchExpressionResult {
             kind: "test".into(),

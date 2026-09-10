@@ -16,6 +16,35 @@ use crate::steps::{
 const MAX_COMPOSITION_DEPTH: usize = 16;
 const DEFAULT_PRECISION: u32 = 10;
 
+/// Structured product operations are valid operands even before a lowering
+/// rule exists for a particular outer operation. They must remain held rather
+/// than falling through to raw Yacas evaluation.
+const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
+    "Apart",
+    "Determinant",
+    "DoubleIntegral",
+    "EigenValues",
+    "Expand",
+    "Extrema",
+    "FindRoot",
+    "ImproperIntegral",
+    "Inverse",
+    "Lagrange",
+    "Limit",
+    "MatrixSolve",
+    "OdeSolve",
+    "OdeSolveNumeric",
+    "Plot",
+    "PolarIntegral",
+    "PrincipalValueIntegral",
+    "Simplify",
+    "Solve",
+    "SolveMatrix",
+    "Taylor",
+    "Tidy",
+    "Transpose",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompositionOperator {
@@ -141,7 +170,10 @@ pub fn is_candidate(call: &RootCall) -> bool {
     call.argument_heads
         .get(value_index)
         .and_then(|head| head.as_deref())
-        .is_some_and(|head| OPERATOR_SIGNATURES.iter().any(|item| item.name == head))
+        .is_some_and(|head| {
+            OPERATOR_SIGNATURES.iter().any(|item| item.name == head)
+                || STRUCTURED_OPERATOR_NAMES.contains(&head)
+        })
 }
 
 /// Execute a supported nested chain. `None` means the expression contains
@@ -172,6 +204,29 @@ pub fn execute_steps(
         }
     };
     if operations.len() < 2 {
+        if !operations.is_empty()
+            && root_call(&leaf, "组合内层表达式")?
+                .is_some_and(|call| STRUCTURED_OPERATOR_NAMES.contains(&call.head.as_str()))
+        {
+            let step = operation_step(
+                "held-operator-application",
+                expression.into(),
+                "保留尚未降低的数学对象与外层运算，等待适用的组合规则。",
+                tex_code(expression),
+            );
+            return Ok(Some(CompositionResult {
+                status: CompositionStatus::Unresolved,
+                value: expression.into(),
+                tex: step.tex.clone(),
+                steps: vec![step],
+                operators: operations
+                    .iter()
+                    .map(|operation| operation.signature.operator)
+                    .collect(),
+                reason: Some("组合在语义上有效，但当前没有适用的降低规则".into()),
+                arbitrary_constants: Vec::new(),
+            }));
+        }
         return Ok(None);
     }
 
@@ -639,5 +694,30 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn structured_operands_remain_held_when_no_lowering_rule_applies() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for expression in [
+            "D(x)Solve({x==1},{x})",
+            "D(x)Limit(x,0)Sin(x)/x",
+            "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
+            "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
+            "D(x)OdeSolveNumeric(y'==y,x,y,0,1,2)",
+            "D(x)Plot(Sin(x),x,-1,1)",
+        ] {
+            let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Unresolved, "{expression}");
+            assert_eq!(result.value, expression);
+            assert_eq!(result.steps.len(), 1);
+            assert_eq!(result.steps[0].rule, "held-operator-application");
+            assert!(result
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("语义上有效")));
+        }
     }
 }
