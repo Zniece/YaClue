@@ -66,6 +66,28 @@ pub fn analyze_expression(input: &str, label: &str) -> Result<ExpressionAnalysis
     })
 }
 
+/// Generate internal Yacas symbols which cannot occur in any user-controlled
+/// source fragment. Checking the original text is deliberately conservative:
+/// a candidate absent as a substring is necessarily absent as a symbol, and
+/// requires neither another parse nor any evaluator work.
+pub(crate) fn fresh_internal_symbols<const N: usize>(
+    namespace: &str,
+    inputs: &[&str],
+    suffixes: [&str; N],
+) -> [String; N] {
+    for index in 0_u32.. {
+        let prefix = format!("YaClue{namespace}Internal{index}");
+        let names = suffixes.map(|suffix| format!("{prefix}{suffix}"));
+        if names
+            .iter()
+            .all(|candidate| inputs.iter().all(|input| !input.contains(candidate)))
+        {
+            return names;
+        }
+    }
+    unreachable!()
+}
+
 pub(crate) fn root_call_from_tree(
     env: &yacas_rs::env::Environment,
     tree: &Rc<LispObject>,

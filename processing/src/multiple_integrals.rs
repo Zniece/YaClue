@@ -1,7 +1,10 @@
 //! Structured bounded iterated integrals.
 
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{analyze_expression, render_one_tex, validate_expression, validate_symbol};
+use crate::input::{
+    analyze_expression, fresh_internal_symbols, render_one_tex, validate_expression,
+    validate_symbol,
+};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
@@ -528,19 +531,21 @@ fn polar_temporary_symbols(
     angle: &str,
     region: PolarRegion<'_>,
 ) -> [String; 9] {
-    let occupied = format!(
-        "{expression} {x} {y} {radius} {angle} {} {} {} {}",
-        region.radial_lower, region.radial_upper, region.angle_lower, region.angle_upper
-    );
-    for index in 0_u32.. {
-        let prefix = format!("YaCluePolarInternal{index}");
-        let names = ["Tx", "Ty", "Drx", "Dtx", "Dry", "Dty", "J", "T", "V"]
-            .map(|suffix| format!("{prefix}{suffix}"));
-        if names.iter().all(|name| !occupied.contains(name)) {
-            return names;
-        }
-    }
-    unreachable!()
+    fresh_internal_symbols(
+        "Polar",
+        &[
+            expression,
+            x,
+            y,
+            radius,
+            angle,
+            region.radial_lower,
+            region.radial_upper,
+            region.angle_lower,
+            region.angle_upper,
+        ],
+        ["Tx", "Ty", "Drx", "Dtx", "Dry", "Dty", "J", "T", "V"],
+    )
 }
 
 fn numeric_value(value: &Expr) -> Result<f64, EngineError> {
@@ -623,12 +628,26 @@ fn evaluate(
     outer_bound: IntegralBound<'_>,
     render_value: bool,
 ) -> Result<DoubleIntegralResult, EngineError> {
+    let [inner_value_symbol, outer_value_symbol, inner_complete_symbol, outer_complete_symbol] =
+        fresh_internal_symbols(
+            "DoubleIntegral",
+            &[
+                expression,
+                inner_bound.variable,
+                inner_bound.lower,
+                inner_bound.upper,
+                outer_bound.variable,
+                outer_bound.lower,
+                outer_bound.upper,
+            ],
+            ["Inner", "Outer", "InnerComplete", "OuterComplete"],
+        );
     let inner_call = format!(
         "Integrate({},{},{})({expression})",
         inner_bound.variable, inner_bound.lower, inner_bound.upper
     );
     let data = engine.eval_expr(&format!(
-        "[Local(i,o,ic,oc); i:={inner_call}; ic:=IsFreeOf(Integrate,i); If(ic,[o:=Integrate({},{},{})i;oc:=IsFreeOf(Integrate,o);], [o:=Undefined;oc:=False;]); {{i,ic,o,oc}};]",
+        "[Local({inner_value_symbol},{outer_value_symbol},{inner_complete_symbol},{outer_complete_symbol}); {inner_value_symbol}:={inner_call}; {inner_complete_symbol}:=IsFreeOf(Integrate,{inner_value_symbol}); If({inner_complete_symbol},[{outer_value_symbol}:=Integrate({},{},{}){inner_value_symbol};{outer_complete_symbol}:=IsFreeOf(Integrate,{outer_value_symbol});], [{outer_value_symbol}:=Undefined;{outer_complete_symbol}:=False;]); {{{inner_value_symbol},{inner_complete_symbol},{outer_value_symbol},{outer_complete_symbol}}};]",
         outer_bound.variable, outer_bound.lower, outer_bound.upper
     ))?;
     let Expr::Call { head, args } = data else {
@@ -733,15 +752,39 @@ fn evaluate_triple(
     outer: IntegralBound<'_>,
     render_value: bool,
 ) -> Result<TripleIntegralResult, EngineError> {
+    let [inner_value_symbol, middle_value_symbol, outer_value_symbol, inner_complete_symbol, middle_complete_symbol, outer_complete_symbol] =
+        fresh_internal_symbols(
+            "TripleIntegral",
+            &[
+                expression,
+                inner.variable,
+                inner.lower,
+                inner.upper,
+                middle.variable,
+                middle.lower,
+                middle.upper,
+                outer.variable,
+                outer.lower,
+                outer.upper,
+            ],
+            [
+                "Inner",
+                "Middle",
+                "Outer",
+                "InnerComplete",
+                "MiddleComplete",
+                "OuterComplete",
+            ],
+        );
     let inner_call = format!(
         "Integrate({},{},{})({expression})",
         inner.variable, inner.lower, inner.upper
     );
     let data = engine.eval_expr(&format!(
-        "[Local(i,m,o,ic,mc,oc); i:={inner_call}; ic:=IsFreeOf(Integrate,i); \
-         If(ic,[m:=Integrate({},{},{})i;mc:=IsFreeOf(Integrate,m);],[m:=Undefined;mc:=False;]); \
-         If(mc,[o:=Integrate({},{},{})m;oc:=IsFreeOf(Integrate,o);],[o:=Undefined;oc:=False;]); \
-         {{i,ic,m,mc,o,oc}};]",
+        "[Local({inner_value_symbol},{middle_value_symbol},{outer_value_symbol},{inner_complete_symbol},{middle_complete_symbol},{outer_complete_symbol}); {inner_value_symbol}:={inner_call}; {inner_complete_symbol}:=IsFreeOf(Integrate,{inner_value_symbol}); \
+         If({inner_complete_symbol},[{middle_value_symbol}:=Integrate({},{},{}){inner_value_symbol};{middle_complete_symbol}:=IsFreeOf(Integrate,{middle_value_symbol});],[{middle_value_symbol}:=Undefined;{middle_complete_symbol}:=False;]); \
+         If({middle_complete_symbol},[{outer_value_symbol}:=Integrate({},{},{}){middle_value_symbol};{outer_complete_symbol}:=IsFreeOf(Integrate,{outer_value_symbol});],[{outer_value_symbol}:=Undefined;{outer_complete_symbol}:=False;]); \
+         {{{inner_value_symbol},{inner_complete_symbol},{middle_value_symbol},{middle_complete_symbol},{outer_value_symbol},{outer_complete_symbol}}};]",
         middle.variable, middle.lower, middle.upper, outer.variable, outer.lower, outer.upper,
     ))?;
     let Expr::Call { head, args } = data else {
@@ -1306,6 +1349,51 @@ mod tests {
                 .to_string(),
             "True"
         );
+    }
+
+    #[test]
+    fn iterated_integrals_preserve_symbols_matching_former_temporaries() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let double = double_integral(
+            &mut engine,
+            "i",
+            IntegralBound {
+                variable: "y",
+                lower: "0",
+                upper: "1",
+            },
+            IntegralBound {
+                variable: "x",
+                lower: "0",
+                upper: "1",
+            },
+        )
+        .unwrap();
+        assert_eq!(double.status, IteratedIntegralStatus::Evaluated);
+        assert_eq!(double.value, "i");
+
+        let triple = triple_integral(
+            &mut engine,
+            "m",
+            IntegralBound {
+                variable: "z",
+                lower: "0",
+                upper: "1",
+            },
+            IntegralBound {
+                variable: "y",
+                lower: "0",
+                upper: "1",
+            },
+            IntegralBound {
+                variable: "x",
+                lower: "0",
+                upper: "1",
+            },
+        )
+        .unwrap();
+        assert_eq!(triple.status, TripleIntegralStatus::Evaluated);
+        assert_eq!(triple.value, "m");
     }
 
     #[test]
