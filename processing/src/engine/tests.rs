@@ -36,6 +36,17 @@ fn rust_eval_executes_input_once_and_preserves_held_values() {
 }
 
 #[test]
+fn rust_engine_is_secure_after_startup() {
+    let mut engine = RustEngine::spawn().unwrap();
+    assert!(engine.env.secure);
+    for command in [r#"SystemCall("true")"#, r#"Load("yacasinit.ys")"#] {
+        let error = engine.eval(command).unwrap_err();
+        assert!(matches!(error, EngineError::Eval(_)), "{error}");
+    }
+    assert_eq!(engine.eval("2+3").unwrap().expr, Expr::Number("5".into()));
+}
+
+#[test]
 fn rust_batch_tex_matches_individual_evaluation() {
     let expressions = vec!["3*2*x".to_string(), "Sin(-4*x)".to_string()];
     let mut individual = RustEngine::spawn().unwrap();

@@ -32,6 +32,10 @@ impl RustEngine {
             eval_cmd(&mut env, &cmd)
                 .map_err(|e| EngineError::Spawn(format!("装载步骤包失败({cmd}): {e:?}")))?;
         }
+        // Loading needs file access, but product evaluation must not expose
+        // host shell or file commands unless a trusted caller explicitly
+        // opts out through the public environment.
+        env.secure = true;
         Ok(RustEngine { env })
     }
 }
