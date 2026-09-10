@@ -87,11 +87,12 @@ npm run tauri dev
 cd ..
 cargo build -p app
 
-# run the engine conformance suite
-cargo test -p yacas-rs
+# normal development gate
+./scripts/test-gate.sh fast
 
-# run the step layer tests
-cargo test -p processing
+# focused engine or step-layer regression
+./scripts/test-gate.sh domain engine
+./scripts/test-gate.sh domain steps
 ```
 
 ### Android

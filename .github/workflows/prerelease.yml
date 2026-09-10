@@ -24,9 +24,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Test workspace
-        run: cargo test --workspace -- --test-threads=1
+      - name: Run release gate
+        run: ./scripts/test-gate.sh release
 
   build:
     name: ${{ matrix.name }}

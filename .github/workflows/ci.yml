@@ -22,13 +22,5 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Lint engine and processing
-        run: cargo clippy -p yacas-rs -p processing --all-targets -- -D warnings
-      - name: Test engine library
-        run: cargo test -p yacas-rs --lib
-      - name: Test processing fast paths
-        run: "cargo test -p processing --lib -- --test-threads=1 --skip ode::tests::"
-      - name: Check frontend JavaScript
-        run: node --check app/src/main.js
+      - name: Run fast gate
+        run: ./scripts/test-gate.sh fast
