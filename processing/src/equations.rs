@@ -351,9 +351,6 @@ pub fn solve(
     }
 
     let mut solutions = parse_solutions(&raw_expr, scalar)?;
-    if !scalar {
-        solutions.retain(|solution| candidate_is_finite(solution));
-    }
     let infinite = solutions.iter().flatten().any(|assignment| {
         assignment.variable == assignment.value
             && variables
@@ -474,9 +471,7 @@ fn solve_rectangular(
                 saw_complete_subproblem |= result.completeness == SolveCompleteness::Complete;
                 let mut verified = Vec::new();
                 for solution in result.solutions {
-                    if candidate_is_finite(&solution)
-                        && candidate_satisfies(engine, &solution, equations)?
-                    {
+                    if candidate_satisfies(engine, &solution, equations)? {
                         verified.push(solution);
                     }
                 }
@@ -613,12 +608,6 @@ fn combinations_exceed(items: usize, choose: usize, limit: usize) -> bool {
     false
 }
 
-fn candidate_is_finite(solution: &[Assignment]) -> bool {
-    solution.iter().all(|assignment| {
-        !assignment.value.contains("Infinity") && !assignment.value.contains("Undefined")
-    })
-}
-
 fn candidate_satisfies(
     engine: &mut dyn Engine,
     solution: &[Assignment],
@@ -706,13 +695,23 @@ fn parse_solutions(expr: &Expr, scalar: bool) -> Result<Vec<Vec<Assignment>>, En
     if scalar {
         items
             .iter()
+            .filter(|item| expression_is_finite(item))
             .map(|item| Ok(vec![parse_assignment(item)?]))
             .collect()
     } else {
         items
             .iter()
+            .filter(|item| expression_is_finite(item))
             .map(|solution| list_items(solution)?.iter().map(parse_assignment).collect())
             .collect()
+    }
+}
+
+fn expression_is_finite(expr: &Expr) -> bool {
+    match expr {
+        Expr::Symbol(value) => !matches!(value.as_str(), "Infinity" | "Undefined"),
+        Expr::Call { args, .. } => args.iter().all(expression_is_finite),
+        Expr::Number(_) => true,
     }
 }
 
@@ -766,6 +765,17 @@ mod tests {
                 .to_string(),
             "0"
         );
+    }
+
+    #[test]
+    fn infinity_substrings_are_ordinary_symbols() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = solve(&mut engine, &["x==MyInfinity", "y==1"], &["x", "y"]).unwrap();
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert_eq!(result.solutions.len(), 1);
+        assert!(result.solutions[0]
+            .iter()
+            .any(|assignment| assignment.variable == "x" && assignment.value == "MyInfinity"));
     }
 
     #[test]
