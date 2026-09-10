@@ -144,5 +144,6 @@ baseline. Run those explicitly with
 `cargo test -p processing engine::tests -- --ignored --test-threads=1`;
 without the binary they fail instead of being reported as passed.
 
-This workspace uses the root `Cargo.lock`; member crates do not maintain
-separate lockfiles.
+This workspace uses the root `Cargo.lock`; Rust workspace members do not
+maintain separate lockfiles. The independently built Tauri application keeps
+its own `app/src-tauri/Cargo.lock`.
