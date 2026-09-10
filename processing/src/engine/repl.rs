@@ -307,11 +307,23 @@ fn steps_boot_cmds() -> Vec<String> {
 }
 
 pub(super) fn steps_boot_cmds_from_dir(dir: &str) -> Vec<String> {
-    let directory = yacas_string_literal(&format!("{dir}/"));
+    let directory = yacas_directory_literal(dir);
     vec![
         format!("DefaultDirectory({directory})"),
         "Load(\"steps.rep/code.ys\")".to_string(),
     ]
+}
+
+/// Yacas script lookup accepts forward slashes on every supported desktop
+/// platform. Normalize Windows separators before constructing language input
+/// so a filesystem path can never introduce a Yacas escape sequence.
+pub(super) fn yacas_directory_literal(value: &str) -> String {
+    let value = value.strip_prefix(r"\\?\").unwrap_or(value);
+    let mut portable = value.replace('\\', "/");
+    if !portable.ends_with('/') {
+        portable.push('/');
+    }
+    yacas_string_literal(&portable)
 }
 
 pub(super) fn yacas_string_literal(value: &str) -> String {
@@ -377,6 +389,25 @@ mod lifecycle_tests {
                 "DefaultDirectory(\"a\\\";SystemCall(\\\"bad\\\")/\")",
                 "Load(\"steps.rep/code.ys\")"
             ]
+        );
+        assert_eq!(
+            yacas_directory_literal(r"C:\Users\znie\Desktop\YaClue\yacas\scripts"),
+            r#""C:/Users/znie/Desktop/YaClue/yacas/scripts/""#
+        );
+        assert_eq!(
+            steps_boot_cmds_from_dir(r"\\?\C:\Program Files\YaClue\processing\scripts")[0],
+            r#"DefaultDirectory("C:/Program Files/YaClue/processing/scripts/")"#
+        );
+
+        let mut env = yacas_rs::env::Environment::new();
+        crate::engine::rust::eval_cmd(
+            &mut env,
+            r#"DefaultDirectory("C:/Users/znie/Desktop/YaClue/yacas/scripts/")"#,
+        )
+        .unwrap();
+        assert_eq!(
+            env.input_directories.last().map(String::as_str),
+            Some("C:/Users/znie/Desktop/YaClue/yacas/scripts/")
         );
     }
 

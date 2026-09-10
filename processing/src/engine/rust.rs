@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::repl::{
-    default_scripts_dir, default_steps_dir, steps_boot_cmds_from_dir, yacas_string_literal,
+    default_scripts_dir, default_steps_dir, steps_boot_cmds_from_dir, yacas_directory_literal,
 };
 use super::{Engine, EngineError, EvalResult, Expr};
 
@@ -34,7 +34,7 @@ impl RustEngine {
         let mut env = yacas_rs::env::Environment::new();
         eval_cmd(
             &mut env,
-            &format!("DefaultDirectory({})", yacas_string_literal(&scripts)),
+            &format!("DefaultDirectory({})", yacas_directory_literal(&scripts)),
         )
         .map_err(|e| EngineError::Spawn(format!("DefaultDirectory 失败: {e:?}")))?;
         eval_cmd(&mut env, "Load(\"yacasinit.ys\")")
