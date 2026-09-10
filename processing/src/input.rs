@@ -343,6 +343,22 @@ mod tests {
     }
 
     #[test]
+    fn validation_maps_parser_resource_limits_to_invalid_input() {
+        let oversized = "a".repeat(yacas_rs::parser::MAX_INPUT_BYTES + 1);
+        assert!(matches!(
+            validate_expression(&oversized, "表达式"),
+            Err(EngineError::InvalidInput(_))
+        ));
+
+        let depth = yacas_rs::parser::MAX_PARSE_DEPTH + 1;
+        let nested = format!("{}x{}", "(".repeat(depth), ")".repeat(depth));
+        assert!(matches!(
+            validate_expression(&nested, "表达式"),
+            Err(EngineError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
     fn detects_exact_symbol_powers_without_evaluation() {
         assert!(contains_exact_power("y'+y==x*y^2", "y", "2", "ODE").unwrap());
         assert!(!contains_exact_power("y'+y==x^2*y", "y", "2", "ODE").unwrap());
