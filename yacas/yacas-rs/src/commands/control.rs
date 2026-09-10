@@ -195,6 +195,21 @@ pub fn cmd_check(
     env: &mut Environment,
     inner: &Rc<LispObject>,
 ) -> Result<Rc<LispObject>, YacasError> {
+    cmd_check_impl(env, inner, false)
+}
+
+pub fn cmd_input_check(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+) -> Result<Rc<LispObject>, YacasError> {
+    cmd_check_impl(env, inner, true)
+}
+
+fn cmd_check_impl(
+    env: &mut Environment,
+    inner: &Rc<LispObject>,
+    input_error: bool,
+) -> Result<Rc<LispObject>, YacasError> {
     if arity_of(inner) != 2 {
         return Err(YacasError::WrongNumberOfArgs);
     }
@@ -210,7 +225,11 @@ pub fn cmd_check(
                 return Err(YacasError::InvalidArg);
             }
         };
-        return Err(YacasError::UserError(text));
+        return Err(if input_error {
+            YacasError::InputError(text)
+        } else {
+            YacasError::UserError(text)
+        });
     }
     Ok(pred)
 }

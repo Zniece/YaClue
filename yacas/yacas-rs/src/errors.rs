@@ -65,6 +65,8 @@ pub enum YacasError {
     Generic(String),
     /// Explicit user-facing failure raised by the language `Check` command.
     UserError(String),
+    /// Product-layer input rejection raised by the `InputCheck` command.
+    InputError(String),
     /// Parse error (catch-all; see `parser::ParseError`).
     Parse(crate::parser::ParseError),
 }

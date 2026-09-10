@@ -40,8 +40,8 @@ pub use containers::{
     cmd_assoc_size, cmd_assoc_to_list,
 };
 pub use control::{
-    cmd_and, cmd_check, cmd_equals, cmd_get_core_error, cmd_if, cmd_not, cmd_or, cmd_prog,
-    cmd_trap_error, cmd_while,
+    cmd_and, cmd_check, cmd_equals, cmd_get_core_error, cmd_if, cmd_input_check, cmd_not, cmd_or,
+    cmd_prog, cmd_trap_error, cmd_while,
 };
 pub use debug::{
     cmd_current_file, cmd_current_line, cmd_custom_eval, cmd_custom_eval_expression,
@@ -580,6 +580,7 @@ pub fn register_core_commands(env: &mut Environment) {
     add(env, "IsBound", cmd_is_bound);
     add(env, "MacroLocal", cmd_macro_local);
     add(env, "Check", cmd_check);
+    add(env, "InputCheck", cmd_input_check);
     add(env, "TrapError", cmd_trap_error);
     add(env, "GetCoreError", cmd_get_core_error);
 

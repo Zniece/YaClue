@@ -181,7 +181,7 @@ impl RustEngine {
             yacas_rs::errors::YacasError::Parse(error) if user_input_stage => {
                 EngineError::InvalidInput(format!("{stage}: 解析失败: {error:?}"))
             }
-            yacas_rs::errors::YacasError::UserError(message) if user_input_stage => {
+            yacas_rs::errors::YacasError::InputError(message) if user_input_stage => {
                 EngineError::InvalidInput(format!("{stage}: {message}"))
             }
             error => EngineError::Eval(format!("{stage}: {error:?}")),

@@ -138,8 +138,8 @@ pub fn pldu(engine: &mut dyn Engine, matrix: &str) -> Result<PlduResult, EngineE
     validate_expression(matrix, "矩阵")?;
     let command = format!(
         "[Local(a,p,l,d,u,ok); a:={matrix}; \
-         Check(IsSquareMatrix(a),\"argument must be a square matrix\"); \
-         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(IsSquareMatrix(a),\"argument must be a square matrix\"); \
+         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix dimension limit exceeded\"); \
          {{p,l,d,u}}:=PLDU(a); ok:=(p*a-l*d*u)=ZeroMatrix(Length(a)); \
          {{Length(a),p,l,d,u,ok}};]"
@@ -163,10 +163,10 @@ pub fn cholesky(engine: &mut dyn Engine, matrix: &str) -> Result<CholeskyResult,
     validate_expression(matrix, "矩阵")?;
     let command = format!(
         "[Local(a,r,ok); a:={matrix}; \
-         Check(IsSquareMatrix(a),\"argument must be a square matrix\"); \
-         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(IsSquareMatrix(a),\"argument must be a square matrix\"); \
+         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix dimension limit exceeded\"); \
-         Check(a=Transpose(a),\"matrix must be symmetric\"); \
+         InputCheck(a=Transpose(a),\"matrix must be symmetric\"); \
          r:=Cholesky(a); ok:=(Transpose(r)*r-a)=ZeroMatrix(Length(a)); \
          {{Length(a),r,ok}};]"
     );
@@ -201,12 +201,12 @@ pub fn gram_schmidt(
     };
     let command = format!(
         "[Local(w,s,b,ok,i,j); w:={vectors}; \
-         Check(IsMatrix(w),\"vectors must have equal dimensions\"); \
-         Check(Length(w)>0 And Length(w)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(IsMatrix(w),\"vectors must have equal dimensions\"); \
+         InputCheck(Length(w)>0 And Length(w)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"vector count limit exceeded\"); \
-         Check(Length(w[1])>0 And Length(w[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(Length(w[1])>0 And Length(w[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"vector dimension limit exceeded\"); \
-         s:=LinearStructure(w); Check(s[2]=Length(w),\"vectors must be linearly independent\"); \
+         s:=LinearStructure(w); InputCheck(s[2]=Length(w),\"vectors must be linearly independent\"); \
          b:={algorithm}; \
          ok:=True; For(i:=1,i<Length(b),i++) For(j:=i+1,j<=Length(b),j++) \
               If(Not(InProduct(b[i],b[j])=0),ok:=False); \
@@ -289,8 +289,8 @@ pub fn eigen_spaces(
     };
     let command = format!(
         "[Local(a,values); a:={matrix}; \
-         Check(IsSquareMatrix(a),\"argument must be a square matrix\"); \
-         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(IsSquareMatrix(a),\"argument must be a square matrix\"); \
+         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix dimension limit exceeded\"); \
          values:={values}; {{Length(a),EigenSpaces(a,values)}};]"
     );
@@ -341,11 +341,12 @@ pub fn linear_structure(
     validate_expression(matrix, "矩阵")?;
     let command = format!(
         "[Local(a); a:={matrix}; \
-         Check(IsMatrix(a),\"argument must be a matrix\"); \
-         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(IsMatrix(a),\"argument must be a matrix\"); \
+         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix row limit exceeded\"); \
-         Check(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix column limit exceeded\"); \
+         InputCheck(Apply(And, IsRational /@ Flatten(a)),\"matrix entries must be exact rational numbers\"); \
          LinearStructure(a);]"
     );
     let evaluated = engine.eval(&command)?;
@@ -368,11 +369,12 @@ pub fn linear_structure_steps_with_verbosity(
     validate_expression(matrix, "矩阵")?;
     let command = format!(
         "[Local(a); a:={matrix}; \
-         Check(IsMatrix(a),\"argument must be a matrix\"); \
-         Check(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(IsMatrix(a),\"argument must be a matrix\"); \
+         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix row limit exceeded\"); \
-         Check(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix column limit exceeded\"); \
+         InputCheck(Apply(And, IsRational /@ Flatten(a)),\"matrix entries must be exact rational numbers\"); \
          LinearStructureDetailed(a);]"
     );
     let evaluated = engine.eval_expr(&command)?;
@@ -591,18 +593,18 @@ pub fn compute(
 }
 
 fn checked_command(left: &str, operation: MatrixOperation, right: Option<&str>) -> String {
-    let matrix_check = "Check(IsMatrix(a),\"left operand must be a matrix\")";
-    let square_check = "Check(IsSquareMatrix(a),\"matrix must be square\")";
-    let singular_check = "Check(Not(IsZero(Determinant(a))),\"matrix must be nonsingular\")";
+    let matrix_check = "InputCheck(IsMatrix(a),\"left operand must be a matrix\")";
+    let square_check = "InputCheck(IsSquareMatrix(a),\"matrix must be square\")";
+    let singular_check = "InputCheck(Not(IsZero(Determinant(a))),\"matrix must be nonsingular\")";
     let body = match operation {
         MatrixOperation::Add => format!(
-            "b:={}; Check(IsMatrix(b),\"right operand must be a matrix\"); \
-             Check(Dimensions(a)=Dimensions(b),\"matrix dimensions must match\"); a+b",
+            "b:={}; InputCheck(IsMatrix(b),\"right operand must be a matrix\"); \
+             InputCheck(Dimensions(a)=Dimensions(b),\"matrix dimensions must match\"); a+b",
             right.unwrap()
         ),
         MatrixOperation::Multiply => format!(
-            "b:={}; Check(IsMatrix(b),\"right operand must be a matrix\"); \
-             Check(Length(a[1])=Length(b),\"matrix dimensions are incompatible\"); a*b",
+            "b:={}; InputCheck(IsMatrix(b),\"right operand must be a matrix\"); \
+             InputCheck(Length(a[1])=Length(b),\"matrix dimensions are incompatible\"); a*b",
             right.unwrap()
         ),
         MatrixOperation::Transpose => "Transpose(a)".into(),
@@ -611,8 +613,8 @@ fn checked_command(left: &str, operation: MatrixOperation, right: Option<&str>) 
             format!("{square_check}; {singular_check}; Inverse(a)")
         }
         MatrixOperation::Solve => format!(
-            "b:={}; Check(IsVector(b),\"right operand must be a vector\"); {square_check}; \
-             Check(Length(a)=Length(b),\"matrix and vector dimensions must match\"); \
+            "b:={}; InputCheck(IsVector(b),\"right operand must be a vector\"); {square_check}; \
+             InputCheck(Length(a)=Length(b),\"matrix and vector dimensions must match\"); \
              {singular_check}; MatrixSolve(a,b)",
             right.unwrap()
         ),
