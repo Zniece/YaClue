@@ -2,7 +2,10 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::equations::{self, Assignment, SolveCompleteness, SolveStatus};
-use crate::input::{analyze_expression, render_one_tex, validate_expression, validate_symbol};
+use crate::input::{
+    analyze_expression, fresh_internal_symbols, render_one_tex, validate_expression,
+    validate_symbol,
+};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -511,6 +514,7 @@ fn verify_lagrange_candidates(
             let gx = substitute_all(&derivatives[2], solution);
             let gy = substitute_all(&derivatives[3], solution);
             let constraint_at = substitute_all(constraint, solution);
+            let expression_at = substitute_all(expression, solution);
             let real_checks = [x, y]
                 .iter()
                 .map(|variable| {
@@ -523,9 +527,14 @@ fn verify_lagrange_candidates(
                 })
                 .collect::<Vec<_>>()
                 .join(" And ");
+            let [fxs, fys, gxs, gys, lambda, first, second, constraint_value] =
+                fresh_internal_symbols(
+                    "LagrangeCertificate",
+                    &[&fx, &fy, &gx, &gy, &constraint_at, &expression_at, &real_checks],
+                    ["Fx", "Fy", "Gx", "Gy", "Lambda", "First", "Second", "Constraint"],
+                );
             format!(
-                "[Local(fx,fy,gx,gy,l,a,b,c);fx:=Simplify({fx});fy:=Simplify({fy});gx:=Simplify({gx});gy:=Simplify({gy});l:=If(Not(IsZero(gx)),Simplify(fx/gx),If(Not(IsZero(gy)),Simplify(fy/gy),Undefined));a:=Simplify(fx-l*gx);b:=Simplify(fy-l*gy);c:=Simplify({constraint_at});{{Simplify({}),l,a,b,c,IsZero(a) And IsZero(b),IsZero(c),Not(IsZero(gx) And IsZero(gy)),{real_checks} And IsKnownReal(l)}};]",
-                substitute_all(expression, solution)
+                "[Local({fxs},{fys},{gxs},{gys},{lambda},{first},{second},{constraint_value});{fxs}:=Simplify({fx});{fys}:=Simplify({fy});{gxs}:=Simplify({gx});{gys}:=Simplify({gy});{lambda}:=If(Not(IsZero({gxs})),Simplify({fxs}/{gxs}),If(Not(IsZero({gys})),Simplify({fys}/{gys}),Undefined));{first}:=Simplify({fxs}-{lambda}*{gxs});{second}:=Simplify({fys}-{lambda}*{gys});{constraint_value}:=Simplify({constraint_at});{{Simplify({expression_at}),{lambda},{first},{second},{constraint_value},IsZero({first}) And IsZero({second}),IsZero({constraint_value}),Not(IsZero({gxs}) And IsZero({gys})),{real_checks} And IsKnownReal({lambda})}};]"
             )
         })
         .collect::<Vec<_>>()
@@ -801,9 +810,14 @@ fn classify_points(
             let at_hxy = substitute(&hxy);
             let at_hyx = substitute(&hyx);
             let at_hyy = substitute(&hyy);
+            let expression_at = substitute(expression);
+            let [gxs, gys, a, b, c, d, determinant] = fresh_internal_symbols(
+                "ExtremaCertificate",
+                &[&gx, &gy, &at_hxx, &at_hxy, &at_hyx, &at_hyy, &expression_at],
+                ["Gx", "Gy", "Hxx", "Hxy", "Hyx", "Hyy", "Determinant"],
+            );
             format!(
-                "[Local(gx,gy,a,b,c,d,det);gx:=Simplify({gx});gy:=Simplify({gy});a:=Simplify({at_hxx});b:=Simplify({at_hxy});c:=Simplify({at_hyx});d:=Simplify({at_hyy});det:=Simplify(a*d-b*c);{{Simplify({}),gx,gy,a,b,c,d,det,IsZero(gx) And IsZero(gy),IsPositiveNumber(det),IsNegativeNumber(det),IsPositiveNumber(a),IsNegativeNumber(a),IsZero(det)}};]",
-                substitute(expression)
+                "[Local({gxs},{gys},{a},{b},{c},{d},{determinant});{gxs}:=Simplify({gx});{gys}:=Simplify({gy});{a}:=Simplify({at_hxx});{b}:=Simplify({at_hxy});{c}:=Simplify({at_hyx});{d}:=Simplify({at_hyy});{determinant}:=Simplify({a}*{d}-{b}*{c});{{Simplify({expression_at}),{gxs},{gys},{a},{b},{c},{d},{determinant},IsZero({gxs}) And IsZero({gys}),IsPositiveNumber({determinant}),IsNegativeNumber({determinant}),IsPositiveNumber({a}),IsNegativeNumber({a}),IsZero({determinant})}};]"
             )
         })
         .collect::<Vec<_>>()
@@ -962,6 +976,15 @@ mod tests {
             assert!(point.gradient_verified);
             assert_eq!(point.gradient, ["0", "0"]);
         }
+    }
+
+    #[test]
+    fn preserves_parameters_matching_former_certificate_temporaries() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = analyze(&mut engine, "x^2+y^2+a", "x", "y").unwrap();
+        assert_eq!(result.status, ExtremaStatus::Classified);
+        assert_eq!(result.critical_points[0].value, "a");
+        assert!(result.critical_points[0].gradient_verified);
     }
 
     #[test]

@@ -2,7 +2,8 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{
-    analyze_expression, strip_tex_delimiters, validate_expression, validate_symbol,
+    analyze_expression, fresh_internal_symbols, strip_tex_delimiters, validate_expression,
+    validate_symbol,
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -179,6 +180,16 @@ fn command(request: &MultivariateRequest) -> String {
                 .collect::<Vec<_>>()
                 .join("+");
             if request.normalize_direction {
+                let inputs = request
+                    .expressions
+                    .iter()
+                    .chain(&request.variables)
+                    .chain(&request.direction)
+                    .chain(&request.point)
+                    .map(String::as_str)
+                    .collect::<Vec<_>>();
+                let [norm] =
+                    fresh_internal_symbols("DirectionalDerivative", &inputs, ["NormSquared"]);
                 let norm_squared = request
                     .direction
                     .iter()
@@ -186,9 +197,9 @@ fn command(request: &MultivariateRequest) -> String {
                     .collect::<Vec<_>>()
                     .join("+");
                 format!(
-                    "[Local(n); n:=Simplify({norm_squared}); \
-                     Check(Not(IsZero(n)),\"direction vector must be nonzero\"); \
-                     Simplify(({products})/Sqrt(n));]"
+                    "[Local({norm}); {norm}:=Simplify({norm_squared}); \
+                     Check(Not(IsZero({norm})),\"direction vector must be nonzero\"); \
+                     Simplify(({products})/Sqrt({norm}));]"
                 )
             } else {
                 format!("Simplify({products})")
@@ -346,6 +357,23 @@ mod tests {
             compute(&mut engine, &request).unwrap().output,
             "(2 * ((3 * x) + (4 * y)))"
         );
+    }
+
+    #[test]
+    fn normalized_direction_preserves_former_norm_temporary() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let mut request = request(
+            MultivariateOperation::DirectionalDerivative,
+            &["x"],
+            &["x", "y"],
+        );
+        request.direction = vec!["n".into(), "0".into()];
+        request.normalize_direction = true;
+        let result = compute(&mut engine, &request).unwrap();
+        assert!(result.output.contains('n'));
+        assert!(!result
+            .output
+            .contains("YaClueDirectionalDerivativeInternal"));
     }
 
     #[test]
