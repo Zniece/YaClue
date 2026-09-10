@@ -6,10 +6,16 @@ use super::repl::{
 use super::{Engine, EngineError, EvalResult, Expr};
 
 pub struct RustEngine {
-    pub env: yacas_rs::env::Environment,
+    pub(crate) env: yacas_rs::env::Environment,
 }
 
 impl RustEngine {
+    /// Allow host shell/file/load commands only for explicitly trusted input.
+    /// Product engines are secure after startup by default.
+    pub fn set_host_access_enabled(&mut self, enabled: bool) {
+        self.env.secure = !enabled;
+    }
+
     /// 装载脚本库(scripts 目录默认 yacas/scripts,可用 YACAS_SCRIPTS 覆盖)
     pub fn spawn() -> Result<Self, EngineError> {
         let scripts = std::env::var("YACAS_SCRIPTS").unwrap_or_else(|_| default_scripts_dir());

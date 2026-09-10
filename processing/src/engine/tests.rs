@@ -43,6 +43,14 @@ fn rust_engine_is_secure_after_startup() {
         let error = engine.eval(command).unwrap_err();
         assert!(matches!(error, EngineError::Eval(_)), "{error}");
     }
+    engine.set_host_access_enabled(true);
+    assert!(!engine.env.secure);
+    assert_eq!(
+        engine.eval(r#"SystemCall("true")"#).unwrap().expr,
+        Expr::Symbol("True".into())
+    );
+    engine.set_host_access_enabled(false);
+    assert!(engine.env.secure);
     assert_eq!(engine.eval("2+3").unwrap().expr, Expr::Number("5".into()));
 }
 
