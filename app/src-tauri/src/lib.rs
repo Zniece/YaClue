@@ -1195,6 +1195,28 @@ mod tests {
             identity.name == "C" && identity.role == SymbolRole::ArbitraryConstant
         }));
 
+        let oscillatory =
+            process_expression_with_engine(request("OdeSolve(y''+2*y'+5*y==0)", true), &mut engine)
+                .unwrap();
+        assert!(!oscillatory.expression.contains("Complex("));
+        assert!(oscillatory.expression.contains("Cos"));
+        assert_eq!(
+            oscillatory.data["result"]["preferred_representation"],
+            "real_basis"
+        );
+        assert_eq!(
+            oscillatory.data["result"]["representations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(!oscillatory
+            .semantic
+            .symbol_identities
+            .iter()
+            .any(|identity| identity.name == "y" || identity.name.starts_with("y'")));
+
         let equations = process_expression_with_engine(
             request("Solve({x+y==3,x-y==1},{x,y})", false),
             &mut engine,

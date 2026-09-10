@@ -54,6 +54,20 @@ pub struct OdeSolution {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum OdeRepresentationKind {
+    RealBasis,
+    ComplexExponential,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OdeRepresentation {
+    pub kind: OdeRepresentationKind,
+    pub expression: String,
+    pub tex: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InitialConditionStatus {
     NotRequested,
     Applied,
@@ -80,6 +94,10 @@ pub struct OdeResult {
     pub solutions: Vec<String>,
     /// Structured branches. Prefer this field when implicit solutions matter.
     pub solution_branches: Vec<OdeSolution>,
+    /// Equivalent display bases for the primary solution, computed during the
+    /// solve so clients can switch without evaluating the equation again.
+    pub representations: Vec<OdeRepresentation>,
+    pub preferred_representation: Option<OdeRepresentationKind>,
     pub tex: String,
     /// Substitution residual returned by `OdeTest`.
     pub residual: String,
@@ -321,6 +339,8 @@ fn solve_internal(
                     expression: equation.trim().into(),
                     tex: equation.trim().into(),
                 }],
+                representations: vec![],
+                preferred_representation: None,
                 tex: equation.trim().into(),
                 residual: equation.trim().into(),
                 constants: vec![],
@@ -458,6 +478,25 @@ fn solve_internal(
         condition_status = InitialConditionStatus::Unresolved;
     }
 
+    let mut complex_exponential = None;
+    if status == OdeStatus::Solved
+        && order == 2
+        && initial_conditions.is_empty()
+        && generated_constants.len() == 2
+        && candidates.len() == 1
+        && candidates[0].to_string().contains("Complex(")
+    {
+        let real = engine.eval_expr(&format!(
+            "OdeExtRealConstantCoefficientSolution({canonical},{},{})",
+            generated_constants[0], generated_constants[1]
+        ))?;
+        if real.to_string() != "Undefined" && !real.to_string().contains("Complex(") {
+            complex_exponential = Some(candidates[0].clone());
+            candidates[0] = real.clone();
+            solution = real;
+        }
+    }
+
     let generated_display_names = display_constant_names(equation, &generated_constants)?;
     let mut constant_mapping: Vec<(String, String)> = generated_constants
         .iter()
@@ -504,7 +543,7 @@ fn solve_internal(
             }
             let rendered = engine.eval(&user_solution)?;
             if index == 0 {
-                primary_tex = strip_tex_delimiters(&rendered.tex);
+                primary_tex = normalize_ode_tex(&strip_tex_delimiters(&rendered.tex));
             }
             let expression = rendered.expr.to_string();
             branches.push(OdeSolution {
@@ -514,7 +553,7 @@ fn solve_internal(
                     OdeSolutionKind::Explicit
                 },
                 expression: expression.clone(),
-                tex: strip_tex_delimiters(&rendered.tex),
+                tex: normalize_ode_tex(&strip_tex_delimiters(&rendered.tex)),
             });
             rendered_solutions.push(expression);
         }
@@ -543,6 +582,29 @@ fn solve_internal(
             raw,
         )
     };
+    let mut representations = Vec::new();
+    let mut preferred_representation = None;
+    if let Some(complex_candidate) = complex_exponential {
+        representations.push(OdeRepresentation {
+            kind: OdeRepresentationKind::RealBasis,
+            expression: solution.clone(),
+            tex: tex.clone(),
+        });
+        let (expression, complex_tex) = render_candidate(
+            engine,
+            &complex_candidate,
+            independent,
+            dependent,
+            order,
+            &constant_mapping,
+        )?;
+        representations.push(OdeRepresentation {
+            kind: OdeRepresentationKind::ComplexExponential,
+            expression,
+            tex: complex_tex,
+        });
+        preferred_representation = Some(OdeRepresentationKind::RealBasis);
+    }
     Ok((
         OdeResult {
             status,
@@ -552,6 +614,8 @@ fn solve_internal(
             solution,
             solutions,
             solution_branches,
+            representations,
+            preferred_representation,
             tex,
             residual: constant_mapping
                 .iter()
@@ -562,6 +626,32 @@ fn solve_internal(
         },
         solver_events,
     ))
+}
+
+fn render_candidate(
+    engine: &mut dyn Engine,
+    candidate: &Expr,
+    independent: &str,
+    dependent: &str,
+    order: u32,
+    constant_mapping: &[(String, String)],
+) -> Result<(String, String), EngineError> {
+    let mut user_solution = from_canonical(&candidate.to_string(), independent, dependent, order);
+    for (internal, display) in constant_mapping {
+        user_solution = substitute(&user_solution, internal, display);
+    }
+    let rendered = engine.eval(&user_solution)?;
+    Ok((
+        rendered.expr.to_string(),
+        normalize_ode_tex(&strip_tex_delimiters(&rendered.tex)),
+    ))
+}
+
+fn normalize_ode_tex(tex: &str) -> String {
+    // KaTeX's dotless-i glyph can surface as a private-use character when
+    // copied or rendered with a fallback font. A roman i is conventional for
+    // the imaginary unit and portable across the desktop webviews.
+    tex.replace("\\imath", "\\mathrm{i}")
 }
 
 fn validate_conditions(
@@ -1180,6 +1270,42 @@ mod tests {
             assert!(!result.constants.is_empty());
             assert!(!result.tex.is_empty());
         }
+    }
+
+    #[test]
+    fn exposes_real_and_complex_bases_for_conjugate_roots() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = solve(&mut engine, "y''+2*y'+5*y==0", "x", "y", &[]).unwrap();
+        assert_eq!(result.status, OdeStatus::Solved);
+        assert_eq!(
+            result.preferred_representation,
+            Some(OdeRepresentationKind::RealBasis)
+        );
+        assert!(!result.solution.contains("Complex("), "{result:#?}");
+        assert!(result.solution.contains("Cos"), "{result:#?}");
+        assert!(result.solution.contains("Sin"), "{result:#?}");
+        assert_eq!(result.representations.len(), 2);
+        assert_eq!(
+            result.representations[0].kind,
+            OdeRepresentationKind::RealBasis
+        );
+        assert_eq!(
+            result.representations[1].kind,
+            OdeRepresentationKind::ComplexExponential
+        );
+        assert!(result.representations[1].expression.contains("Complex("));
+        assert!(!result.representations[1].tex.contains("\\imath"));
+        assert!(result.representations[1].tex.contains("\\mathrm{i}"));
+        assert_eq!(
+            engine
+                .eval_expr(&format!(
+                    "Simplify(OdeTest(y''+2*y'+5*y==0,{}))",
+                    result.solution
+                ))
+                .unwrap()
+                .to_string(),
+            "0"
+        );
     }
 
     #[test]

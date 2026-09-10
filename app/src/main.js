@@ -124,6 +124,31 @@ function renderMath(tex, target, displayMode = true) {
 
 function renderSummary(result) {
   summaryEl.hidden = false;
+  const domain = result.data?.result || result.data;
+  const representations = domain?.representations || [];
+  if (representations.length > 1) {
+    const control = document.createElement("label");
+    control.className = "representation-switch";
+    control.textContent = "解的形式";
+    const select = document.createElement("select");
+    const names = {
+      real_basis: "实数形式",
+      complex_exponential: "复指数形式",
+    };
+    representations.forEach((representation) => {
+      const option = document.createElement("option");
+      option.value = representation.kind;
+      option.textContent = names[representation.kind] || representation.kind;
+      option.selected = representation.kind === domain.preferred_representation;
+      select.appendChild(option);
+    });
+    control.appendChild(select);
+    summaryEl.appendChild(control);
+    select.addEventListener("change", () => {
+      const selected = representations.find((item) => item.kind === select.value);
+      if (selected) renderMath(selected.tex, math);
+    });
+  }
   const math = document.createElement("div");
   math.className = "summary-math";
   summaryEl.appendChild(math);

@@ -445,6 +445,30 @@ OdeExtConstantCoefficientBasis(_a, _b, _c) <--
     ];
 ];
 
+/* Return a real fundamental-basis form for a homogeneous constant-coefficient
+   equation. The caller supplies its existing arbitrary constants so this is a
+   representation change, not a second solution family. */
+RuleBase("OdeExtRealConstantCoefficientSolution", {equation, first, second});
+10 # OdeExtRealConstantCoefficientSolution(_left == _right, _first, _second) <--
+[
+    Local(normal, a, b, c, remainder, basis);
+    normal := Expand(left-right);
+    a := Simplify(Coef(normal, y'', 1));
+    b := Simplify(Coef(normal, y', 1));
+    c := Simplify(Coef(normal, y, 1));
+    remainder := Simplify(normal-a*y''-b*y'-c*y);
+    if (a = 0 Or remainder != 0 Or
+        Not(IsFreeOf({x, y, y', y''}, {a, b, c}))) [
+        Undefined;
+    ] else [
+        basis := OdeExtConstantCoefficientBasis(a, b, c);
+        If(Length(basis) = 2,
+           Simplify(first*basis[1]+second*basis[2]),
+           Undefined);
+    ];
+];
+100 # OdeExtRealConstantCoefficientSolution(_equation, _first, _second) <-- Undefined;
+
 OdeExtVariationFromBasis(_a, _forcing, _basis) <--
 [
     Local(y1, y2, wronskian, u1Prime, u2Prime, u1, u2, particular);

@@ -69,6 +69,8 @@ code { padding: 1px 4px; color: #34425d; background: #ebeff5; border-radius: 4px
 .error { padding: 12px 14px; overflow-wrap: anywhere; color: #a92828; background: #fff0f0; border: 1px solid #f2caca; border-radius: 9px; white-space: pre-wrap; }
 .empty-result { padding: 35px; color: var(--muted); text-align: center; }
 #summary { margin-top: 16px; padding: 17px; overflow-x: auto; background: #f8fafd; border: 1px solid var(--border); border-radius: 11px; }
+.representation-switch { width: fit-content; margin: 0 0 12px auto; }
+.representation-switch select { min-height: 32px; padding: 5px 9px; }
 .summary-math { font-size: 19px; }
 #steps-list { display: flex; flex-direction: column; gap: 9px; margin-top: 13px; }
 .step { display: grid; grid-template-columns: 235px minmax(0, 1fr); align-items: center; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
