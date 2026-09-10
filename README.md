@@ -29,6 +29,18 @@ docs/                 English and Chinese Yacas scripting language documentation
 The kernel (`yacas/`) is self-contained and could be used by any application;
 YaClue is the first one.
 
+## Symbol-safety boundary
+
+User expressions embedded in dynamically generated Yacas scopes must never
+share fixed local names with the surrounding command. Processing code uses
+`fresh_internal_symbols` over every user-controlled fragment before emitting
+such a scope; `LocalSymbols` is not a substitute because it can rename the
+inserted user tree together with the command template. AST substitution and
+alpha-renaming remain the responsibility of `processing::binding`, while ODE
+display names are assigned only after computation. New structured entry
+points must include a regression where a user parameter matches each former
+scratch-name class, without adding a CAS round trip to the result path.
+
 ## License map
 
 | Path | License |
