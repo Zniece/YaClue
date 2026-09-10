@@ -186,17 +186,30 @@ impl Environment {
     /// Pop back to `depth`, returning the popped buffer; a file-backed
     /// buffer is written to its path (truncating).
     pub fn pop_output(&self, depth: usize) -> OutputBuffer {
-        let mut s = self.output_stack.borrow_mut();
-        while s.len() - 1 > depth {
-            s.pop();
-        }
-        let buf = s.pop().unwrap_or_default();
+        let buf = self.take_output(depth);
         if let Some(path) = &buf.file {
             if let Err(e) = std::fs::write(path, &buf.text) {
                 eprintln!("[ToFile] failed to write {path}: {e}");
             }
         }
         buf
+    }
+
+    /// Pop an output buffer and report a file commit failure to the caller.
+    pub fn pop_output_checked(&self, depth: usize) -> std::io::Result<OutputBuffer> {
+        let buf = self.take_output(depth);
+        if let Some(path) = &buf.file {
+            std::fs::write(path, &buf.text)?;
+        }
+        Ok(buf)
+    }
+
+    fn take_output(&self, depth: usize) -> OutputBuffer {
+        let mut s = self.output_stack.borrow_mut();
+        while s.len() - 1 > depth {
+            s.pop();
+        }
+        s.pop().unwrap_or_default()
     }
 }
 

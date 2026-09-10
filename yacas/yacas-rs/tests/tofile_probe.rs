@@ -61,3 +61,22 @@ fn tofile_probe() {
     assert_eq!(got, "\"inner\"", "ToStdout 穿透捕获,cyacas 实证 r=[inner]");
     let _ = std::fs::remove_file(&p);
 }
+
+#[test]
+fn tofile_reports_write_failure() {
+    let mut env = Environment::new();
+    let missing_parent = std::env::temp_dir().join(format!(
+        "yacas-missing-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let path = missing_parent.join("out.txt");
+    let result = run(
+        &mut env,
+        &format!(r#"ToFile("{}")WriteString("x")"#, path.display()),
+    );
+    assert!(
+        result.starts_with("ERR(Generic(\"ToFile failed:"),
+        "{result}"
+    );
+}

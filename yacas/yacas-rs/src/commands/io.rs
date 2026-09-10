@@ -120,8 +120,10 @@ pub fn cmd_to_file(
         .to_string();
     let depth = env.push_output_to(Some(name));
     let body_result = eval(env, arg(inner, n - 1)?);
-    env.pop_output(depth); // flush to disk (truncating write)
-    body_result
+    let flush_result = env.pop_output_checked(depth); // flush to disk (truncating write)
+    let value = body_result?;
+    flush_result.map_err(|error| YacasError::generic(format!("ToFile failed: {error}")))?;
+    Ok(value)
 }
 
 /// ToStdout — `ToStdout()body` (Macro|Fixed + bodied). The body's output is
