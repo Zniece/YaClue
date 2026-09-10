@@ -208,7 +208,11 @@ fn project_domain_semantic(
         &result.expression,
         &generated,
         if result.kind == "ode" { &["x"] } else { &[] },
-        (result.kind == "ode").then_some(ValueKind::SolutionSet),
+        match result.kind.as_str() {
+            "ode" => Some(ValueKind::SolutionSet),
+            "integral" => Some(ValueKind::FunctionFamily),
+            _ => None,
+        },
     )
     .map_err(message)
 }
@@ -493,16 +497,47 @@ fn dispatch_expression_with_engine(
                     &result,
                 );
             }
-            ("Integrate", [variable, expression]) if request.steps => {
-                let steps = processing::steps::derive_integrals_with_verbosity(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    verbosity,
+            ("Integrate", [variable, expression]) => {
+                let arbitrary_constant = processing::semantic::display_arbitrary_constants(
+                    &analyzed.semantic.symbols,
+                    1,
                 )
-                .map_err(message)?;
-                let (expression, tex) = final_step(&steps);
-                return unified_result("integral", "不定积分", expression, tex, steps, &());
+                .into_iter()
+                .next()
+                .expect("one arbitrary constant was requested");
+                if request.steps {
+                    let result = processing::steps::derive_antiderivative_family_with_verbosity(
+                        &mut *engine,
+                        expression,
+                        variable,
+                        arbitrary_constant,
+                        verbosity,
+                    )
+                    .map_err(message)?;
+                    return unified_result(
+                        "integral",
+                        "不定积分",
+                        result.result.expression.clone(),
+                        result.result.tex.clone(),
+                        result.steps.clone(),
+                        &result,
+                    );
+                }
+                let evaluated = engine.eval(&request.expression).map_err(message)?;
+                let result = processing::steps::antiderivative_family(
+                    evaluated.expr.to_string(),
+                    evaluated.tex.trim_matches('$').to_string(),
+                    variable,
+                    arbitrary_constant,
+                );
+                return unified_result(
+                    "integral",
+                    "不定积分",
+                    result.expression.clone(),
+                    result.tex.clone(),
+                    vec![],
+                    &result,
+                );
             }
             ("Integrate", [variable, from, to, expression]) if request.steps => {
                 let steps = processing::steps::derive_definite_with_verbosity(
@@ -1284,6 +1319,37 @@ mod tests {
             ["theta".to_string(), "theta1".to_string()]
         );
         assert_eq!(symbolic_integral.semantic.bound_symbols, ["x".to_string()]);
+        assert_eq!(symbolic_integral.semantic.kind, ValueKind::FunctionFamily);
+        assert!(symbolic_integral.expression.ends_with(" + C)"));
+        assert_eq!(
+            symbolic_integral.steps.last().unwrap().rule,
+            "antiderivative-family"
+        );
+        assert_eq!(
+            symbolic_integral.data["result"]["representative"],
+            symbolic_integral.steps[symbolic_integral.steps.len() - 2].expr
+        );
+        assert!(
+            symbolic_integral
+                .semantic
+                .symbol_identities
+                .iter()
+                .any(|identity| identity.name == "C"
+                    && identity.role == SymbolRole::ArbitraryConstant)
+        );
+
+        let colliding_constant =
+            process_expression_with_engine(request("Integrate(x)C*x", false), &mut engine).unwrap();
+        assert_eq!(colliding_constant.kind, "integral");
+        assert!(colliding_constant.expression.contains("C1"));
+        assert_eq!(colliding_constant.semantic.symbols, ["C"]);
+        assert!(colliding_constant
+            .semantic
+            .symbol_identities
+            .iter()
+            .any(|identity| {
+                identity.name == "C1" && identity.role == SymbolRole::ArbitraryConstant
+            }));
 
         let direct_gamma =
             process_expression_with_engine(request("Gamma(3)", false), &mut engine).unwrap();

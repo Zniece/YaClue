@@ -16,6 +16,7 @@ pub enum ValueKind {
     Equation,
     Matrix,
     SolutionSet,
+    FunctionFamily,
     Unevaluated,
 }
 
@@ -159,9 +160,32 @@ pub fn project_result(
         .collect();
     if let Some(kind) = kind {
         output.kind = kind;
-        output.completeness = (kind == ValueKind::SolutionSet).then_some(Completeness::Unknown);
+        output.completeness = match kind {
+            ValueKind::SolutionSet => Some(Completeness::Unknown),
+            ValueKind::FunctionFamily => Some(Completeness::Complete),
+            _ => None,
+        };
     }
     Ok(output)
+}
+
+/// Choose stable public names for generated arbitrary constants without
+/// colliding with symbols supplied by the user.
+pub fn display_arbitrary_constants(occupied: &[String], count: usize) -> Vec<String> {
+    let mut next_index = if count == 1 { 0 } else { 1 };
+    let mut names = Vec::with_capacity(count);
+    while names.len() < count {
+        let candidate = if next_index == 0 {
+            "C".to_string()
+        } else {
+            format!("C{next_index}")
+        };
+        next_index += 1;
+        if !occupied.contains(&candidate) {
+            names.push(candidate);
+        }
+    }
+    names
 }
 
 fn classify(
@@ -337,6 +361,15 @@ mod tests {
         let approximate = analyze_input("N(Pi,30)", "表达式").unwrap();
         assert_eq!(approximate.semantic.kind, ValueKind::Scalar);
         assert_eq!(approximate.semantic.exactness, Exactness::Approximate);
+    }
+
+    #[test]
+    fn generated_constant_names_avoid_user_symbols() {
+        assert_eq!(display_arbitrary_constants(&[], 1), ["C"]);
+        assert_eq!(
+            display_arbitrary_constants(&["C".into(), "C1".into()], 2),
+            ["C2", "C3"]
+        );
     }
 
     #[test]

@@ -164,6 +164,7 @@ function renderSemantic(semantic, outcome) {
     equation: "方程",
     matrix: "矩阵",
     solution_set: "解集",
+    function_family: "函数族",
     unevaluated: "未求值对象",
   };
   const exactnessNames = {

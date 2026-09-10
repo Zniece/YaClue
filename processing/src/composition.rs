@@ -676,6 +676,8 @@ mod tests {
                 .to_string(),
             "0"
         );
+        assert!(result.arbitrary_constants.is_empty());
+        assert!(!result.value.contains(" + C"));
     }
 
     #[test]

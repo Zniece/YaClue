@@ -32,6 +32,24 @@ pub struct Step {
     pub importance: StepImportance,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AntiderivativeFamily {
+    /// Canonical representative used by definite integrals and compositions.
+    pub representative: String,
+    pub representative_tex: String,
+    /// Product-facing description of the complete family.
+    pub expression: String,
+    pub tex: String,
+    pub variable: String,
+    pub arbitrary_constants: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AntiderivativeStepResult {
+    pub result: AntiderivativeFamily,
+    pub steps: Vec<Step>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepVerbosity {
@@ -239,6 +257,58 @@ pub fn derive_integrals_with_verbosity(
     validate_expression(expr, "表达式")?;
     validate_symbol(var, "积分变量")?;
     steps_from_command(engine, &format!("StepsI'Full({expr}, {var})"), verbosity)
+}
+
+/// Build the product-facing antiderivative family while keeping the canonical
+/// representative separate for downstream symbolic operations.
+pub fn antiderivative_family(
+    representative: String,
+    representative_tex: String,
+    variable: &str,
+    arbitrary_constant: String,
+) -> AntiderivativeFamily {
+    let constant_tex = arbitrary_constant
+        .strip_prefix('C')
+        .filter(|suffix| !suffix.is_empty())
+        .map_or_else(
+            || r"\mathrm{C}".to_string(),
+            |suffix| format!(r"\mathrm{{C}}_{{{suffix}}}"),
+        );
+    AntiderivativeFamily {
+        expression: format!("({representative} + {arbitrary_constant})"),
+        tex: format!("{representative_tex} + {constant_tex}"),
+        representative,
+        representative_tex,
+        variable: variable.into(),
+        arbitrary_constants: vec![arbitrary_constant],
+    }
+}
+
+pub fn derive_antiderivative_family_with_verbosity(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    arbitrary_constant: String,
+    verbosity: StepVerbosity,
+) -> Result<AntiderivativeStepResult, EngineError> {
+    let mut steps = derive_integrals_with_verbosity(engine, expr, var, verbosity)?;
+    let representative = steps
+        .last()
+        .ok_or_else(|| EngineError::Parse("不定积分步骤缺少最终结果".into()))?;
+    let result = antiderivative_family(
+        representative.expr.clone(),
+        representative.tex.clone(),
+        var,
+        arbitrary_constant,
+    );
+    steps.push(Step {
+        rule: "antiderivative-family".into(),
+        expr: result.expression.clone(),
+        why: "加入任意常数，表示全部原函数。".into(),
+        tex: result.tex.clone(),
+        importance: StepImportance::Key,
+    });
+    Ok(AntiderivativeStepResult { result, steps })
 }
 
 /// 定积分:不定积分步骤链 + 牛顿-莱布尼茨求值(上下限可为任意表达式,如 `Pi`)
@@ -476,6 +546,15 @@ mod tests {
 
         // 非法输入同样被校验拦截
         assert!(derive_integrals(&mut engine, "x); Echo(1); (x", "x").is_err());
+    }
+
+    #[test]
+    fn antiderivative_family_keeps_its_representative_separate() {
+        let family = antiderivative_family("x^2".into(), "x ^{2}".into(), "x", "C1".into());
+        assert_eq!(family.representative, "x^2");
+        assert_eq!(family.expression, "(x^2 + C1)");
+        assert_eq!(family.tex, "x ^{2} + \\mathrm{C}_{1}");
+        assert_eq!(family.arbitrary_constants, ["C1"]);
     }
 
     #[test]

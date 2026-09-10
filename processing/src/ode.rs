@@ -497,7 +497,8 @@ fn solve_internal(
         }
     }
 
-    let generated_display_names = display_constant_names(equation, &generated_constants)?;
+    let generated_display_names =
+        crate::semantic::display_arbitrary_constants(&analysis.symbols, generated_constants.len());
     let mut constant_mapping: Vec<(String, String)> = generated_constants
         .iter()
         .zip(&generated_display_names)
@@ -1085,27 +1086,6 @@ fn solution_constants(
     constants.sort();
     constants.dedup();
     Ok(constants)
-}
-
-fn display_constant_names(
-    equation: &str,
-    internal_constants: &[String],
-) -> Result<Vec<String>, EngineError> {
-    let occupied = analyze_expression(equation, "微分方程")?.symbols;
-    let mut next_index = if internal_constants.len() == 1 { 0 } else { 1 };
-    let mut names = Vec::with_capacity(internal_constants.len());
-    while names.len() < internal_constants.len() {
-        let candidate = if next_index == 0 {
-            "C".to_string()
-        } else {
-            format!("C{next_index}")
-        };
-        next_index += 1;
-        if !occupied.contains(&candidate) {
-            names.push(candidate);
-        }
-    }
-    Ok(names)
 }
 
 fn machine_symbols(expression: &str) -> Result<Vec<String>, EngineError> {
