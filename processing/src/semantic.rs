@@ -1,12 +1,10 @@
 //! Lightweight, non-evaluating semantic classification for product inputs.
 
-use std::collections::BTreeSet;
-
 use serde::Serialize;
 use yacas_rs::value::{spine_refs, LispObject, ObjectKind};
 
 use crate::engine::EngineError;
-use crate::input::{collect_symbols, root_call_from_tree, validate_safe_text, RootCall};
+use crate::input::{root_call_from_tree, validate_safe_text, RootCall};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +43,8 @@ pub struct MatrixShape {
 pub struct SemanticSummary {
     pub kind: ValueKind,
     pub symbols: Vec<String>,
+    pub bound_symbols: Vec<String>,
+    pub symbol_identities: Vec<crate::binding::SymbolIdentity>,
     pub constants: Vec<String>,
     pub shape: Option<MatrixShape>,
     pub exactness: Exactness,
@@ -65,17 +65,20 @@ pub fn analyze_input(input: &str, label: &str) -> Result<AnalyzedInput, EngineEr
             .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
             .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
         let root_call = root_call_from_tree(env, &tree);
-        let mut symbols = BTreeSet::new();
-        let mut function_heads = BTreeSet::new();
-        let mut constants = BTreeSet::new();
-        collect_symbols(&tree, &mut symbols, &mut function_heads, &mut constants);
+        let binding = crate::binding::analyze_tree(&tree);
+        let no_symbols = binding.free_symbols.is_empty() && binding.bound_symbols.is_empty();
+        let symbols = binding.free_symbols;
+        let function_heads = binding.function_heads;
+        let constants = binding.constants;
         let shape = matrix_shape(&tree);
-        let kind = classify(&tree, shape, symbols.is_empty());
-        let exactness = exactness(&tree, symbols.is_empty(), kind);
+        let kind = classify(&tree, shape, no_symbols);
+        let exactness = exactness(&tree, no_symbols, kind);
         Ok(AnalyzedInput {
             semantic: SemanticSummary {
                 kind,
                 symbols: symbols.into_iter().collect(),
+                bound_symbols: binding.bound_symbols.into_iter().collect(),
+                symbol_identities: binding.identities.into_iter().collect(),
                 constants: constants.into_iter().collect(),
                 shape,
                 exactness,

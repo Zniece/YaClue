@@ -6,6 +6,7 @@
 
 pub mod algebra;
 pub mod assumptions;
+pub mod binding;
 pub mod composition;
 pub mod engine;
 pub mod equations;

@@ -1436,7 +1436,8 @@ mod tests {
             process_expression_with_engine(request("D(x)Sin(x)^2", true), &mut engine).unwrap();
         assert_eq!(derivative.kind, "derivative");
         assert!(!derivative.steps.is_empty());
-        assert_eq!(derivative.semantic.symbols, ["x".to_string()]);
+        assert!(derivative.semantic.symbols.is_empty());
+        assert_eq!(derivative.semantic.bound_symbols, ["x".to_string()]);
 
         let composed =
             process_expression_with_engine(request("D(x)Integrate(x)x*Exp(x)", true), &mut engine)
