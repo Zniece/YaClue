@@ -28,6 +28,7 @@ pub enum TokenError {
 
 pub struct Tokenizer {
     chars: Vec<char>,
+    input_bytes: usize,
     pos: usize,
     /// XML tokenizer mode (see upstream `xmltokenizer.cpp`), toggled by the
     /// `XmlTokenizer()` command and restored by `DefaultTokenizer()`.
@@ -38,6 +39,7 @@ impl Tokenizer {
     pub fn new(src: &str) -> Self {
         Tokenizer {
             chars: src.chars().collect(),
+            input_bytes: src.len(),
             pos: 0,
             xml: false,
         }
@@ -74,6 +76,11 @@ impl Tokenizer {
 
     pub fn position(&self) -> usize {
         self.pos
+    }
+
+    /// Byte length of the original input.
+    pub(crate) fn input_len(&self) -> usize {
+        self.input_bytes
     }
 
     /// Backtrack (used by operator splitting); see upstream

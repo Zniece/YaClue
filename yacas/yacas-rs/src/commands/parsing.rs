@@ -232,7 +232,11 @@ fn plain_parse(
     env: &mut Environment,
     tok: &mut crate::tokenizer::Tokenizer,
     listed: bool,
+    nesting: usize,
 ) -> Result<Rc<LispObject>, YacasError> {
+    if nesting > crate::parser::MAX_PARSE_DEPTH {
+        return Err(YacasError::generic("maximum parse depth exceeded"));
+    }
     let token = tok
         .next_token()
         .map_err(|_| YacasError::generic("Invalid token"))?;
@@ -257,7 +261,7 @@ fn plain_parse(
             break;
         }
         if t == "(" {
-            let sub = plain_parse(env, tok, false)?;
+            let sub = plain_parse(env, tok, false, nesting + 1)?;
             kinds.push(spine_kinds(&sub).next().expect("node kind"));
         } else {
             kinds.push(ObjectKind::Atom(env.symtab.look_up(&t)));
@@ -283,7 +287,7 @@ fn cmd_lisp_read_impl(env: &mut Environment, listed: bool) -> Result<Rc<LispObje
                 "LispRead: input tokenizer missing".to_string(),
             ))?
     };
-    let r = plain_parse(env, &mut tok, listed);
+    let r = plain_parse(env, &mut tok, listed, 0);
     env.input_stack
         .borrow_mut()
         .last_mut()

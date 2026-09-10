@@ -23,6 +23,12 @@ use crate::value::{atom_or_number, build_list, spine_kinds, spine_refs, LispObje
 /// `KMaxPrecedence`).
 pub const K_MAX_PREC: i32 = 60000;
 
+/// Parser resource limits. These are deliberately above normal script and
+/// interactive inputs while keeping hostile inputs away from the thread stack
+/// and from unbounded token storage.
+pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+pub const MAX_PARSE_DEPTH: usize = 256;
+
 #[derive(Debug)]
 pub enum ParseError {
     Token(TokenError),
@@ -53,6 +59,11 @@ pub fn parse_expression(
     env: &mut Environment,
     src: &str,
 ) -> Result<Option<Rc<LispObject>>, ParseError> {
+    if src.len() > MAX_INPUT_BYTES {
+        return Err(ParseError::Generic(format!(
+            "input exceeds {MAX_INPUT_BYTES} bytes"
+        )));
+    }
     let mut tok = Tokenizer::new(src);
     parse_one(env, &mut tok)
 }
@@ -65,6 +76,11 @@ pub fn parse_one(
     env: &mut Environment,
     tok: &mut Tokenizer,
 ) -> Result<Option<Rc<LispObject>>, ParseError> {
+    if tok.input_len() > MAX_INPUT_BYTES {
+        return Err(ParseError::Generic(format!(
+            "input exceeds {MAX_INPUT_BYTES} bytes"
+        )));
+    }
     let mut p = InfixParser::new(env, tok);
     p.parse()?;
     Ok(p.result.take())
@@ -89,7 +105,7 @@ impl<'a> InfixParser<'a> {
             self.result = Some(atom_or_number(&mut self.env.symtab, "EndOfFile"));
             return Ok(());
         }
-        self.read_expression(K_MAX_PREC)?;
+        self.read_expression(K_MAX_PREC, 0)?;
         // After the expression a `;` is required; EOF is also legal (a file's
         // final statement may omit `;`). When the input does end with `;`,
         // the next parse round yields the `EndOfFile` atom.
@@ -142,13 +158,18 @@ impl<'a> InfixParser<'a> {
         self.env.prefix.contains_key(&sym)
     }
 
-    fn read_expression(&mut self, depth: i32) -> Result<(), ParseError> {
-        self.read_atom()?;
+    fn read_expression(&mut self, precedence: i32, nesting: usize) -> Result<(), ParseError> {
+        if nesting > MAX_PARSE_DEPTH {
+            return Err(ParseError::Generic(format!(
+                "expression exceeds maximum parse depth {MAX_PARSE_DEPTH}"
+            )));
+        }
+        self.read_atom(nesting)?;
         loop {
             // Special case: `a[b]` subscript (lowest precedence) → Nth.
             if self.lookahead == "[" {
                 self.match_token("[")?;
-                self.read_expression(K_MAX_PREC)?;
+                self.read_expression(K_MAX_PREC, nesting + 1)?;
                 if self.lookahead != "]" {
                     return Err(ParseError::Generic(format!(
                         "Expecting a ] close bracket for program block, but got {} instead",
@@ -199,32 +220,32 @@ impl<'a> InfixParser<'a> {
                         }
                     }
                 };
-                if depth < op.prec {
+                if precedence < op.prec {
                     return Ok(());
                 }
                 // Left-associative: the right operand parses one level
                 // higher (upper = prec - 1); right-associative operators
                 // (like `^`) recurse at the same level.
                 let upper = if op.right_assoc { op.prec } else { op.prec - 1 };
-                self.get_other_side(2, upper)?;
+                self.get_other_side(2, upper, nesting)?;
             }
         }
     }
 
-    fn read_atom(&mut self) -> Result<(), ParseError> {
+    fn read_atom(&mut self, nesting: usize) -> Result<(), ParseError> {
         // Prefix operator.
         let la = self.lookahead.clone();
         if let Some(op) = self.prefix_lookup(&la) {
             let the_operator = self.lookahead.clone();
             self.match_token(&the_operator)?;
-            self.read_expression(op.prec)?;
+            self.read_expression(op.prec, nesting + 1)?;
             self.insert_atom(&the_operator)?;
             self.combine(1)?;
         }
         // Parentheses.
         else if self.lookahead == "(" {
             self.match_token("(")?;
-            self.read_expression(K_MAX_PREC)?;
+            self.read_expression(K_MAX_PREC, nesting + 1)?;
             self.match_token(")")?;
         }
         // List {a,b,c}.
@@ -232,7 +253,7 @@ impl<'a> InfixParser<'a> {
             let mut nrargs: usize = 0;
             self.match_token("{")?;
             while self.lookahead != "}" {
-                self.read_expression(K_MAX_PREC)?;
+                self.read_expression(K_MAX_PREC, nesting + 1)?;
                 nrargs += 1;
                 if self.lookahead == "," {
                     self.match_token(",")?;
@@ -252,7 +273,7 @@ impl<'a> InfixParser<'a> {
             let mut nrargs: usize = 0;
             self.match_token("[")?;
             while self.lookahead != "]" {
-                self.read_expression(K_MAX_PREC)?;
+                self.read_expression(K_MAX_PREC, nesting + 1)?;
                 nrargs += 1;
                 if self.lookahead == ";" {
                     self.match_token(";")?;
@@ -276,7 +297,7 @@ impl<'a> InfixParser<'a> {
                 nrargs = 0;
                 self.match_token("(")?;
                 while self.lookahead != ")" {
-                    self.read_expression(K_MAX_PREC)?;
+                    self.read_expression(K_MAX_PREC, nesting + 1)?;
                     nrargs += 1;
                     if self.lookahead == "," {
                         self.match_token(",")?;
@@ -297,7 +318,7 @@ impl<'a> InfixParser<'a> {
                     let la = self.lookahead.clone();
                     let is_end = la == ";" || la == ")" || la.is_empty() || la == "EndOfFile";
                     if !is_end {
-                        self.read_expression(op.prec)?;
+                        self.read_expression(op.prec, nesting + 1)?;
                         nrargs += 1;
                     }
                 }
@@ -321,10 +342,15 @@ impl<'a> InfixParser<'a> {
         Ok(())
     }
 
-    fn get_other_side(&mut self, nrargs: usize, depth: i32) -> Result<(), ParseError> {
+    fn get_other_side(
+        &mut self,
+        nrargs: usize,
+        precedence: i32,
+        nesting: usize,
+    ) -> Result<(), ParseError> {
         let the_operator = self.lookahead.clone();
         self.match_token(&the_operator)?;
-        self.read_expression(depth)?;
+        self.read_expression(precedence, nesting + 1)?;
         self.insert_atom(&the_operator)?;
         self.combine(nrargs)
     }
@@ -391,19 +417,29 @@ impl<'a> LispParser<'a> {
 
     /// Parse one form; EOF yields the `EndOfFile` atom.
     pub fn parse(&mut self) -> Result<Rc<LispObject>, ParseError> {
+        if self.tok.input_len() > MAX_INPUT_BYTES {
+            return Err(ParseError::Generic(format!(
+                "input exceeds {MAX_INPUT_BYTES} bytes"
+            )));
+        }
         let token = self.tok.next_token()?;
         if token.is_empty() {
             return Ok(atom_or_number(&mut self.env.symtab, "EndOfFile"));
         }
-        self.parse_atom(&token)
+        self.parse_atom(&token, 0)
     }
 
-    fn parse_atom(&mut self, token: &str) -> Result<Rc<LispObject>, ParseError> {
+    fn parse_atom(&mut self, token: &str, nesting: usize) -> Result<Rc<LispObject>, ParseError> {
+        if nesting > MAX_PARSE_DEPTH {
+            return Err(ParseError::Generic(format!(
+                "expression exceeds maximum parse depth {MAX_PARSE_DEPTH}"
+            )));
+        }
         if token.is_empty() {
             return Err(ParseError::InvalidExpression(String::new()));
         }
         if token == "(" {
-            let sub = self.parse_list()?;
+            let sub = self.parse_list(nesting + 1)?;
             return Ok(Rc::new(LispObject {
                 next: None,
                 kind: ObjectKind::Sublist(sub),
@@ -412,7 +448,7 @@ impl<'a> LispParser<'a> {
         Ok(atom_or_number(&mut self.env.symtab, token))
     }
 
-    fn parse_list(&mut self) -> Result<Rc<LispObject>, ParseError> {
+    fn parse_list(&mut self, nesting: usize) -> Result<Rc<LispObject>, ParseError> {
         let mut kinds: Vec<ObjectKind> = Vec::new();
         loop {
             let token = self.tok.next_token()?;
@@ -422,7 +458,7 @@ impl<'a> LispParser<'a> {
             if token == ")" {
                 break;
             }
-            let node = self.parse_atom(&token)?;
+            let node = self.parse_atom(&token, nesting)?;
             kinds.push(spine_kinds(&node).next().expect("parse_list item"));
         }
         build_list(kinds).ok_or_else(|| ParseError::Generic("parse_list: empty sublist".into()))
@@ -527,5 +563,43 @@ mod tests {
             parse_expression(&mut env2, "[aa;bb;cc];").is_err(),
             "missing final ; must error"
         );
+    }
+
+    #[test]
+    fn rejects_excessive_input_before_tokenizing() {
+        let mut env = Environment::new();
+        let source = "a".repeat(MAX_INPUT_BYTES + 1);
+        assert!(matches!(
+            parse_expression(&mut env, &source),
+            Err(ParseError::Generic(message)) if message.contains("input exceeds")
+        ));
+    }
+
+    #[test]
+    fn rejects_excessive_infix_nesting() {
+        let mut env = Environment::new();
+        let source = format!(
+            "{}a{}",
+            "(".repeat(MAX_PARSE_DEPTH + 1),
+            ")".repeat(MAX_PARSE_DEPTH + 1)
+        );
+        assert!(matches!(
+            parse_expression(&mut env, &source),
+            Err(ParseError::Generic(message)) if message.contains("maximum parse depth")
+        ));
+    }
+
+    #[test]
+    fn rejects_excessive_prefix_nesting() {
+        let mut env = Environment::new();
+        let source = format!(
+            "{}a{}",
+            "(".repeat(MAX_PARSE_DEPTH + 1),
+            ")".repeat(MAX_PARSE_DEPTH + 1)
+        );
+        assert!(matches!(
+            LispParser::new(&mut env, &source).parse(),
+            Err(ParseError::Generic(message)) if message.contains("maximum parse depth")
+        ));
     }
 }
