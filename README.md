@@ -147,3 +147,8 @@ without the binary they fail instead of being reported as passed.
 This workspace uses the root `Cargo.lock`; Rust workspace members do not
 maintain separate lockfiles. The independently built Tauri application keeps
 its own `app/src-tauri/Cargo.lock`.
+
+The low-level Yacas tokenizer accepts Unicode letters. Product-facing
+`processing` APIs intentionally restrict variable and parameter identifiers to
+ASCII letters, ASCII digits after the first character, and apostrophes until
+all domain scripts and TeX rendering support Unicode identifiers consistently.

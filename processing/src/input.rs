@@ -185,6 +185,9 @@ pub fn contains_ratio_symbols(
     Ok(has_ratio_symbols(&tree, first_symbol, second_symbol))
 }
 
+/// Validate a product-level identifier. The underlying language tokenizer is
+/// Unicode-aware, but processing identifiers stay ASCII until every renderer
+/// and domain script supports Unicode names consistently.
 pub fn validate_symbol(symbol: &str, label: &str) -> Result<(), EngineError> {
     let mut chars = symbol.chars();
     if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -362,6 +365,16 @@ mod tests {
         assert_eq!(result.symbols, ["x", "y"]);
         assert!(result.function_heads.contains(&"Sin".to_string()));
         assert!(result.constants.contains(&"Pi".to_string()));
+    }
+
+    #[test]
+    fn product_symbols_have_an_explicit_ascii_contract() {
+        for symbol in ["x", "value2", "delta'value"] {
+            assert!(validate_symbol(symbol, "变量").is_ok(), "{symbol}");
+        }
+        for symbol in ["α", "变量2", "'internal", "α₂", "x;Echo"] {
+            assert!(validate_symbol(symbol, "变量").is_err(), "{symbol}");
+        }
     }
 
     #[test]
