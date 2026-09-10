@@ -11,7 +11,7 @@ use processing::plot::SampleOptions;
 use processing::protocol::{
     Condition, ConditionSet, OutcomeReason, ResultCompleteness, ResultMetadata,
 };
-use processing::semantic::{AnalyzedInput, SemanticSummary};
+use processing::semantic::{AnalyzedInput, SemanticSummary, ValueKind};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -174,6 +174,37 @@ fn result_metadata(
         };
     }
     Ok(metadata)
+}
+
+fn arbitrary_constants(result: &DispatchExpressionResult) -> Vec<String> {
+    let domain = result.data.get("result").unwrap_or(&result.data);
+    domain
+        .get("constants")
+        .or_else(|| domain.get("arbitrary_constants"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+fn project_domain_semantic(
+    input: &SemanticSummary,
+    result: &DispatchExpressionResult,
+) -> Result<SemanticSummary, ErrorResponse> {
+    let generated = arbitrary_constants(result);
+    if result.kind != "ode" && generated.is_empty() {
+        return Ok(input.clone());
+    }
+    processing::semantic::project_result(
+        input,
+        &result.expression,
+        &generated,
+        if result.kind == "ode" { &["x"] } else { &[] },
+        (result.kind == "ode").then_some(ValueKind::SolutionSet),
+    )
+    .map_err(message)
 }
 
 fn condition_set_from_value(value: Option<&Value>) -> Result<ConditionSet, ErrorResponse> {
@@ -1029,7 +1060,8 @@ fn process_expression_with_engine(
     let analyzed =
         processing::semantic::analyze_input(&request.expression, "表达式").map_err(message)?;
     let result = dispatch_expression_with_engine(request, engine, &analyzed)?;
-    let outcome = result_metadata(&result, analyzed.semantic.exactness)?;
+    let semantic = project_domain_semantic(&analyzed.semantic, &result)?;
+    let outcome = result_metadata(&result, semantic.exactness)?;
     Ok(ProcessExpressionResult {
         kind: result.kind,
         title: result.title,
@@ -1037,7 +1069,7 @@ fn process_expression_with_engine(
         tex: result.tex,
         steps: result.steps,
         data: result.data,
-        semantic: analyzed.semantic,
+        semantic,
         outcome,
     })
 }
@@ -1094,6 +1126,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processing::binding::SymbolRole;
 
     fn request(expression: &str, steps: bool) -> ProcessExpressionRequest {
         ProcessExpressionRequest {
@@ -1150,6 +1183,11 @@ mod tests {
         assert_eq!(ode.kind, "ode");
         assert!(!ode.steps.is_empty());
         assert!(!ode.expression.contains("C7"));
+        assert!(ode.semantic.symbols.is_empty());
+        assert_eq!(ode.semantic.bound_symbols, ["x"]);
+        assert!(ode.semantic.symbol_identities.iter().any(|identity| {
+            identity.name == "C" && identity.role == SymbolRole::ArbitraryConstant
+        }));
 
         let equations = process_expression_with_engine(
             request("Solve({x+y==3,x-y==1},{x,y})", false),
@@ -1274,6 +1312,47 @@ mod tests {
             divergent.outcome.reason,
             Some(processing::protocol::OutcomeReason::Divergent)
         );
+    }
+
+    #[test]
+    fn unified_ode_composition_uses_normalized_solutions_and_result_semantics() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let first =
+            process_expression_with_engine(request("D(x)OdeSolve(y'==y)", true), &mut engine)
+                .unwrap();
+        assert_eq!(first.kind, "composition");
+        assert!(
+            !first.expression.contains("C179"),
+            "{:#?}",
+            first.expression
+        );
+        assert!(!first
+            .semantic
+            .symbols
+            .iter()
+            .any(|name| name.starts_with('y')));
+        assert_eq!(first.semantic.bound_symbols, ["x"]);
+        assert!(first.semantic.symbol_identities.iter().any(|identity| {
+            identity.name == "C" && identity.role == SymbolRole::ArbitraryConstant
+        }));
+
+        let second = process_expression_with_engine(
+            request("D(x)OdeSolve(y''+4*y==Sin(x))", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(second.kind, "composition");
+        assert!(
+            !second.expression.contains("Deriv(x,y"),
+            "{}",
+            second.expression
+        );
+        assert!(!second.expression.contains("y(2)"), "{}", second.expression);
+        assert!(!second
+            .semantic
+            .symbols
+            .iter()
+            .any(|name| name.starts_with('y')));
     }
 
     #[test]

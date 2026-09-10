@@ -7,6 +7,7 @@ use crate::algebra::{self, TransformKind};
 use crate::engine::{Engine, EngineError};
 use crate::input::{root_call, strip_tex_delimiters, validate_expression, RootCall};
 use crate::numeric;
+use crate::ode::{self, OdeStatus};
 use crate::steps::{
     derive_integrals_with_verbosity, derive_steps_order_with_verbosity, Step, StepImportance,
     StepVerbosity,
@@ -23,6 +24,7 @@ pub enum CompositionOperator {
     Integral,
     Substitute,
     Approximate,
+    OdeSolve,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -79,6 +81,12 @@ pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
         value_argument: ValueArgument::Last,
     },
     OperatorSignature {
+        name: "OdeSolve",
+        operator: CompositionOperator::OdeSolve,
+        arities: UNARY_ARITY,
+        value_argument: ValueArgument::First,
+    },
+    OperatorSignature {
         name: "N",
         operator: CompositionOperator::Approximate,
         arities: APPROXIMATE_ARITIES,
@@ -108,6 +116,7 @@ pub struct CompositionResult {
     pub steps: Vec<Step>,
     pub operators: Vec<CompositionOperator>,
     pub reason: Option<String>,
+    pub arbitrary_constants: Vec<String>,
 }
 
 struct Operation {
@@ -158,6 +167,7 @@ pub fn execute_steps(
                     .map(|operation: &Operation| operation.signature.operator)
                     .collect(),
                 reason: Some(reason),
+                arbitrary_constants: Vec::new(),
             }));
         }
     };
@@ -168,17 +178,21 @@ pub fn execute_steps(
     let mut current = leaf;
     let mut steps = Vec::new();
     let mut unresolved = false;
+    let mut arbitrary_constants = Vec::new();
     for index in (0..operations.len()).rev() {
         let operation = &operations[index];
         let outcome = apply(engine, operation, &current, verbosity)?;
         current = outcome.value;
         unresolved |= outcome.unresolved;
+        arbitrary_constants.extend(outcome.arbitrary_constants);
         steps.extend(wrap_pending_steps(outcome.steps, &operations[..index]));
     }
     let tex = steps
         .last()
         .map(|step| step.tex.clone())
         .unwrap_or_default();
+    arbitrary_constants.sort();
+    arbitrary_constants.dedup();
     Ok(Some(CompositionResult {
         status: if unresolved {
             CompositionStatus::Unresolved
@@ -194,6 +208,7 @@ pub fn execute_steps(
             .map(|operation| operation.signature.operator)
             .collect(),
         reason: unresolved.then(|| "至少一个运算保持未求值".into()),
+        arbitrary_constants,
     }))
 }
 
@@ -307,6 +322,7 @@ struct ApplyOutcome {
     value: String,
     steps: Vec<Step>,
     unresolved: bool,
+    arbitrary_constants: Vec<String>,
 }
 
 fn apply(
@@ -363,6 +379,7 @@ fn apply(
                     result.tex,
                 )],
                 unresolved: result.unresolved,
+                arbitrary_constants: Vec::new(),
             })
         }
         CompositionOperator::Substitute => {
@@ -380,6 +397,7 @@ fn apply(
                 )],
                 unresolved: value.starts_with("Subst("),
                 value,
+                arbitrary_constants: Vec::new(),
             })
         }
         CompositionOperator::Approximate => {
@@ -402,6 +420,17 @@ fn apply(
                     result.tex,
                 )],
                 unresolved: matches!(result.kind, numeric::NumericKind::Unresolved),
+                arbitrary_constants: Vec::new(),
+            })
+        }
+        CompositionOperator::OdeSolve => {
+            let result =
+                ode::solve_steps_with_verbosity(engine, current, "x", "y", &[], verbosity)?;
+            Ok(ApplyOutcome {
+                value: result.result.solution.clone(),
+                steps: result.steps,
+                unresolved: result.result.status != OdeStatus::Solved,
+                arbitrary_constants: result.result.constants,
             })
         }
     }
@@ -417,6 +446,7 @@ fn from_steps(steps: Vec<Step>) -> Result<ApplyOutcome, EngineError> {
         value,
         steps,
         unresolved,
+        arbitrary_constants: Vec::new(),
     })
 }
 
@@ -471,6 +501,55 @@ mod tests {
                 .to_string(),
             "0"
         );
+    }
+
+    #[test]
+    fn ode_results_cross_the_composition_boundary_after_normalization() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for _ in 0..4 {
+            let first_order =
+                execute_steps(&mut engine, "D(x)OdeSolve(y'==y)", StepVerbosity::Standard)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(first_order.status, CompositionStatus::Completed);
+            assert_eq!(first_order.arbitrary_constants, ["C"]);
+            assert!(first_order.value.contains('C'), "{first_order:#?}");
+            assert!(!first_order.value.contains("C1"), "{first_order:#?}");
+            assert!(
+                !first_order.value.contains("UniqueSymbol"),
+                "{first_order:#?}"
+            );
+        }
+
+        let second_order = execute_steps(
+            &mut engine,
+            "D(x)OdeSolve(y''+4*y==Sin(x))",
+            StepVerbosity::Standard,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(second_order.status, CompositionStatus::Completed);
+        assert_eq!(second_order.arbitrary_constants, ["C1", "C2"]);
+        assert!(
+            !second_order.value.contains("Deriv(x,y"),
+            "{second_order:#?}"
+        );
+        assert!(!second_order.value.contains("y(2)"), "{second_order:#?}");
+    }
+
+    #[test]
+    fn ode_composition_preserves_user_constants_that_resemble_generated_names() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(
+            &mut engine,
+            "D(x)OdeSolve(y'==y+C179*x)",
+            StepVerbosity::Concise,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.arbitrary_constants, ["C"]);
+        assert!(result.value.contains("C179"), "{result:#?}");
     }
 
     #[test]

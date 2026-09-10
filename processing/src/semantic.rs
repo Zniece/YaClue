@@ -1,5 +1,7 @@
 //! Lightweight, non-evaluating semantic classification for product inputs.
 
+use std::collections::BTreeSet;
+
 use serde::Serialize;
 use yacas_rs::value::{spine_refs, LispObject, ObjectKind};
 
@@ -88,6 +90,78 @@ pub fn analyze_input(input: &str, label: &str) -> Result<AnalyzedInput, EngineEr
             function_heads: function_heads.into_iter().collect(),
         })
     })
+}
+
+/// Reclassify a domain result without carrying consumed input symbols into the
+/// public result. Generated identities and operation-bound symbols are supplied
+/// by the domain adapter rather than inferred from their spelling.
+pub fn project_result(
+    input: &SemanticSummary,
+    expression: &str,
+    arbitrary_constants: &[String],
+    additional_bound_symbols: &[&str],
+    kind: Option<ValueKind>,
+) -> Result<SemanticSummary, EngineError> {
+    let generated: BTreeSet<_> = arbitrary_constants.iter().cloned().collect();
+    let mut output = analyze_input(expression, "结果表达式")?.semantic;
+    let mut bound: BTreeSet<_> = input.bound_symbols.iter().cloned().collect();
+    bound.extend(
+        additional_bound_symbols
+            .iter()
+            .map(|name| (*name).to_string()),
+    );
+    let output_names: BTreeSet<_> = output
+        .symbols
+        .iter()
+        .chain(&output.bound_symbols)
+        .cloned()
+        .collect();
+    bound.retain(|name| output_names.contains(name));
+    output
+        .symbols
+        .retain(|name| !bound.contains(name) && !generated.contains(name));
+    output.bound_symbols = bound.iter().cloned().collect();
+    output.symbol_identities = output_names
+        .into_iter()
+        .map(|name| {
+            if generated.contains(&name) {
+                crate::binding::SymbolIdentity::generated(
+                    name,
+                    crate::binding::SymbolRole::ArbitraryConstant,
+                )
+                .expect("arbitrary constant has a generated role")
+            } else if bound.contains(&name) {
+                let binder = input
+                    .symbol_identities
+                    .iter()
+                    .find(|identity| identity.name == name && identity.binder.is_some())
+                    .and_then(|identity| identity.binder)
+                    .or(Some(0));
+                crate::binding::SymbolIdentity {
+                    name,
+                    role: crate::binding::SymbolRole::Bound,
+                    binder,
+                }
+            } else if let Some(identity) = input
+                .symbol_identities
+                .iter()
+                .find(|identity| identity.name == name)
+            {
+                identity.clone()
+            } else {
+                crate::binding::SymbolIdentity {
+                    name,
+                    role: crate::binding::SymbolRole::Free,
+                    binder: None,
+                }
+            }
+        })
+        .collect();
+    if let Some(kind) = kind {
+        output.kind = kind;
+        output.completeness = (kind == ValueKind::SolutionSet).then_some(Completeness::Unknown);
+    }
+    Ok(output)
 }
 
 fn classify(
@@ -263,5 +337,24 @@ mod tests {
         let approximate = analyze_input("N(Pi,30)", "表达式").unwrap();
         assert_eq!(approximate.semantic.kind, ValueKind::Scalar);
         assert_eq!(approximate.semantic.exactness, Exactness::Approximate);
+    }
+
+    #[test]
+    fn result_projection_uses_explicit_generated_symbol_roles() {
+        let input = analyze_input("D(x)OdeSolve(y'==y+C179*x)", "表达式").unwrap();
+        let result =
+            project_result(&input.semantic, "C*Exp(x)+C179*x", &["C".into()], &[], None).unwrap();
+        assert_eq!(result.bound_symbols, ["x"]);
+        assert_eq!(result.symbols, ["C179"]);
+        assert!(result.symbol_identities.iter().any(|identity| {
+            identity.name == "C" && identity.role == crate::binding::SymbolRole::ArbitraryConstant
+        }));
+        assert!(result.symbol_identities.iter().any(|identity| {
+            identity.name == "C179" && identity.role == crate::binding::SymbolRole::UserParameter
+        }));
+        assert!(!result
+            .symbol_identities
+            .iter()
+            .any(|identity| { identity.name.starts_with('y') }));
     }
 }
