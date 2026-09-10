@@ -36,7 +36,6 @@ const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
     "PrincipalValueIntegral",
     "Solve",
     "SolveMatrix",
-    "Taylor",
     "Transpose",
 ];
 
@@ -51,6 +50,7 @@ pub enum CompositionOperator {
     Approximate,
     OdeSolve,
     Limit,
+    Taylor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -75,6 +75,7 @@ const INTEGRATE_ARITIES: &[usize] = &[2, 4];
 const SUBST_ARITIES: &[usize] = &[3];
 const APPROXIMATE_ARITIES: &[usize] = &[1, 2];
 const LIMIT_ARITIES: &[usize] = &[3, 4];
+const TAYLOR_ARITIES: &[usize] = &[4];
 
 pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
     OperatorSignature {
@@ -135,6 +136,12 @@ pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
         name: "Limit",
         operator: CompositionOperator::Limit,
         arities: LIMIT_ARITIES,
+        value_argument: ValueArgument::Last,
+    },
+    OperatorSignature {
+        name: "Taylor",
+        operator: CompositionOperator::Taylor,
+        arities: TAYLOR_ARITIES,
         value_argument: ValueArgument::Last,
     },
     OperatorSignature {
@@ -561,6 +568,23 @@ fn apply(
             )?;
             from_steps(steps)
         }
+        CompositionOperator::Taylor => {
+            let degree = arguments[2]
+                .parse::<u32>()
+                .map_err(|_| EngineError::InvalidInput("组合 Taylor 次数必须是非负整数".into()))?;
+            let result = numeric::taylor(engine, current, &arguments[0], &arguments[1], degree)?;
+            Ok(ApplyOutcome {
+                value: result.output.clone(),
+                steps: vec![operation_step(
+                    "compose_taylor",
+                    result.output,
+                    "对上一结果构造 Taylor 多项式。",
+                    result.tex,
+                )],
+                unresolved: result.unresolved,
+                arbitrary_constants: Vec::new(),
+            })
+        }
     }
 }
 
@@ -808,6 +832,31 @@ mod tests {
             .position(|step| step.why.contains("外层求导"))
             .unwrap();
         assert!(limit_result < derivative);
+    }
+
+    #[test]
+    fn lowers_taylor_values_before_applying_outer_operations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(
+            &mut engine,
+            "D(x)Taylor(x,0,4)Exp(x)",
+            StepVerbosity::Concise,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(
+            engine
+                .eval(&format!("Simplify(({})-(1+x+x^2/2+x^3/6))", result.value))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0"
+        );
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "compose_taylor"));
     }
 
     #[test]
