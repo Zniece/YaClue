@@ -13,25 +13,6 @@ const BANNER_END: &str = "keep typing Example();";
 const EVAL_TIMEOUT: Duration = Duration::from_secs(10);
 static RESULT_SYMBOL_ID: AtomicU64 = AtomicU64::new(0);
 
-/// yacas 命令出错时的输出特征(启发式,逐行匹配)
-const ERROR_MARKERS: [&str; 9] = [
-    "In function",
-    "Invalid argument",
-    "Wrong number of arguments",
-    "bad argument number",
-    "Expecting",
-    "Could not create",
-    "execution error",
-    "Error parsing expression",
-    "Argument is not a list",
-];
-
-fn looks_like_error(output: &str) -> bool {
-    output
-        .lines()
-        .any(|line| ERROR_MARKERS.iter().any(|m| line.contains(m)))
-}
-
 // ============================================================
 // 原版引擎:yacas REPL 子进程
 // ============================================================
@@ -173,6 +154,43 @@ impl ReplEngine {
             }
         }
     }
+
+    fn eval_input_once(&mut self, command: &str) -> Result<String, EngineError> {
+        let (protocol, marker) = trapped_eval_command(&self.result_symbol, command);
+        let raw = self.eval_raw(&protocol)?;
+        if let Some(message) = trapped_error(&raw, &marker) {
+            Err(EngineError::Eval(message.to_string()))
+        } else {
+            Ok(raw)
+        }
+    }
+
+    fn eval_trapped(&mut self, command: &str) -> Result<String, EngineError> {
+        let marker = format!("__YACLUE_ERROR_{}__", self.result_symbol);
+        let protocol = format!(
+            "TrapError(({command}),ConcatStrings({},GetCoreError()))",
+            yacas_string_literal(&marker)
+        );
+        let raw = self.eval_raw(&protocol)?;
+        if let Some(message) = trapped_error(&raw, &marker) {
+            Err(EngineError::Eval(message.to_string()))
+        } else {
+            Ok(raw)
+        }
+    }
+}
+
+fn trapped_eval_command(result_symbol: &str, command: &str) -> (String, String) {
+    let marker = format!("__YACLUE_ERROR_{result_symbol}__");
+    let source = yacas_string_literal(command);
+    let marker_literal = yacas_string_literal(&marker);
+    (
+        format!(
+            "TrapError({result_symbol}:=Eval(FromString({source})Read()),\
+             ConcatStrings({marker_literal},GetCoreError()))"
+        ),
+        marker,
+    )
 }
 
 impl Drop for ReplEngine {
@@ -198,19 +216,13 @@ fn strip_suffix_lines(fullform_raw: &str, result_raw: &str) -> String {
 impl Engine for ReplEngine {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
         let result_symbol = self.result_symbol.clone();
-        let raw = self.eval_raw(&format!("{result_symbol}:=({command})"))?;
-        if looks_like_error(&raw) {
-            return Err(EngineError::Eval(raw));
-        }
+        let raw = self.eval_input_once(command)?;
         // 结构化结果:FullForm(expr) 减去尾部重复的结果行
-        let fullform_raw = self.eval_raw(&format!("FullForm({result_symbol})"))?;
-        if looks_like_error(&fullform_raw) {
-            return Err(EngineError::Eval(fullform_raw));
-        }
+        let fullform_raw = self.eval_trapped(&format!("FullForm({result_symbol})"))?;
         let fullform = strip_suffix_lines(&fullform_raw, &raw);
         let expr = Expr::parse_fullform(&fullform).map_err(EngineError::Parse)?;
         // TeXForm(expr)
-        let tex_raw = self.eval_raw(&format!("TeXForm({result_symbol})"))?;
+        let tex_raw = self.eval_trapped(&format!("TeXForm({result_symbol})"))?;
         let tex = tex_raw
             .trim()
             .strip_prefix('"')
@@ -229,6 +241,13 @@ impl Engine for ReplEngine {
             .filter(|l| !l.trim().is_empty())
             .collect())
     }
+}
+
+fn trapped_error<'a>(raw: &'a str, marker: &str) -> Option<&'a str> {
+    raw.trim()
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .and_then(|value| value.strip_prefix(marker))
 }
 
 fn default_yacas_bin() -> String {
@@ -359,5 +378,26 @@ mod lifecycle_tests {
                 "Load(\"steps.rep/code.ys\")"
             ]
         );
+    }
+
+    #[test]
+    fn trapped_protocol_evaluates_once_and_classifies_syntax_errors() {
+        use crate::engine::rust::eval_cmd;
+
+        let mut engine = crate::engine::RustEngine::spawn().unwrap();
+        eval_cmd(&mut engine.env, "replProtocolCounter:=0").unwrap();
+        let (protocol, _marker) = trapped_eval_command(
+            "YaClue'ReplProtocolTest",
+            "replProtocolCounter:=replProtocolCounter+1",
+        );
+        let value = eval_cmd(&mut engine.env, &protocol).unwrap();
+        assert_eq!(yacas_rs::printer::infix_print(&engine.env, &value), "1");
+        let counter = eval_cmd(&mut engine.env, "replProtocolCounter").unwrap();
+        assert_eq!(yacas_rs::printer::infix_print(&engine.env, &counter), "1");
+
+        let (protocol, marker) = trapped_eval_command("YaClue'ReplProtocolTest", "Sin(");
+        let error = eval_cmd(&mut engine.env, &protocol).unwrap();
+        let printed = yacas_rs::printer::infix_print(&engine.env, &error);
+        assert!(trapped_error(&printed, &marker).is_some(), "{printed}");
     }
 }
