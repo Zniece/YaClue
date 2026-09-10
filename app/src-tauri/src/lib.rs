@@ -699,7 +699,7 @@ fn dispatch_expression_with_engine(
         match (call.head.as_str(), call.arguments.as_slice()) {
             ("D", [variable, expression]) | ("Deriv", [variable, expression]) => {
                 if request.steps {
-                    let steps = processing::steps::derive_steps_order_with_verbosity(
+                    let steps = processing::steps::derive_composed_steps_order_with_verbosity(
                         &mut *engine,
                         expression,
                         variable,
@@ -716,7 +716,7 @@ fn dispatch_expression_with_engine(
                     .parse::<u32>()
                     .map_err(|_| invalid_input("导数阶数必须是非负整数"))?;
                 if request.steps {
-                    let steps = processing::steps::derive_steps_order_with_verbosity(
+                    let steps = processing::steps::derive_composed_steps_order_with_verbosity(
                         &mut *engine,
                         expression,
                         variable,
@@ -1418,6 +1418,21 @@ mod tests {
         assert_eq!(derivative.kind, "derivative");
         assert!(!derivative.steps.is_empty());
         assert_eq!(derivative.semantic.symbols, ["x".to_string()]);
+
+        let composed =
+            process_expression_with_engine(request("D(x)Integrate(x)x*Exp(x)", true), &mut engine)
+                .unwrap();
+        let integration = composed
+            .steps
+            .iter()
+            .position(|step| step.rule == "method-parts")
+            .unwrap();
+        let outer_derivative = composed
+            .steps
+            .iter()
+            .position(|step| step.why.contains("外层求导"))
+            .unwrap();
+        assert!(integration < outer_derivative);
 
         let matrix = process_expression_with_engine(
             request("{{1,2},{3,4}}*{{5,6},{7,8}}", false),

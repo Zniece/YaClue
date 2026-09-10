@@ -221,6 +221,36 @@ pub fn derive_steps_order_with_verbosity(
     )
 }
 
+/// Generate a teaching chain for a derivative whose direct operand may be an
+/// indefinite integral. The inner operation is explained first and its
+/// verified final expression becomes the operand of the outer derivative.
+pub fn derive_composed_steps_order_with_verbosity(
+    engine: &mut dyn Engine,
+    expr: &str,
+    var: &str,
+    order: u32,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    let Some(call) = crate::input::root_call(expr, "求导表达式")? else {
+        return derive_steps_order_with_verbosity(engine, expr, var, order, verbosity);
+    };
+    let (inner_var, integrand) = match (call.head.as_str(), call.arguments.as_slice()) {
+        ("Integrate", [inner_var, integrand]) => (inner_var, integrand),
+        _ => return derive_steps_order_with_verbosity(engine, expr, var, order, verbosity),
+    };
+    let mut steps = derive_integrals_with_verbosity(engine, integrand, inner_var, verbosity)?;
+    let integrated = steps
+        .last()
+        .map(|step| step.expr.clone())
+        .ok_or_else(|| EngineError::Parse("内层积分没有最终步骤".into()))?;
+    let mut outer = derive_steps_order_with_verbosity(engine, &integrated, var, order, verbosity)?;
+    if let Some(first) = outer.first_mut() {
+        first.why = format!("内层积分已求出；对其结果应用外层求导。{}", first.why);
+    }
+    steps.extend(outer);
+    Ok(steps)
+}
+
 /// 对 `expr` 关于 `var` 生成分步积分过程
 pub fn derive_integrals(
     engine: &mut dyn Engine,
@@ -531,6 +561,33 @@ mod tests {
         assert!(concise
             .iter()
             .all(|step| step.rule != "higher-derivative-round"));
+    }
+
+    #[test]
+    fn composed_derivative_explains_the_inner_integral_first() {
+        let mut engine = crate::engine::RustEngine::spawn().unwrap();
+        let steps = derive_composed_steps_order_with_verbosity(
+            &mut engine,
+            "Integrate(x)x*Exp(x)",
+            "x",
+            1,
+            StepVerbosity::Standard,
+        )
+        .unwrap();
+        let integration = steps
+            .iter()
+            .position(|step| step.rule == "method-parts")
+            .expect("missing inner integration steps");
+        let differentiation = steps
+            .iter()
+            .rposition(|step| step.why.contains("外层求导"))
+            .expect("missing outer differentiation steps");
+        assert!(integration < differentiation);
+        let final_expression = &steps.last().unwrap().expr;
+        let residual = engine
+            .eval(&format!("Simplify(({final_expression})-x*Exp(x))"))
+            .unwrap();
+        assert_eq!(residual.expr.to_string(), "0");
     }
 
     #[test]
