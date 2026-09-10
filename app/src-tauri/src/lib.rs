@@ -1194,6 +1194,18 @@ mod tests {
         assert_eq!(direct_gamma.kind, "evaluation");
         assert_eq!(direct_gamma.expression, "2");
 
+        let polar_template = process_expression_with_engine(
+            request("PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(polar_template.kind, "polar_integral");
+        assert_eq!(
+            polar_template.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+        assert!(!polar_template.steps.is_empty());
+
         let principal_value = process_expression_with_engine(
             request("PrincipalValueIntegral(x,-1,1,{0},1/x)", false),
             &mut engine,

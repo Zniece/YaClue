@@ -456,8 +456,10 @@ fn evaluate_polar(
 ) -> Result<PolarIntegralResult, EngineError> {
     let x_substitution = format!("{radius}*Cos({angle})");
     let y_substitution = format!("{radius}*Sin({angle})");
+    let [tx, ty, drx, dtx, dry, dty, jacobian_symbol, transformed, verified] =
+        polar_temporary_symbols(expression, x, y, radius, angle, region);
     let transform = engine.eval_expr(&format!(
-        "[Local(tx,ty,drx,dtx,dry,dty,j,t,v);tx:={x_substitution};ty:={y_substitution};drx:=Eval(ApplyPure(\"Deriv\",{{{radius},tx}}));dtx:=Eval(ApplyPure(\"Deriv\",{{{angle},tx}}));dry:=Eval(ApplyPure(\"Deriv\",{{{radius},ty}}));dty:=Eval(ApplyPure(\"Deriv\",{{{angle},ty}}));v:=IsZero(Simplify(drx-Cos({angle}))) And IsZero(Simplify(dtx+{radius}*Sin({angle}))) And IsZero(Simplify(dry-Sin({angle}))) And IsZero(Simplify(dty-{radius}*Cos({angle})));j:={radius};t:=Eval(ApplyPure(\"Subst\",{{{x},tx,{expression}}}));t:=Eval(ApplyPure(\"Subst\",{{{y},ty,t}}));{{j,v,Simplify(TrigSimpCombine(t*{radius})),N({}),N({}),N({}),N({})}};]",
+        "[Local({tx},{ty},{drx},{dtx},{dry},{dty},{jacobian_symbol},{transformed},{verified});{tx}:={x_substitution};{ty}:={y_substitution};{drx}:=Eval(ApplyPure(\"Deriv\",{{{radius},{tx}}}));{dtx}:=Eval(ApplyPure(\"Deriv\",{{{angle},{tx}}}));{dry}:=Eval(ApplyPure(\"Deriv\",{{{radius},{ty}}}));{dty}:=Eval(ApplyPure(\"Deriv\",{{{angle},{ty}}}));{verified}:=IsZero(Simplify({drx}-Cos({angle}))) And IsZero(Simplify({dtx}+{radius}*Sin({angle}))) And IsZero(Simplify({dry}-Sin({angle}))) And IsZero(Simplify({dty}-{radius}*Cos({angle})));{jacobian_symbol}:={radius};{transformed}:=Eval(ApplyPure(\"Subst\",{{{x},{tx},{expression}}}));{transformed}:=Eval(ApplyPure(\"Subst\",{{{y},{ty},{transformed}}}));{{{jacobian_symbol},{verified},Simplify(TrigSimpCombine({transformed}*{radius})),N({}),N({}),N({}),N({})}};]",
         region.radial_lower,
         region.radial_upper,
         region.angle_lower,
@@ -515,6 +517,30 @@ fn evaluate_polar(
         transformed_integrand,
         integral,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn polar_temporary_symbols(
+    expression: &str,
+    x: &str,
+    y: &str,
+    radius: &str,
+    angle: &str,
+    region: PolarRegion<'_>,
+) -> [String; 9] {
+    let occupied = format!(
+        "{expression} {x} {y} {radius} {angle} {} {} {} {}",
+        region.radial_lower, region.radial_upper, region.angle_lower, region.angle_upper
+    );
+    for index in 0_u32.. {
+        let prefix = format!("YaCluePolarInternal{index}");
+        let names = ["Tx", "Ty", "Drx", "Dtx", "Dry", "Dty", "J", "T", "V"]
+            .map(|suffix| format!("{prefix}{suffix}"));
+        if names.iter().all(|name| !occupied.contains(name)) {
+            return names;
+        }
+    }
+    unreachable!()
 }
 
 fn numeric_value(value: &Expr) -> Result<f64, EngineError> {
@@ -1022,6 +1048,35 @@ mod tests {
         assert_eq!(
             engine
                 .eval(&format!("IsZero(Simplify(({})-4*Pi))", disk.integral.value))
+                .unwrap()
+                .expr
+                .to_string(),
+            "True"
+        );
+
+        let template = polar_integral(
+            &mut engine,
+            "x^2+y^2",
+            "x",
+            "y",
+            "r",
+            "t",
+            PolarRegion {
+                radial_lower: "0",
+                radial_upper: "1",
+                angle_lower: "0",
+                angle_upper: "2*Pi",
+            },
+        )
+        .unwrap();
+        assert_eq!(template.region_kind, PolarRegionKind::Disk);
+        assert_eq!(template.integral.status, IteratedIntegralStatus::Evaluated);
+        assert_eq!(
+            engine
+                .eval(&format!(
+                    "IsZero(Simplify(({})-Pi/2))",
+                    template.integral.value
+                ))
                 .unwrap()
                 .expr
                 .to_string(),
