@@ -3,6 +3,7 @@ use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::equations::{EquationStepResult, SolveResult};
 use processing::extrema::{ExtremaResult, ExtremaStepResult, LagrangeResult, LagrangeStepResult};
+use processing::improper_integrals::ImproperIntegralRequest;
 use processing::limits::{LimitDirection, LimitResult};
 use processing::linear_algebra::{MatrixOperation, MatrixResult};
 use processing::multiple_integrals::{
@@ -865,6 +866,77 @@ fn dispatch_expression_with_engine(
                     return unified_result("derivative", "导数", expression, tex, steps, &());
                 }
             }
+            (head @ ("ImproperIntegral" | "PrincipalValueIntegral"), arguments)
+                if matches!(arguments.len(), 4 | 5) =>
+            {
+                let variable = &arguments[0];
+                let lower = &arguments[1];
+                let upper = &arguments[2];
+                let (points, expression) = if arguments.len() == 5 {
+                    (list_or_single(&arguments[3], "奇点列表")?, &arguments[4])
+                } else {
+                    (Vec::new(), &arguments[3])
+                };
+                let object_request = ImproperIntegralRequest {
+                    expression: expression.clone(),
+                    variable: variable.clone(),
+                    lower: lower.clone(),
+                    upper: upper.clone(),
+                    singular_points: points,
+                };
+                let step_verbosity = request.steps.then_some(verbosity);
+                let result = if head == "PrincipalValueIntegral" {
+                    processing::improper_integrals::principal_value(
+                        &mut *engine,
+                        &object_request,
+                        step_verbosity,
+                    )
+                } else {
+                    processing::improper_integrals::evaluate(
+                        &mut *engine,
+                        &object_request,
+                        step_verbosity,
+                    )
+                }
+                .map_err(message)?;
+                return unified_result(
+                    "defined_object",
+                    if head == "PrincipalValueIntegral" {
+                        "Cauchy 主值"
+                    } else {
+                        "反常积分"
+                    },
+                    result.value.clone(),
+                    result.tex.clone(),
+                    result.steps.clone(),
+                    &result,
+                );
+            }
+            ("Integrate", [variable, lower, upper, expression])
+                if lower.contains("Infinity") || upper.contains("Infinity") =>
+            {
+                let object_request = ImproperIntegralRequest {
+                    expression: expression.clone(),
+                    variable: variable.clone(),
+                    lower: lower.clone(),
+                    upper: upper.clone(),
+                    singular_points: Vec::new(),
+                };
+                let result = processing::improper_integrals::evaluate(
+                    &mut *engine,
+                    &object_request,
+                    request.steps.then_some(verbosity),
+                )
+                .map_err(message)?;
+                return unified_result(
+                    "defined_object",
+                    "反常积分",
+                    result.value.clone(),
+                    result.tex.clone(),
+                    result.steps.clone(),
+                    &result,
+                );
+            }
             ("Integrate", [variable, expression]) if request.steps => {
                 let steps = processing::steps::derive_integrals_with_verbosity(
                     &mut *engine,
@@ -1615,6 +1687,31 @@ mod tests {
         .unwrap();
         assert_eq!(double_integral.kind, "double_integral");
         assert!(!double_integral.steps.is_empty());
+
+        let improper = process_expression_with_engine(
+            request("Integrate(x,0,Infinity)Exp(-x)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(improper.kind, "defined_object");
+        assert_eq!(improper.expression, "1");
+
+        let principal_value = process_expression_with_engine(
+            request("PrincipalValueIntegral(x,-1,1,{0},1/x)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(principal_value.expression, "0");
+
+        let divergent = process_expression_with_engine(
+            request("ImproperIntegral(x,-1,1,{0},1/x)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(
+            divergent.outcome.reason,
+            Some(processing::protocol::OutcomeReason::Divergent)
+        );
     }
 
     #[test]

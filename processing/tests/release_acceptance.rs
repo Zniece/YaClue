@@ -8,11 +8,13 @@
 use processing::algebra::{transform, TransformKind};
 use processing::engine::{EngineError, RustEngine};
 use processing::equations::{solve as solve_equations, SolveCompleteness, SolveStatus};
+use processing::improper_integrals::{evaluate as improper_integral, ImproperIntegralRequest};
 use processing::limits::{limit, limit_steps, LimitDirection, LimitStatus};
 use processing::linear_algebra::{
     compute as matrix_compute, linear_structure_steps, MatrixOperation,
 };
 use processing::numeric::{approximate, find_root, NumericKind, RootStatus};
+use processing::objects::{DefinedObjectStatus, PrimitiveOperation};
 use processing::ode::{solve as solve_ode, InitialCondition, OdeStatus};
 use processing::ode_numeric::{solve_initial_value, NumericOdeOptions, NumericOdeStatus};
 use processing::plot::{sample, SampleOptions, SampleTermination};
@@ -70,6 +72,52 @@ fn calculus_release_contract() {
         "unsupported integrals must remain visibly unevaluated"
     );
     assert_invalid_input(derive_steps(&mut engine, "x^2", "x;Echo(1)"));
+}
+
+#[test]
+fn defined_object_release_contract() {
+    let mut engine = RustEngine::spawn().expect("engine boot");
+    let request = ImproperIntegralRequest {
+        expression: "Exp(-x)".into(),
+        variable: "x".into(),
+        lower: "0".into(),
+        upper: "Infinity".into(),
+        singular_points: Vec::new(),
+    };
+    let converged = improper_integral(&mut engine, &request, None).unwrap();
+    assert_eq!(converged.status, DefinedObjectStatus::Converged);
+    assert_eq!(converged.value, "1");
+    assert!(converged
+        .components
+        .iter()
+        .any(|component| component.operation == PrimitiveOperation::OneSidedLimit));
+
+    let divergent = improper_integral(
+        &mut engine,
+        &ImproperIntegralRequest {
+            expression: "1/x".into(),
+            variable: "x".into(),
+            lower: "-1".into(),
+            upper: "1".into(),
+            singular_points: vec!["0".into()],
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(divergent.status, DefinedObjectStatus::Divergent);
+    assert!(!divergent
+        .components
+        .iter()
+        .any(|component| component.operation == PrimitiveOperation::Assemble));
+
+    assert_invalid_input(improper_integral(
+        &mut engine,
+        &ImproperIntegralRequest {
+            singular_points: vec!["outside".into()],
+            ..request
+        },
+        None,
+    ));
 }
 
 #[test]

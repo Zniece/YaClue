@@ -82,6 +82,7 @@ const DERIVATIVE_ARITIES: &[usize] = &[2, 3];
 const INTEGRAL_ARITIES: &[usize] = &[2, 4];
 const LIMIT_ARITIES: &[usize] = &[3, 4];
 const SUM_ARITIES: &[usize] = &[4];
+const DEFINED_INTEGRAL_ARITIES: &[usize] = &[4, 5];
 
 pub const BINDING_SIGNATURES: &[BindingSignature] = &[
     BindingSignature {
@@ -111,6 +112,18 @@ pub const BINDING_SIGNATURES: &[BindingSignature] = &[
     BindingSignature {
         name: "Sum",
         arities: SUM_ARITIES,
+        variable_argument: 0,
+        body_argument_from_end: 0,
+    },
+    BindingSignature {
+        name: "ImproperIntegral",
+        arities: DEFINED_INTEGRAL_ARITIES,
+        variable_argument: 0,
+        body_argument_from_end: 0,
+    },
+    BindingSignature {
+        name: "PrincipalValueIntegral",
+        arities: DEFINED_INTEGRAL_ARITIES,
         variable_argument: 0,
         body_argument_from_end: 0,
     },
@@ -553,7 +566,14 @@ mod tests {
 
     #[test]
     fn declares_the_initial_bodied_operator_set() {
-        for name in ["D", "Integrate", "Limit", "Sum"] {
+        for name in [
+            "D",
+            "Integrate",
+            "Limit",
+            "Sum",
+            "ImproperIntegral",
+            "PrincipalValueIntegral",
+        ] {
             assert!(BINDING_SIGNATURES
                 .iter()
                 .any(|signature| signature.name == name));
