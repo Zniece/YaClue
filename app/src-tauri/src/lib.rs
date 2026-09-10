@@ -1363,6 +1363,18 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.rule == "compose_algebra_transform"));
+
+        let limited = process_expression_with_engine(
+            request("D(x)Limit(t,0)(Sin(t)/t+x^2)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(limited.kind, "composition");
+        assert!(
+            limited.expression.contains("2 * x"),
+            "{}",
+            limited.expression
+        );
     }
 
     #[test]
@@ -1370,7 +1382,6 @@ mod tests {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for expression in [
             "D(x)Solve({x==1},{x})",
-            "D(x)Limit(x,0)Sin(x)/x",
             "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
             "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
         ] {

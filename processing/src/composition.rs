@@ -28,7 +28,6 @@ const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
     "ImproperIntegral",
     "Inverse",
     "Lagrange",
-    "Limit",
     "MatrixSolve",
     "OdeSolve",
     "OdeSolveNumeric",
@@ -51,6 +50,7 @@ pub enum CompositionOperator {
     Substitute,
     Approximate,
     OdeSolve,
+    Limit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -74,6 +74,7 @@ const UNARY_ARITY: &[usize] = &[1];
 const INTEGRATE_ARITIES: &[usize] = &[2, 4];
 const SUBST_ARITIES: &[usize] = &[3];
 const APPROXIMATE_ARITIES: &[usize] = &[1, 2];
+const LIMIT_ARITIES: &[usize] = &[3, 4];
 
 pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
     OperatorSignature {
@@ -128,6 +129,12 @@ pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
         name: "Subst",
         operator: CompositionOperator::Substitute,
         arities: SUBST_ARITIES,
+        value_argument: ValueArgument::Last,
+    },
+    OperatorSignature {
+        name: "Limit",
+        operator: CompositionOperator::Limit,
+        arities: LIMIT_ARITIES,
         value_argument: ValueArgument::Last,
     },
     OperatorSignature {
@@ -530,6 +537,30 @@ fn apply(
                 arbitrary_constants: result.result.constants,
             })
         }
+        CompositionOperator::Limit => {
+            let direction = if arguments.len() == 4 {
+                match arguments[2].as_str() {
+                    "Left" => crate::limits::LimitDirection::Left,
+                    "Right" => crate::limits::LimitDirection::Right,
+                    _ => {
+                        return Err(EngineError::InvalidInput(
+                            "组合极限方向应为 Left 或 Right".into(),
+                        ));
+                    }
+                }
+            } else {
+                crate::limits::LimitDirection::Both
+            };
+            let steps = crate::limits::limit_steps_with_verbosity(
+                engine,
+                current,
+                &arguments[0],
+                &arguments[1],
+                direction,
+                verbosity,
+            )?;
+            from_steps(steps)
+        }
     }
 }
 
@@ -538,7 +569,8 @@ fn from_steps(steps: Vec<Step>) -> Result<ApplyOutcome, EngineError> {
         .last()
         .map(|step| step.expr.clone())
         .ok_or_else(|| EngineError::Parse("组合运算没有产生最终步骤".into()))?;
-    let unresolved = value.starts_with("Integrate(") || value.starts_with("D(");
+    let unresolved =
+        value.starts_with("Integrate(") || value.starts_with("D(") || value.starts_with("Limit(");
     Ok(ApplyOutcome {
         value,
         steps,
@@ -747,6 +779,38 @@ mod tests {
     }
 
     #[test]
+    fn lowers_limit_values_before_applying_outer_operations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(
+            &mut engine,
+            "D(x)Limit(t,0)(Sin(t)/t+x^2)",
+            StepVerbosity::Standard,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(
+            engine
+                .eval(&format!("Simplify(({})-2*x)", result.value))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0"
+        );
+        let limit_result = result
+            .steps
+            .iter()
+            .position(|step| step.rule == "limit-result")
+            .unwrap();
+        let derivative = result
+            .steps
+            .iter()
+            .position(|step| step.why.contains("外层求导"))
+            .unwrap();
+        assert!(limit_result < derivative);
+    }
+
+    #[test]
     fn malformed_registered_operation_has_structured_reason() {
         let mut engine = RustEngine::spawn().unwrap();
         let result = execute_steps(&mut engine, "D(x,1,2,x)", StepVerbosity::Concise)
@@ -771,7 +835,6 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         for expression in [
             "D(x)Solve({x==1},{x})",
-            "D(x)Limit(x,0)Sin(x)/x",
             "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
             "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
             "D(x)OdeSolveNumeric(y'==y,x,y,0,1,2)",
