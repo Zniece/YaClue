@@ -210,7 +210,7 @@ pub fn cmd_check(
                 return Err(YacasError::InvalidArg);
             }
         };
-        return Err(YacasError::Generic(text));
+        return Err(YacasError::UserError(text));
     }
     Ok(pred)
 }

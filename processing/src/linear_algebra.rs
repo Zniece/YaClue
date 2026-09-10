@@ -748,7 +748,7 @@ mod tests {
             ),
             compute(&mut engine, "{{1,2},{3,4}}", MatrixOperation::Add, None),
         ] {
-            assert!(result.is_err());
+            assert!(matches!(result, Err(EngineError::InvalidInput(_))));
         }
         assert_eq!(engine.eval("2+3").unwrap().expr.to_string(), "5");
     }
@@ -756,7 +756,10 @@ mod tests {
     #[test]
     fn rejects_non_matrices_and_injected_input() {
         let mut engine = RustEngine::spawn().unwrap();
-        assert!(compute(&mut engine, "x", MatrixOperation::Transpose, None).is_err());
+        assert!(matches!(
+            compute(&mut engine, "x", MatrixOperation::Transpose, None),
+            Err(EngineError::InvalidInput(_))
+        ));
         assert!(compute(
             &mut engine,
             "{{1}});Echo(1);({{1}}",
@@ -841,9 +844,15 @@ mod tests {
     #[test]
     fn rejects_non_rational_and_oversized_structure_requests() {
         let mut engine = RustEngine::spawn().unwrap();
-        assert!(linear_structure(&mut engine, "{{1,x},{0,1}}").is_err());
+        assert!(matches!(
+            linear_structure(&mut engine, "{{1,x},{0,1}}"),
+            Err(EngineError::InvalidInput(_))
+        ));
         let oversized = format!("{{{}}}", vec!["1"; 17].join(","));
-        assert!(linear_structure(&mut engine, &oversized).is_err());
+        assert!(matches!(
+            linear_structure(&mut engine, &oversized),
+            Err(EngineError::InvalidInput(_))
+        ));
         assert_eq!(engine.eval("2+3").unwrap().expr.to_string(), "5");
     }
 

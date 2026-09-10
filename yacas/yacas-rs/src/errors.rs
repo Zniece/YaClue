@@ -63,6 +63,8 @@ pub enum YacasError {
     GenericFormat,
     /// Generic error with custom text.
     Generic(String),
+    /// Explicit user-facing failure raised by the language `Check` command.
+    UserError(String),
     /// Parse error (catch-all; see `parser::ParseError`).
     Parse(crate::parser::ParseError),
 }

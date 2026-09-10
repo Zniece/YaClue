@@ -46,7 +46,7 @@ pub(super) fn eval_cmd(
     command: &str,
 ) -> Result<std::rc::Rc<yacas_rs::value::LispObject>, yacas_rs::errors::YacasError> {
     let tree = yacas_rs::parser::parse_expression(env, &format!("{command};"))
-        .map_err(|e| yacas_rs::errors::YacasError::generic(format!("解析失败: {e:?}")))?
+        .map_err(yacas_rs::errors::YacasError::from)?
         .ok_or_else(|| yacas_rs::errors::YacasError::Generic("空表达式".into()))?;
     yacas_rs::evaluator::eval(env, &tree)
 }
@@ -66,8 +66,8 @@ impl RustEngine {
         let loaded_files = loaded_def_file_count(&self.env);
         self.env.set_eval_timeout(Some(timeout));
         let response = (|| {
-            let result =
-                eval_cmd(&mut self.env, command).map_err(|e| self.eval_error(e, "求值失败"))?;
+            let result = eval_cmd(&mut self.env, command)
+                .map_err(|e| self.eval_error(e, "求值失败", true))?;
             let fullform = yacas_rs::printer::full_form(&result);
             let expr = Expr::parse_fullform(&fullform).map_err(EngineError::Parse)?;
 
@@ -75,7 +75,7 @@ impl RustEngine {
             // it or executing the original command again. Hold also preserves
             // deliberately unevaluated expressions supplied by the caller.
             let tex_value = tex_form_value(&mut self.env, &result)
-                .map_err(|e| self.eval_error(e, "TeXForm 失败"))?;
+                .map_err(|e| self.eval_error(e, "TeXForm 失败", false))?;
             let printed = yacas_rs::printer::infix_print(&self.env, &tex_value);
             let tex = unquote_printed(&printed);
             Ok(EvalResult { expr, tex })
@@ -104,7 +104,7 @@ impl RustEngine {
         self.env.set_eval_timeout(Some(timeout));
         let response = (|| {
             let result = eval_cmd(&mut self.env, command)
-                .map_err(|error| self.eval_error(error, "求值失败"))?;
+                .map_err(|error| self.eval_error(error, "求值失败", true))?;
             Expr::parse_fullform(&yacas_rs::printer::full_form(&result)).map_err(EngineError::Parse)
         })();
         let expired = self.deadline_expired();
@@ -131,9 +131,9 @@ impl RustEngine {
             .iter()
             .map(|expression| {
                 let result = eval_cmd(&mut self.env, expression)
-                    .map_err(|error| self.eval_error(error, "批量求值失败"))?;
+                    .map_err(|error| self.eval_error(error, "批量求值失败", true))?;
                 let tex_value = tex_form_value(&mut self.env, &result)
-                    .map_err(|error| self.eval_error(error, "批量 TeXForm 失败"))?;
+                    .map_err(|error| self.eval_error(error, "批量 TeXForm 失败", false))?;
                 Ok(unquote_printed(&yacas_rs::printer::infix_print(
                     &self.env, &tex_value,
                 )))
@@ -157,11 +157,23 @@ impl RustEngine {
             .is_some_and(|deadline| std::time::Instant::now() >= deadline)
     }
 
-    fn eval_error(&self, error: yacas_rs::errors::YacasError, stage: &str) -> EngineError {
-        if matches!(error, yacas_rs::errors::YacasError::UserInterrupt) && self.deadline_expired() {
-            EngineError::Timeout(format!("{stage}: 超过求值时限"))
-        } else {
-            EngineError::Eval(format!("{stage}: {error:?}"))
+    fn eval_error(
+        &self,
+        error: yacas_rs::errors::YacasError,
+        stage: &str,
+        user_input_stage: bool,
+    ) -> EngineError {
+        match error {
+            yacas_rs::errors::YacasError::UserInterrupt if self.deadline_expired() => {
+                EngineError::Timeout(format!("{stage}: 超过求值时限"))
+            }
+            yacas_rs::errors::YacasError::Parse(error) if user_input_stage => {
+                EngineError::InvalidInput(format!("{stage}: 解析失败: {error:?}"))
+            }
+            yacas_rs::errors::YacasError::UserError(message) if user_input_stage => {
+                EngineError::InvalidInput(format!("{stage}: {message}"))
+            }
+            error => EngineError::Eval(format!("{stage}: {error:?}")),
         }
     }
 }

@@ -60,7 +60,7 @@ fn rust_batch_tex_matches_individual_evaluation() {
     assert!(batched.env.eval_deadline.is_none());
     assert!(matches!(
         batched.render_tex_batch(&["Sin(".into()]),
-        Err(EngineError::Eval(_))
+        Err(EngineError::InvalidInput(_))
     ));
     assert!(batched.env.eval_deadline.is_none());
     assert_eq!(batched.eval("2+3").unwrap().tex, "$5$");
@@ -78,9 +78,13 @@ fn rust_eval_recovers_after_parse_and_tex_errors() {
         engine.eval_expr("ReviewBrokenTex").unwrap(),
         Expr::Symbol("ReviewBrokenTex".into())
     );
-    for command in ["Sin(", "ReviewBrokenTex"] {
+    for (command, expected_invalid_input) in [("Sin(", true), ("ReviewBrokenTex", false)] {
         let error = engine.eval(command).unwrap_err();
-        assert!(matches!(error, EngineError::Eval(_)), "{error}");
+        assert_eq!(
+            matches!(error, EngineError::InvalidInput(_)),
+            expected_invalid_input,
+            "{error}"
+        );
         assert!(engine.env.eval_deadline.is_none());
         let result = engine.eval("2+3").expect("engine recovers after errors");
         assert_eq!(result.expr.to_string(), "5");
@@ -141,7 +145,10 @@ fn rust_proxy_rejects_bad_script_paths_during_spawn() {
 fn rust_proxy_recovers_after_request_error_and_shuts_down() {
     finishes_promptly(|| {
         let mut engine = RustEngineProxy::spawn().unwrap();
-        assert!(matches!(engine.eval("Sin("), Err(EngineError::Eval(_))));
+        assert!(matches!(
+            engine.eval("Sin("),
+            Err(EngineError::InvalidInput(_))
+        ));
         for command in ["1+1", "2"] {
             assert_eq!(engine.eval(command).unwrap().tex, "$2$");
         }
