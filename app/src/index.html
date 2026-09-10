@@ -21,14 +21,14 @@
             <label id="verbosity-field">步骤粒度<select id="verbosity"><option value="concise">简洁</option><option value="standard" selected>标准</option><option value="detailed">详细</option></select></label>
           </div>
         </div>
-        <div class="shortcut-header"><span>快捷输入</span><small>点击按钮填入表达式模板</small></div>
+        <div class="shortcut-header"><span>快捷输入</span><small>在光标处插入表达式模板</small></div>
         <div id="template-list" class="shortcut-list" aria-label="快捷输入"></div>
         <label class="expression-label" for="expr">数学表达式</label>
         <div class="expression-box">
           <textarea id="expr" rows="4" spellcheck="false" aria-describedby="input-help">D(x)Sin(x)^2</textarea>
           <button id="clear-expression" class="icon-button" title="清空输入" aria-label="清空输入">×</button>
         </div>
-        <div class="input-footer"><p id="input-help">选择快捷输入或直接输入合法的 Yacas 表达式。</p><span><kbd>⌘</kbd><kbd>Enter</kbd> 计算</span></div>
+        <div class="input-footer"><p id="input-help" role="status" aria-live="polite" hidden></p><span><kbd>⌘</kbd><kbd>Enter</kbd> 计算</span></div>
         <details class="context-panel">
           <summary>计算上下文与输入帮助 <span id="assumption-summary">无假设</span></summary>
           <div class="context-grid">

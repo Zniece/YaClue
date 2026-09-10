@@ -13,36 +13,62 @@ const timingEl = $("#timing");
 const semanticEl = $("#semantic-summary");
 const assumptions = new Map();
 let calculating = false;
+let inputHelpTimer;
 
 const TEMPLATES = [
-    ["求导", "D(x)Sin(x)^2", "D(变量[,阶数])表达式"],
-    ["不定积分", "Integrate(x)x*Exp(x)", "Integrate(变量)表达式"],
-    ["定积分", "Integrate(x,0,Pi)Sin(x)", "Integrate(变量,下限,上限)表达式"],
-    ["极限", "Limit(x,0)Sin(x)/x", "Limit(变量,趋近值[,方向])表达式"],
-    ["Taylor 展开", "Taylor(x,0,6)Sin(x)", "Taylor(变量,展开点,次数)表达式"],
-    ["二重积分", "DoubleIntegral(x+y,y,0,x,x,0,1)", "被积式,内层变量与上下限,外层变量与上下限"],
-    ["极坐标积分", "PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)", "被积式,直角变量,极坐标变量及边界"],
-    ["代数方程", "x^2-5*x+6==0", "使用 == 表示等号"],
-    ["方程组", "Solve({x+y==3,x-y==1},{x,y})", "Solve({方程...},{变量...})"],
-    ["常微分方程", "OdeSolve(y'==y)", "当前标准形式使用自变量 x、因变量 y"],
-    ["ODE 数值解", "OdeSolveNumeric(y'==y,x,y,0,1,2)", "方程,自变量,因变量,起点,初值,终点"],
-    ["因式分解", "Factor(x^4-1)", "Factor(表达式)"],
-    ["展开", "Expand((x+1)^4)", "Expand(表达式)"],
-    ["化简", "Simplify(Sin(x)^2+Cos(x)^2)", "Simplify(表达式)"],
-    ["整理", "Tidy((x+x)/2)", "Tidy(表达式)"],
-    ["部分分式", "Apart((x+1)/(x^2-1),x)", "Apart(表达式,变量)"],
-    ["无约束极值", "Extrema(x^2+y^2,x,y)", "Extrema(表达式,x变量,y变量)"],
-    ["约束极值", "Lagrange(x+y,x^2+y^2==1,x,y)", "Lagrange(目标,约束,x变量,y变量)"],
-    ["矩阵乘法", "{{1,2},{3,4}}*{{5,6},{7,8}}", "直接使用 + 或 *"],
-    ["行列式", "Determinant({{1,2},{3,4}})", "Determinant(矩阵)"],
-    ["逆矩阵", "Inverse({{1,2},{3,4}})", "Inverse(矩阵)"],
-    ["转置", "Transpose({{1,2,3},{4,5,6}})", "Transpose(矩阵)"],
-    ["特征值", "EigenValues({{2,1},{1,2}})", "EigenValues(矩阵)"],
-    ["线性方程组", "MatrixSolve({{2,1},{1,-1}},{5,1})", "MatrixSolve(系数矩阵,常数向量)"],
-    ["高精度近似", "N(Pi,30)", "N(表达式,精度)"],
-    ["数值求根", "FindRoot(Cos(x)-x,x,1)", "FindRoot(表达式,变量,初值)"],
-    ["函数绘图", "Plot(Sin(x),x,-6.28,6.28)", "Plot(表达式,变量,下界,上界)"],
+  ["求导", "D(x)|", "D(变量[,阶数])表达式"],
+  ["不定积分", "Integrate(x)|", "Integrate(变量)表达式"],
+  ["定积分", "Integrate(x,0,Pi)|", "Integrate(变量,下限,上限)表达式"],
+  ["极限", "Limit(x,0)|", "Limit(变量,趋近值[,方向])表达式"],
+  ["Taylor 展开", "Taylor(x,0,6)|", "Taylor(变量,展开点,次数)表达式"],
+  ["二重积分", "DoubleIntegral(|x+y,y,0,x,x,0,1)", "被积式,内层变量与上下限,外层变量与上下限"],
+  ["极坐标积分", "PolarIntegral(|x^2+y^2,x,y,r,t,0,1,0,2*Pi)", "被积式,直角变量,极坐标变量及边界"],
+  ["代数方程", "|x^2-5*x+6==0", "使用 == 表示等号"],
+  ["方程组", "Solve({|x+y==3,x-y==1},{x,y})", "Solve({方程...},{变量...})"],
+  ["常微分方程", "OdeSolve(|y'==y)", "当前标准形式使用自变量 x、因变量 y"],
+  ["ODE 数值解", "OdeSolveNumeric(|y'==y,x,y,0,1,2)", "方程,自变量,因变量,起点,初值,终点"],
+  ["因式分解", "Factor(|)", "Factor(表达式)"],
+  ["展开", "Expand(|)", "Expand(表达式)"],
+  ["化简", "Simplify(|)", "Simplify(表达式)"],
+  ["整理", "Tidy(|)", "Tidy(表达式)"],
+  ["部分分式", "Apart(|,x)", "Apart(表达式,变量)"],
+  ["无约束极值", "Extrema(|x^2+y^2,x,y)", "Extrema(表达式,x变量,y变量)"],
+  ["约束极值", "Lagrange(|x+y,x^2+y^2==1,x,y)", "Lagrange(目标,约束,x变量,y变量)"],
+  ["矩阵乘法", "|{{1,2},{3,4}}*{{5,6},{7,8}}", "直接使用 + 或 *"],
+  ["行列式", "Determinant(|{{1,2},{3,4}})", "Determinant(矩阵)"],
+  ["逆矩阵", "Inverse(|{{1,2},{3,4}})", "Inverse(矩阵)"],
+  ["转置", "Transpose(|{{1,2,3},{4,5,6}})", "Transpose(矩阵)"],
+  ["特征值", "EigenValues(|{{2,1},{1,2}})", "EigenValues(矩阵)"],
+  ["线性方程组", "MatrixSolve(|{{2,1},{1,-1}},{5,1})", "MatrixSolve(系数矩阵,常数向量)"],
+  ["高精度近似", "N(|Pi,30)", "N(表达式,精度)"],
+  ["数值求根", "FindRoot(|Cos(x)-x,x,1)", "FindRoot(表达式,变量,初值)"],
+  ["函数绘图", "Plot(|Sin(x),x,-6.28,6.28)", "Plot(表达式,变量,下界,上界)"],
 ];
+
+function hideInputHelp() {
+  clearTimeout(inputHelpTimer);
+  inputHelpTimer = undefined;
+  $("#input-help").hidden = true;
+}
+
+function showInputHelp(message) {
+  const helpEl = $("#input-help");
+  clearTimeout(inputHelpTimer);
+  helpEl.textContent = message;
+  helpEl.hidden = false;
+  inputHelpTimer = setTimeout(hideInputHelp, 4000);
+}
+
+function insertTemplate(textarea, markedTemplate) {
+  const marker = markedTemplate.indexOf("|");
+  const template = markedTemplate.replace("|", "");
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? start;
+  textarea.setRangeText(template, start, end, "end");
+  const caret = start + (marker === -1 ? template.length : marker);
+  textarea.setSelectionRange(caret, caret);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
 
 function renderTemplates() {
   const target = $("#template-list");
@@ -54,8 +80,8 @@ function renderTemplates() {
     button.textContent = label;
     button.title = help;
     button.addEventListener("click", () => {
-      exprEl.value = expression;
-      $("#input-help").textContent = help;
+      insertTemplate(exprEl, expression);
+      showInputHelp(help);
       exprEl.focus();
     });
     target.appendChild(button);
@@ -203,6 +229,7 @@ function renderPlot(data) {
 }
 
 async function calculate() {
+  hideInputHelp();
   if (calculating) return;
   const expression = exprEl.value.trim();
   if (!expression) return;
@@ -268,10 +295,11 @@ async function clearAssumptions() {
 }
 
 $("#output-mode").addEventListener("change", () => { $("#verbosity-field").hidden = $("#output-mode").value !== "steps"; });
-$("#clear-expression").addEventListener("click", () => { exprEl.value = ""; exprEl.focus(); });
+$("#clear-expression").addEventListener("click", () => { exprEl.value = ""; hideInputHelp(); exprEl.focus(); });
 $("#go").addEventListener("click", calculate);
 $("#add-assumption").addEventListener("click", addAssumption);
 $("#clear-assumptions").addEventListener("click", clearAssumptions);
 exprEl.addEventListener("keydown", (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate(); });
+exprEl.addEventListener("input", hideInputHelp);
 renderTemplates();
 refreshAssumptions().catch(showError);

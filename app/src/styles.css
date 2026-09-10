@@ -40,6 +40,7 @@ textarea { width: 100%; min-height: 112px; padding: 15px 42px 15px 15px; resize:
 .icon-button:hover { background: #eef1f6; }
 .input-footer { display: flex; justify-content: space-between; gap: 15px; color: var(--muted); font-size: 11px; }
 .input-footer p { margin: 6px 0 0; }
+.input-footer p[hidden] { display: none; }
 .input-footer > span { flex: 0 0 auto; margin-top: 6px; }
 kbd { margin-left: 3px; padding: 1px 4px; background: #eef1f6; border: 1px solid #d8deea; border-radius: 4px; }
 .context-panel { margin-top: 15px; color: var(--muted); font-size: 12px; }
