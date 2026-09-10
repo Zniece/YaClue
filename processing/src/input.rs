@@ -12,6 +12,18 @@ thread_local! {
         RefCell::new(yacas_rs::env::Environment::new());
 }
 
+const PARSE_SYMBOL_GC_THRESHOLD: usize = 4096;
+
+fn with_parse_env<T>(f: impl FnOnce(&mut yacas_rs::env::Environment) -> T) -> T {
+    PARSE_ENV.with(|cell| {
+        let mut env = cell.borrow_mut();
+        if env.symtab.len() >= PARSE_SYMBOL_GC_THRESHOLD {
+            env.symtab.garbage_collect();
+        }
+        f(&mut env)
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpressionAnalysis {
     pub symbols: Vec<String>,
@@ -29,9 +41,8 @@ pub struct RootCall {
 
 pub fn root_call(input: &str, label: &str) -> Result<Option<RootCall>, EngineError> {
     validate_safe_text(input, label)?;
-    PARSE_ENV.with(|cell| {
-        let mut env = cell.borrow_mut();
-        let tree = yacas_rs::parser::parse_expression(&mut env, &format!("{input};"))
+    with_parse_env(|env| {
+        let tree = yacas_rs::parser::parse_expression(env, &format!("{input};"))
             .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
             .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
         let ObjectKind::Sublist(first) = &tree.kind else {
@@ -44,7 +55,7 @@ pub fn root_call(input: &str, label: &str) -> Result<Option<RootCall>, EngineErr
         let mut arguments = Vec::with_capacity(nodes.len().saturating_sub(1));
         let mut argument_heads = Vec::with_capacity(nodes.len().saturating_sub(1));
         for argument in &nodes[1..] {
-            arguments.push(yacas_rs::printer::infix_print(&env, argument));
+            arguments.push(yacas_rs::printer::infix_print(env, argument));
             let argument_head = match &argument.kind {
                 ObjectKind::Sublist(first) => spine_refs(first)
                     .next()
@@ -64,9 +75,7 @@ pub fn root_call(input: &str, label: &str) -> Result<Option<RootCall>, EngineErr
 
 pub fn analyze_expression(input: &str, label: &str) -> Result<ExpressionAnalysis, EngineError> {
     validate_safe_text(input, label)?;
-    let tree = PARSE_ENV.with(|env| {
-        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
-    });
+    let tree = with_parse_env(|env| yacas_rs::parser::parse_expression(env, &format!("{input};")));
     let tree = tree
         .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
         .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
@@ -95,9 +104,7 @@ pub fn direct_function_equation(
     functions: &[&str],
 ) -> Result<Option<String>, EngineError> {
     validate_safe_text(input, "方程")?;
-    let tree = PARSE_ENV.with(|env| {
-        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
-    });
+    let tree = with_parse_env(|env| yacas_rs::parser::parse_expression(env, &format!("{input};")));
     let tree = tree
         .map_err(|error| EngineError::InvalidInput(format!("方程语法错误: {error:?}")))?
         .ok_or_else(|| EngineError::InvalidInput("方程为空".into()))?;
@@ -144,9 +151,7 @@ pub fn contains_exact_power(
     label: &str,
 ) -> Result<bool, EngineError> {
     validate_safe_text(input, label)?;
-    let tree = PARSE_ENV.with(|env| {
-        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
-    });
+    let tree = with_parse_env(|env| yacas_rs::parser::parse_expression(env, &format!("{input};")));
     let tree = tree
         .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
         .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
@@ -159,9 +164,7 @@ pub fn contains_product_factor(
     label: &str,
 ) -> Result<bool, EngineError> {
     validate_safe_text(input, label)?;
-    let tree = PARSE_ENV.with(|env| {
-        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
-    });
+    let tree = with_parse_env(|env| yacas_rs::parser::parse_expression(env, &format!("{input};")));
     let tree = tree
         .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
         .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
@@ -175,9 +178,7 @@ pub fn contains_ratio_symbols(
     label: &str,
 ) -> Result<bool, EngineError> {
     validate_safe_text(input, label)?;
-    let tree = PARSE_ENV.with(|env| {
-        yacas_rs::parser::parse_expression(&mut env.borrow_mut(), &format!("{input};"))
-    });
+    let tree = with_parse_env(|env| yacas_rs::parser::parse_expression(env, &format!("{input};")));
     let tree = tree
         .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
         .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
@@ -356,6 +357,29 @@ mod tests {
             validate_expression(&nested, "表达式"),
             Err(EngineError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn validation_reclaims_unreferenced_user_symbols_at_threshold() {
+        let baseline = PARSE_ENV.with(|cell| {
+            let mut env = cell.borrow_mut();
+            env.symtab.garbage_collect();
+            env.symtab.len()
+        });
+        let symbols = (0..PARSE_SYMBOL_GC_THRESHOLD)
+            .map(|index| format!("reviewSymbol{index}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        validate_expression(&format!("{{{symbols}}}"), "表达式").unwrap();
+        let expanded = PARSE_ENV.with(|cell| cell.borrow().symtab.len());
+        assert!(expanded >= PARSE_SYMBOL_GC_THRESHOLD);
+
+        validate_expression("x", "表达式").unwrap();
+        let reclaimed = PARSE_ENV.with(|cell| cell.borrow().symtab.len());
+        assert!(
+            reclaimed <= baseline + 2,
+            "{baseline} -> {expanded} -> {reclaimed}"
+        );
     }
 
     #[test]
