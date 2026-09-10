@@ -116,7 +116,7 @@ function renderSummary(result) {
   else math.textContent = result.expression || "计算完成";
 }
 
-function renderSemantic(semantic) {
+function renderSemantic(semantic, outcome) {
   if (!semantic) return;
   const kindNames = {
     scalar: "标量",
@@ -136,7 +136,18 @@ function renderSemantic(semantic) {
   if (semantic.shape) items.push(`${semantic.shape.rows} × ${semantic.shape.columns}`);
   items.push(exactnessNames[semantic.exactness] || semantic.exactness);
   if (semantic.symbols?.length) items.push(`符号：${semantic.symbols.join(", ")}`);
+  if (semantic.bound_symbols?.length) items.push(`绑定：${semantic.bound_symbols.join(", ")}`);
   if (semantic.constants?.length) items.push(`常量：${semantic.constants.join(", ")}`);
+  const reasonNames = {
+    condition_insufficient: "条件不足",
+    algorithm_uncovered: "算法未覆盖",
+    mathematical_absence: "数学上不存在",
+    divergent: "发散",
+    unsupported_operation: "不支持的运算",
+  };
+  if (outcome?.conditionality === "conditional") items.push("条件化结果");
+  if (outcome?.completeness === "representative") items.push("代表解");
+  if (outcome?.reason) items.push(reasonNames[outcome.reason] || outcome.reason);
   items.forEach((text) => {
     const chip = document.createElement("span");
     chip.textContent = text;
@@ -220,7 +231,7 @@ async function calculate() {
     });
     $("#result-title").textContent = result.title;
     $("#result-kind").textContent = result.kind.replaceAll("_", " ");
-    renderSemantic(result.semantic);
+    renderSemantic(result.semantic, result.outcome);
     if (result.kind === "plot" || result.kind === "numeric_ode") renderPlot(result);
     else renderSummary(result);
     renderSteps(result.steps || []);

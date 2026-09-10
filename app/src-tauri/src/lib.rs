@@ -13,6 +13,9 @@ use processing::numeric::{NumericResult, RootResult, TaylorResult};
 use processing::ode::{InitialCondition, OdeResult, OdeStepResult};
 use processing::ode_numeric::{NumericOdeOptions, NumericOdeResult};
 use processing::plot::{SampleOptions, SampledPlot};
+use processing::protocol::{
+    Condition, ConditionSet, OutcomeReason, ResultCompleteness, ResultMetadata,
+};
 use processing::semantic::{AnalyzedInput, SemanticSummary};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
@@ -643,6 +646,7 @@ struct ProcessExpressionResult {
     steps: Vec<Step>,
     data: Value,
     semantic: SemanticSummary,
+    outcome: ResultMetadata,
 }
 
 struct DispatchExpressionResult {
@@ -671,6 +675,120 @@ fn unified_result<T: Serialize>(
         data: serde_json::to_value(data)
             .map_err(|error| invalid_input(format!("结果序列化失败: {error}")))?,
     })
+}
+
+fn result_metadata(
+    result: &DispatchExpressionResult,
+    exactness: processing::semantic::Exactness,
+) -> Result<ResultMetadata, ErrorResponse> {
+    let domain = result.data.get("result").unwrap_or(&result.data);
+    let conditions = condition_set_from_value(domain.get("conditions"))?;
+    let status = domain
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("completed");
+    let held_operation = ["Integrate(", "D(", "Deriv(", "Limit(", "Solve("]
+        .iter()
+        .any(|prefix| result.expression.trim_start().starts_with(prefix));
+    let mut metadata = if status == "condition_insufficient" {
+        ResultMetadata::unresolved(exactness, OutcomeReason::ConditionInsufficient)
+    } else if status == "unsupported" {
+        ResultMetadata::unresolved(exactness, OutcomeReason::UnsupportedOperation)
+    } else if status == "divergent" {
+        ResultMetadata::no_result(exactness, OutcomeReason::Divergent)
+    } else if matches!(
+        status,
+        "does_not_exist" | "no_solution" | "no_points" | "no_critical_points"
+    ) {
+        ResultMetadata::no_result(exactness, OutcomeReason::MathematicalAbsence)
+    } else if held_operation
+        || status.contains("unresolved")
+        || matches!(status, "inconclusive" | "no_convergence")
+    {
+        ResultMetadata::unresolved(exactness, OutcomeReason::AlgorithmUncovered)
+    } else {
+        ResultMetadata::solved(exactness, conditions)
+    };
+    if let Some(completeness) = domain.get("completeness").and_then(Value::as_str) {
+        metadata.completeness = match completeness {
+            "complete" | "parametric" | "periodic" => ResultCompleteness::Complete,
+            "representative" => ResultCompleteness::Representative,
+            _ => ResultCompleteness::Unknown,
+        };
+    }
+    Ok(metadata)
+}
+
+fn condition_set_from_value(value: Option<&Value>) -> Result<ConditionSet, ErrorResponse> {
+    let mut conditions = Vec::new();
+    if let Some(Value::Array(items)) = value {
+        for item in items {
+            collect_conditions(item, &mut conditions);
+        }
+    }
+    ConditionSet::new(conditions).map_err(message)
+}
+
+fn collect_conditions(value: &Value, output: &mut Vec<Condition>) {
+    let Some(object) = value.as_object() else {
+        if let Some(description) = value.as_str() {
+            output.push(Condition::Unknown {
+                description: description.into(),
+            });
+        }
+        return;
+    };
+    match object.get("kind").and_then(Value::as_str) {
+        Some("property") => {
+            let expression = object
+                .get("expression")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let condition = match object.get("fact").and_then(Value::as_str) {
+                Some("Positive" | "positive") => Condition::Positive { expression },
+                Some("Negative" | "negative") => Condition::Negative { expression },
+                Some("NonZero" | "non_zero") => Condition::NonZero { expression },
+                Some("Real" | "real") => Condition::Real { expression },
+                Some("Integer" | "integer") => Condition::Integer { expression },
+                _ => Condition::Unknown {
+                    description: value.to_string(),
+                },
+            };
+            output.push(condition);
+        }
+        Some("relation")
+            if object.get("relation").and_then(Value::as_str) == Some("greater_than")
+                && object.get("right").and_then(Value::as_str) == Some("0") =>
+        {
+            let left = object
+                .get("left")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(expression) = left
+                .strip_prefix("Re(")
+                .and_then(|value| value.strip_suffix(')'))
+            {
+                output.push(Condition::RealPartPositive {
+                    expression: expression.into(),
+                });
+            } else {
+                output.push(Condition::Positive {
+                    expression: left.into(),
+                });
+            }
+        }
+        Some("all") => {
+            if let Some(Value::Array(items)) = object.get("conditions") {
+                for item in items {
+                    collect_conditions(item, output);
+                }
+            }
+        }
+        _ => output.push(Condition::Unknown {
+            description: value.to_string(),
+        }),
+    }
 }
 
 fn final_step(steps: &[Step]) -> (String, String) {
@@ -1320,6 +1438,7 @@ fn process_expression_with_engine(
     let analyzed =
         processing::semantic::analyze_input(&request.expression, "表达式").map_err(message)?;
     let result = dispatch_expression_with_engine(request, engine, &analyzed)?;
+    let outcome = result_metadata(&result, analyzed.semantic.exactness)?;
     Ok(ProcessExpressionResult {
         kind: result.kind,
         title: result.title,
@@ -1328,6 +1447,7 @@ fn process_expression_with_engine(
         steps: result.steps,
         data: result.data,
         semantic: analyzed.semantic,
+        outcome,
     })
 }
 
@@ -1495,5 +1615,61 @@ mod tests {
         .unwrap();
         assert_eq!(double_integral.kind, "double_integral");
         assert!(!double_integral.steps.is_empty());
+    }
+
+    #[test]
+    fn unified_outcome_distinguishes_reasons_and_registered_conditions() {
+        let make = |expression: &str, data: Value| DispatchExpressionResult {
+            kind: "test".into(),
+            title: "test".into(),
+            expression: expression.into(),
+            tex: String::new(),
+            steps: Vec::new(),
+            data,
+        };
+        let unresolved = result_metadata(
+            &make("Integrate(x)f(x)", Value::Null),
+            processing::semantic::Exactness::Unknown,
+        )
+        .unwrap();
+        assert_eq!(
+            unresolved.reason,
+            Some(processing::protocol::OutcomeReason::AlgorithmUncovered)
+        );
+
+        let absent = result_metadata(
+            &make("Undefined", serde_json::json!({"status": "does_not_exist"})),
+            processing::semantic::Exactness::Exact,
+        )
+        .unwrap();
+        assert_eq!(
+            absent.resolution,
+            processing::protocol::ResolutionState::NoResult
+        );
+
+        let conditional = result_metadata(
+            &make(
+                "Gamma(a)",
+                serde_json::json!({
+                    "status": "converged",
+                    "conditions": [{
+                        "kind": "relation",
+                        "left": "Re(a)",
+                        "relation": "greater_than",
+                        "right": "0"
+                    }]
+                }),
+            ),
+            processing::semantic::Exactness::Symbolic,
+        )
+        .unwrap();
+        assert_eq!(
+            conditional.conditionality,
+            processing::protocol::Conditionality::Conditional
+        );
+        assert!(matches!(
+            conditional.conditions.conditions(),
+            [processing::protocol::Condition::RealPartPositive { expression }] if expression == "a"
+        ));
     }
 }

@@ -21,6 +21,7 @@ pub mod numeric;
 pub mod ode;
 pub mod ode_numeric;
 pub mod plot;
+pub mod protocol;
 pub mod quadrature;
 pub mod semantic;
 pub mod series;
