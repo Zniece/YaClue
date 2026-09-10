@@ -193,8 +193,8 @@ fn algebraic_equation_capability_matrix() {
             .unwrap_or_else(|error| panic!("{}/{} failed: {error}", case.category, case.name));
         assert_eq!(
             result.status, case.status,
-            "{}/{} status",
-            case.category, case.name
+            "{}/{} status: {result:?}",
+            case.category, case.name,
         );
         assert_eq!(
             result.solutions.len(),

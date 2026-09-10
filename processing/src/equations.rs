@@ -324,7 +324,7 @@ pub fn solve(
     let command = format!(
         "[ClearErrors(); Local(solution,failed,typeError); solution:={solve_call}; failed:=IsError(\"Solve'Fails\"); typeError:=IsError(\"Solve'TypeError\"); ClearErrors(); {{solution,failed,typeError}};]"
     );
-    let wrapper = engine.eval(&command)?.expr;
+    let wrapper = engine.eval_expr(&command)?;
     let (raw_expr, failed, type_error) = parse_wrapper(wrapper)?;
     if type_error {
         return Err(EngineError::InvalidInput(
@@ -350,7 +350,10 @@ pub fn solve(
         });
     }
 
-    let mut solutions = parse_solutions(&raw_expr, scalar)?;
+    let parsed_solutions = parse_solutions(&raw_expr, scalar)?;
+    let had_candidates = !parsed_solutions.is_empty();
+    let (mut solutions, rejected_candidates) =
+        verify_candidates(engine, parsed_solutions, equations)?;
     let infinite = solutions.iter().flatten().any(|assignment| {
         assignment.variable == assignment.value
             && variables
@@ -363,7 +366,11 @@ pub fn solve(
     let status = if infinite {
         SolveStatus::Infinite
     } else if solutions.is_empty() {
-        SolveStatus::NoSolution
+        if had_candidates && rejected_candidates {
+            SolveStatus::Unresolved
+        } else {
+            SolveStatus::NoSolution
+        }
     } else {
         SolveStatus::Solved
     };
@@ -377,7 +384,9 @@ pub fn solve(
     }
     parameters.sort();
     parameters.dedup();
-    let mut completeness = if parameters.is_empty() {
+    let mut completeness = if rejected_candidates {
+        SolveCompleteness::Unknown
+    } else if parameters.is_empty() {
         SolveCompleteness::Complete
     } else {
         SolveCompleteness::Parametric
@@ -469,14 +478,10 @@ fn solve_rectangular(
         match result.status {
             SolveStatus::Solved => {
                 saw_complete_subproblem |= result.completeness == SolveCompleteness::Complete;
-                let mut verified = Vec::new();
-                for solution in result.solutions {
-                    if candidate_satisfies(engine, &solution, equations)? {
-                        verified.push(solution);
-                    }
-                }
+                let (verified, rejected) = verify_candidates(engine, result.solutions, equations)?;
                 result.solutions = verified;
                 if result.solutions.is_empty() {
+                    saw_unresolved |= rejected;
                     continue;
                 }
                 result.status = SolveStatus::Solved;
@@ -608,34 +613,61 @@ fn combinations_exceed(items: usize, choose: usize, limit: usize) -> bool {
     false
 }
 
-fn candidate_satisfies(
+fn verify_candidates(
     engine: &mut dyn Engine,
-    solution: &[Assignment],
+    solutions: Vec<Vec<Assignment>>,
     equations: &[&str],
-) -> Result<bool, EngineError> {
-    let checks: Vec<_> = equations
-        .iter()
-        .map(|equation| {
-            let mut substituted = equation
-                .split_once("==")
-                .map(|(left, right)| format!("({left})-({right})"))
-                .unwrap_or_else(|| (*equation).to_string());
-            for assignment in solution {
-                substituted = format!(
-                    "Eval(ApplyPure(\"Subst\",{{{},{},{substituted}}}))",
-                    assignment.variable, assignment.value
-                );
-            }
-            format!("IsZero(Simplify({substituted}))")
-        })
-        .collect();
-    let result = engine.eval_expr(&format!("{{{}}}", checks.join(",")))?;
-    match result {
-        Expr::Call { head, args } if head == "List" => Ok(args
-            .iter()
-            .all(|value| matches!(value, Expr::Symbol(symbol) if symbol == "True"))),
-        _ => Ok(false),
+) -> Result<(Vec<Vec<Assignment>>, bool), EngineError> {
+    if solutions.is_empty() {
+        return Ok((solutions, false));
     }
+    let batches = solutions
+        .iter()
+        .map(|solution| {
+            let checks = equations.iter().map(|equation| {
+                let mut substituted = equation
+                    .split_once("==")
+                    .map(|(left, right)| format!("({left})-({right})"))
+                    .unwrap_or_else(|| (*equation).to_string());
+                for assignment in solution {
+                    substituted = format!(
+                        "Subst({},{})({substituted})",
+                        assignment.variable, assignment.value
+                    );
+                }
+                format!(
+                    "[Local(residual); residual:=Simplify({substituted}); \
+                     If(IsNumber(residual),residual,N(residual,30));]"
+                )
+            });
+            format!("{{{}}}", checks.collect::<Vec<_>>().join(","))
+        })
+        .collect::<Vec<_>>();
+    let result = engine.eval_expr(&format!("{{{}}}", batches.join(",")))?;
+    let verdicts = list_items(&result)?;
+    if verdicts.len() != solutions.len() {
+        return Err(EngineError::Parse(
+            "方程候选验证结果数量与候选数量不一致".into(),
+        ));
+    }
+    let mut verified = Vec::with_capacity(solutions.len());
+    for (solution, verdict) in solutions.into_iter().zip(verdicts) {
+        let checks = list_items(verdict)?;
+        if checks.len() != equations.len() {
+            return Err(EngineError::Parse(
+                "方程候选验证结果数量与方程数量不一致".into(),
+            ));
+        }
+        if checks.iter().all(residual_is_zero) {
+            verified.push(solution);
+        }
+    }
+    let rejected = verified.len() != verdicts.len();
+    Ok((verified, rejected))
+}
+
+fn residual_is_zero(result: &Expr) -> bool {
+    matches!(result, Expr::Number(value) if value.parse::<f64>().is_ok_and(|number| number.is_finite() && number.abs() <= 1e-20))
 }
 
 fn rectangular_parameters(solutions: &[Vec<Assignment>]) -> Result<Vec<String>, EngineError> {
@@ -779,6 +811,25 @@ mod tests {
     }
 
     #[test]
+    fn residual_verification_rejects_wrong_candidates() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let candidates = vec![
+            vec![Assignment {
+                variable: "x".into(),
+                value: "2".into(),
+            }],
+            vec![Assignment {
+                variable: "x".into(),
+                value: "3".into(),
+            }],
+        ];
+        let (verified, rejected) = verify_candidates(&mut engine, candidates, &["x^2==4"]).unwrap();
+        assert!(rejected);
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0][0].value, "2");
+    }
+
+    #[test]
     fn solves_systems_as_alternative_assignment_sets() {
         let mut engine = RustEngine::spawn().unwrap();
         let result = solve(&mut engine, &["x*(y-1)==0", "y*(x-1)==0"], &["x", "y"]).unwrap();
@@ -800,8 +851,10 @@ mod tests {
         assert_eq!(inferred.solutions[0].len(), 2);
 
         let explicit_subset = solve(&mut engine, &["x+y==3", "x-y==1"], &["x"]).unwrap();
-        assert_eq!(explicit_subset.completeness, SolveCompleteness::Parametric);
-        assert_eq!(explicit_subset.parameters, ["y"]);
+        assert_eq!(explicit_subset.status, SolveStatus::Unresolved);
+        assert_eq!(explicit_subset.completeness, SolveCompleteness::Unknown);
+        assert!(explicit_subset.solutions.is_empty());
+        assert!(explicit_subset.parameters.is_empty());
 
         let parameterized = solve(&mut engine, &["a+x*y==z"], &["x"]).unwrap();
         assert_eq!(parameterized.variable_source, VariableSource::Explicit);
@@ -890,7 +943,9 @@ mod tests {
                         variable: family.parameters[0].symbol.clone(),
                         value: integer.to_string(),
                     });
-                    assert!(candidate_satisfies(&mut engine, &instantiated, &[equation]).unwrap());
+                    let (verified, rejected) =
+                        verify_candidates(&mut engine, vec![instantiated], &[equation]).unwrap();
+                    assert!(!rejected && verified.len() == 1);
                 }
             }
         }
