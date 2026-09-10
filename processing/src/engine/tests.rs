@@ -36,6 +36,24 @@ fn rust_eval_executes_input_once_and_preserves_held_values() {
 }
 
 #[test]
+fn standard_integrator_uses_only_registered_exponential_derivative_kernels() {
+    let mut engine = RustEngine::spawn().unwrap();
+    let antiderivative = engine.eval("Integrate(r)r*Exp(-r^2)").unwrap();
+    assert!(!antiderivative.expr.to_string().contains("AntiDeriv"));
+    assert_eq!(
+        antiderivative.expr.to_string(),
+        "((- Exp((- (r ^ 2)))) / 2)"
+    );
+
+    let unsupported = engine.eval("Integrate(r)Exp(-r^2)").unwrap();
+    let held = unsupported.expr.to_string();
+    assert!(
+        held.contains("Integrate") || held.contains("AntiDeriv"),
+        "unsupported kernel must remain held: {held}"
+    );
+}
+
+#[test]
 fn rust_engine_is_secure_after_startup() {
     let mut engine = RustEngine::spawn().unwrap();
     assert!(engine.env.secure);

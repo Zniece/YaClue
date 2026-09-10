@@ -259,8 +259,7 @@ StepsI(expr, var) :=
    快路径:未化简的 rest/g' 若已不含 v,直接判定(引擎 prec-100 规则
    如 x/x -> 1 使常见形态(2x/2x 等)结构可消,零 Simplify 成本);
    慢路径才动 Simplify(三角/根式混排的 decline 场景)。 */
-SI'PropCk(rest, g, v) :=
-  IsFreeOf(v, rest / (Deriv(v) g)) Or IsFreeOf(v, Simplify(rest / (Deriv(v) g)));
+SI'PropCk(rest, g, v) := IntSubstitutionProportional(rest, g, v);
 
 /* 通用 u-substitution 机制:
    integrand = fam(g) * rest,rest = c * g'(常数倍);

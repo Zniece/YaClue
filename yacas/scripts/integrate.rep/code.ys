@@ -93,6 +93,15 @@ UnFence("IntegrateMultiplicative",4);
 	];
 ];
 
+/* 有限换元共享判定:rest = c*g'(var),其中 c 与 var 无关。
+   先检查廉价结构商；只有未直接消去时才调用一次 Simplify。 */
+IntSubstitutionRatio(_rest,_inner,_var) <--
+  Simplify(rest / (Deriv(var) inner));
+
+IntSubstitutionProportional(_rest,_inner,_var) <--
+  IsFreeOf(var, rest / (Deriv(var) inner)) Or
+  IsFreeOf(var, IntSubstitutionRatio(rest,inner,var));
+
 ////////////////////////////////////////////////
 //
 // Anti-derivative of a univariate polynomial
@@ -133,6 +142,18 @@ UnFence("IntegrateMultiplicative",4);
 // function, Integrate by parts.
 //
 ////////////////////////////////////////////////
+/* 登记的导数核换元族。这里只接 Exp(g)*c*g'，不搜索任意 g，
+   不匹配时继续进入既有积分规则。 */
+60 # IntegrateMultiplicative(_var,Exp(_inner) * _rest,_dummy1,_dummy2)_
+     (Not(IsFreeOf(var,inner)) And Not(IsZero(Deriv(var) inner)) And
+      IntSubstitutionProportional(rest,inner,var))
+     <-- IntSubstitutionRatio(rest,inner,var) * Exp(inner);
+
+60 # IntegrateMultiplicative(_var,_rest * Exp(_inner),_dummy1,_dummy2)_
+     (Not(IsFreeOf(var,inner)) And Not(IsZero(Deriv(var) inner)) And
+      IntSubstitutionProportional(rest,inner,var))
+     <-- IntSubstitutionRatio(rest,inner,var) * Exp(inner);
+
 1570 # IntegrateMultiplicative(_var,(exy_CanBeUni(var)) * _exx,_dummy1,_dummy2)
      <-- IntByParts(var,exy*exx,AntiDeriv(var,exx));
 1570 # IntegrateMultiplicative(_var,_exx * (exy_CanBeUni(var)),_dummy1,_dummy2)
@@ -386,6 +407,5 @@ IntPureSquare(x,num_IsFreeOf(var)/(_x),1,1,(num/(Sqrt(Matched'b()*Matched'a())))
 
 ///// Integrating Special Functions
 IntFunc(x,Erf(_x), x*Erf(x)+ 1/(Exp(x^2)*Sqrt(Pi)) );
-
 
 
