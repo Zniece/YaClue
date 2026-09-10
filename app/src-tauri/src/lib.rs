@@ -88,14 +88,14 @@ async fn get_assumptions(
 }
 
 #[derive(Deserialize)]
-struct ProcessExpressionRequest {
-    expression: String,
-    steps: bool,
-    verbosity: String,
+pub struct ProcessExpressionRequest {
+    pub expression: String,
+    pub steps: bool,
+    pub verbosity: String,
 }
 
 #[derive(Serialize)]
-struct ProcessExpressionResult {
+pub struct ProcessExpressionResult {
     kind: String,
     title: String,
     expression: String,
@@ -203,9 +203,14 @@ fn project_domain_semantic(
     if result.kind != "ode" && generated.is_empty() {
         return Ok(input.clone());
     }
+    let semantic_expression = result
+        .data
+        .get("semantic_expression")
+        .and_then(Value::as_str)
+        .unwrap_or(&result.expression);
     processing::semantic::project_result(
         input,
-        &result.expression,
+        semantic_expression,
         &generated,
         if result.kind == "ode" { &["x"] } else { &[] },
         match result.kind.as_str() {
@@ -332,6 +337,33 @@ fn list_or_single(expression: &str, label: &str) -> Result<Vec<String>, ErrorRes
     })
 }
 
+fn lower_composable_operand(
+    engine: &mut RustEngineProxy,
+    expression: &str,
+    verbosity: StepVerbosity,
+) -> Result<(String, Vec<Step>, Vec<String>), ErrorResponse> {
+    let call = processing::input::root_call(expression, "方程操作数").map_err(message)?;
+    if !call
+        .as_ref()
+        .is_some_and(processing::composition::is_candidate)
+    {
+        return Ok((expression.into(), Vec::new(), Vec::new()));
+    }
+    let Some(result) =
+        processing::composition::execute_steps(engine, expression, verbosity).map_err(message)?
+    else {
+        return Ok((expression.into(), Vec::new(), Vec::new()));
+    };
+    if result.status == processing::composition::CompositionStatus::Unsupported {
+        return Err(invalid_input(
+            result
+                .reason
+                .unwrap_or_else(|| "方程中的组合运算不受支持".into()),
+        ));
+    }
+    Ok((result.value, result.steps, result.arbitrary_constants))
+}
+
 fn dispatch_expression_with_engine(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
@@ -339,15 +371,22 @@ fn dispatch_expression_with_engine(
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
     let call = &analyzed.root_call;
     let verbosity = parse_verbosity(&request.verbosity)?;
-    if request.steps
+    let conventional_bodied = call.as_ref().is_some_and(|call| {
+        (call.head == "Limit" && call.arguments.len() == 2)
+            || (call.head == "Taylor" && call.arguments.len() == 3)
+    });
+    if (request.steps || conventional_bodied)
         && call
             .as_ref()
             .is_some_and(processing::composition::is_candidate)
     {
-        if let Some(result) =
+        if let Some(mut result) =
             processing::composition::execute_steps(&mut *engine, &request.expression, verbosity)
                 .map_err(message)?
         {
+            if !request.steps {
+                result.steps.clear();
+            }
             return unified_result(
                 "composition",
                 "组合运算",
@@ -1050,14 +1089,28 @@ fn dispatch_expression_with_engine(
                     &result,
                 );
             }
-            ("=" | "==", [_, _]) => {
-                let equations = [&request.expression[..]];
-                let solved =
-                    processing::equations::solve(&mut *engine, &equations, &[]).map_err(message)?;
-                let (solved, steps) = if request.steps && solved.variables.len() == 1 {
+            ("=" | "==", [left, right]) => {
+                let (left, mut lowering_steps, mut generated_constants) =
+                    lower_composable_operand(engine, left, verbosity)?;
+                let (right, right_steps, right_constants) =
+                    lower_composable_operand(engine, right, verbosity)?;
+                lowering_steps.extend(right_steps);
+                generated_constants.extend(right_constants);
+                let lowered_equation = format!("({left})==({right})");
+                let equations = [&lowered_equation[..]];
+                let preferred_variables = processing::input::validate_symbol(&left, "等式左侧")
+                    .is_ok()
+                    .then_some([left.as_str()]);
+                let variables = preferred_variables
+                    .as_ref()
+                    .map(|variables| &variables[..])
+                    .unwrap_or(&[]);
+                let solved = processing::equations::solve(&mut *engine, &equations, variables)
+                    .map_err(message)?;
+                let (solved, equation_steps) = if request.steps && solved.variables.len() == 1 {
                     let stepped = processing::equations::solve_steps_with_verbosity(
                         &mut *engine,
-                        &request.expression,
+                        &lowered_equation,
                         &solved.variables[0],
                         verbosity,
                     )
@@ -1066,7 +1119,13 @@ fn dispatch_expression_with_engine(
                 } else {
                     (solved, vec![])
                 };
-                return unified_result(
+                let steps = if request.steps {
+                    lowering_steps.extend(equation_steps);
+                    lowering_steps
+                } else {
+                    Vec::new()
+                };
+                let mut output = unified_result(
                     "equation",
                     "方程",
                     solved
@@ -1077,7 +1136,20 @@ fn dispatch_expression_with_engine(
                     solved.tex.clone(),
                     steps,
                     &solved,
-                );
+                )?;
+                if let Value::Object(data) = &mut output.data {
+                    data.insert(
+                        "semantic_expression".into(),
+                        Value::String(lowered_equation),
+                    );
+                    data.insert(
+                        "arbitrary_constants".into(),
+                        serde_json::to_value(generated_constants).map_err(|error| {
+                            invalid_input(format!("任意常数序列化失败: {error}"))
+                        })?,
+                    );
+                }
+                return Ok(output);
             }
             _ => {}
         }
@@ -1094,14 +1166,38 @@ fn dispatch_expression_with_engine(
     )
 }
 
-fn process_expression_with_engine(
+pub fn process_expression_with_engine(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
 ) -> Result<ProcessExpressionResult, ErrorResponse> {
     let analyzed =
         processing::semantic::analyze_input(&request.expression, "表达式").map_err(message)?;
+    let semantic_input = match analyzed.root_call.as_ref() {
+        Some(call) if call.head == "Limit" && call.arguments.len() == 2 => {
+            processing::semantic::analyze_input(
+                &format!("Limit(x,{}){}", call.arguments[1], call.arguments[0]),
+                "极限表达式",
+            )
+            .map_err(message)?
+            .semantic
+        }
+        _ => analyzed.semantic.clone(),
+    };
     let result = dispatch_expression_with_engine(request, engine, &analyzed)?;
-    let semantic = project_domain_semantic(&analyzed.semantic, &result)?;
+    let projected_input = result
+        .data
+        .get("semantic_expression")
+        .and_then(Value::as_str)
+        .map(|expression| processing::semantic::analyze_input(expression, "降低后的表达式"))
+        .transpose()
+        .map_err(message)?;
+    let semantic = project_domain_semantic(
+        projected_input
+            .as_ref()
+            .map(|input| &input.semantic)
+            .unwrap_or(&semantic_input),
+        &result,
+    )?;
     let outcome = result_metadata(&result, semantic.exactness)?;
     Ok(ProcessExpressionResult {
         kind: result.kind,
@@ -1430,6 +1526,91 @@ mod tests {
         assert_eq!(
             divergent.outcome.reason,
             Some(processing::protocol::OutcomeReason::Divergent)
+        );
+    }
+
+    #[test]
+    fn unified_input_accepts_two_argument_limit_with_default_x() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for steps in [true, false] {
+            let result =
+                process_expression_with_engine(request("Limit(x,0)", steps), &mut engine).unwrap();
+            assert_eq!(result.kind, "composition");
+            assert_eq!(result.expression, "0");
+            assert_eq!(result.steps.is_empty(), !steps);
+            assert_eq!(result.semantic.bound_symbols, ["x"]);
+            assert!(result.semantic.symbols.is_empty());
+            assert_eq!(
+                result.outcome.support,
+                processing::protocol::SupportState::Supported
+            );
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Solved
+            );
+        }
+    }
+
+    #[test]
+    fn unified_input_accepts_three_argument_taylor_with_default_x() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for steps in [true, false] {
+            let result =
+                process_expression_with_engine(request("Taylor(Exp(x),0,6)", steps), &mut engine)
+                    .unwrap();
+            assert_eq!(result.kind, "composition");
+            assert!(result.expression.contains("x ^ 6"), "{}", result.expression);
+            assert_eq!(result.steps.is_empty(), !steps);
+            assert!(result.semantic.bound_symbols.is_empty());
+            assert_eq!(result.semantic.symbols, ["x"]);
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Solved
+            );
+        }
+    }
+
+    #[test]
+    fn unified_equation_lowers_structured_operands_before_solving() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let result = process_expression_with_engine(
+            request("y'==(Integrate(x)Taylor(Exp(x),0,2))", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(result.kind, "equation");
+        assert!(
+            !result.expression.contains("Integrate"),
+            "{}",
+            result.expression
+        );
+        assert!(
+            !result.expression.contains("Taylor"),
+            "{}",
+            result.expression
+        );
+        assert!(result.expression.contains("C"), "{}", result.expression);
+        assert!(
+            result.expression.contains("variable: \"y'\""),
+            "{}",
+            result.expression
+        );
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "compose_taylor"));
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "antiderivative-family"));
+        assert!(result.semantic.bound_symbols.is_empty());
+        assert!(result.semantic.symbols.contains(&"x".into()));
+        assert!(result.semantic.symbol_identities.iter().any(|identity| {
+            identity.name == "C" && identity.role == SymbolRole::ArbitraryConstant
+        }));
+        assert_eq!(
+            result.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
         );
     }
 

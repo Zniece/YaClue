@@ -1,9 +1,23 @@
 [package]
 name = "app"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
+default-run = "app"
+autobins = false
 description = "A step-by-step computer algebra calculator"
 license = "MIT"
 edition = "2021"
+
+[features]
+test-cli = []
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[[bin]]
+name = "yaclue-stdio"
+path = "src/bin/yaclue-stdio.rs"
+required-features = ["test-cli"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

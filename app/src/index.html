@@ -61,6 +61,17 @@
         <details id="raw-box" hidden><summary>结构化结果</summary><pre id="raw"></pre></details>
         <div id="empty-result" class="empty-result">输入表达式后开始计算。</div>
       </section>
+      <details class="stdio-panel card">
+        <summary>命令行测试组件 <span>仅用于开发测试 · JSON Lines</span></summary>
+        <p class="muted">每行输入一个表达式，结果逐行输出为 JSON。也可输入含 expression、steps、verbosity 的 JSON 请求。</p>
+        <textarea id="stdio-input" rows="4" spellcheck="false">Limit(x,0)
+Limit(Sin(x)/x,0)</textarea>
+        <div class="stdio-actions">
+          <button id="stdio-run" class="primary">运行</button>
+          <button id="stdio-clear" class="text-button">清空输出</button>
+        </div>
+        <pre id="stdio-output" aria-live="polite"></pre>
+      </details>
     </main>
     <script src="vendor/katex/katex.min.js"></script><script type="module" src="main.js"></script>
   </body>

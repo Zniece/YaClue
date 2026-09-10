@@ -76,8 +76,11 @@ const UNARY_ARITY: &[usize] = &[1];
 const INTEGRATE_ARITIES: &[usize] = &[2, 4];
 const SUBST_ARITIES: &[usize] = &[3];
 const APPROXIMATE_ARITIES: &[usize] = &[1, 2];
-const LIMIT_ARITIES: &[usize] = &[3, 4];
-const TAYLOR_ARITIES: &[usize] = &[4];
+// Product input accepts both the conventional two-argument form
+// `Limit(expression, at)` (with x as the default variable) and Yacas's
+// bodied form `Limit(variable, at[, direction]) expression`.
+const LIMIT_ARITIES: &[usize] = &[2, 3, 4];
+const TAYLOR_ARITIES: &[usize] = &[3, 4];
 
 pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
     OperatorSignature {
@@ -211,6 +214,9 @@ pub fn is_candidate(call: &RootCall) -> bool {
     if !signature.arities.contains(&call.arguments.len()) {
         return true;
     }
+    if is_conventional_value_form(signature, call.arguments.len()) {
+        return true;
+    }
     let value_index = value_index(signature, call.arguments.len());
     call.argument_heads
         .get(value_index)
@@ -249,7 +255,9 @@ pub fn execute_steps(
             }));
         }
     };
-    if operations.len() < 2 {
+    let executable_single = operations.len() == 1
+        && is_conventional_value_form(operations[0].signature, operations[0].arguments.len());
+    if operations.len() < 2 && !executable_single {
         let structured_operand = (!operations.is_empty())
             .then(|| root_call(&leaf, "组合内层表达式"))
             .transpose()?
@@ -358,6 +366,11 @@ fn wrap_pending_steps(mut steps: Vec<Step>, pending: &[Operation]) -> Vec<Step> 
 
 fn wrap_expression(operation: &Operation, inner: &str) -> String {
     let value_index = value_index(operation.signature, operation.arguments.len());
+    if is_conventional_value_form(operation.signature, operation.arguments.len()) {
+        let mut arguments = operation.arguments.clone();
+        arguments[0] = inner.into();
+        return format!("{}({})", operation.signature.name, arguments.join(","));
+    }
     match operation.signature.value_argument {
         ValueArgument::First => {
             let mut arguments = operation.arguments.clone();
@@ -446,10 +459,20 @@ fn collect_operations(
 }
 
 fn value_index(signature: &OperatorSignature, argument_count: usize) -> usize {
+    if is_conventional_value_form(signature, argument_count) {
+        return 0;
+    }
     match signature.value_argument {
         ValueArgument::First => 0,
         ValueArgument::Last => argument_count.saturating_sub(1),
     }
+}
+
+fn is_conventional_value_form(signature: &OperatorSignature, argument_count: usize) -> bool {
+    matches!(
+        (signature.operator, argument_count),
+        (CompositionOperator::Limit, 2) | (CompositionOperator::Taylor, 3)
+    )
 }
 
 struct ApplyOutcome {
@@ -604,6 +627,11 @@ fn apply(
             })
         }
         CompositionOperator::Limit => {
+            let (variable, at) = if arguments.len() == 2 {
+                ("x", arguments[1].as_str())
+            } else {
+                (arguments[0].as_str(), arguments[1].as_str())
+            };
             let direction = if arguments.len() == 4 {
                 match arguments[2].as_str() {
                     "Left" => crate::limits::LimitDirection::Left,
@@ -618,20 +646,20 @@ fn apply(
                 crate::limits::LimitDirection::Both
             };
             let steps = crate::limits::limit_steps_with_verbosity(
-                engine,
-                current,
-                &arguments[0],
-                &arguments[1],
-                direction,
-                verbosity,
+                engine, current, variable, at, direction, verbosity,
             )?;
             from_steps(steps)
         }
         CompositionOperator::Taylor => {
+            let variable = if arguments.len() == 3 {
+                "x"
+            } else {
+                arguments[0].as_str()
+            };
             let degree = arguments[2]
                 .parse::<u32>()
                 .map_err(|_| EngineError::InvalidInput("组合 Taylor 次数必须是非负整数".into()))?;
-            let result = numeric::taylor(engine, current, &arguments[0], &arguments[1], degree)?;
+            let result = numeric::taylor(engine, current, variable, &arguments[1], degree)?;
             Ok(ApplyOutcome {
                 value: result.output.clone(),
                 steps: vec![operation_step(
@@ -946,6 +974,44 @@ mod tests {
             .position(|step| step.why.contains("外层求导"))
             .unwrap();
         assert!(limit_result < derivative);
+    }
+
+    #[test]
+    fn accepts_conventional_two_argument_limits_with_default_variable() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (expression, expected) in [("Limit(x,0)", "0"), ("Limit(Sin(x)/x,0)", "1")] {
+            let result = execute_steps(&mut engine, expression, StepVerbosity::Standard)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{expression}");
+            assert_eq!(result.value, expected, "{expression}: {result:#?}");
+            assert!(!result.steps.is_empty(), "{expression}");
+            assert_eq!(result.steps.last().unwrap().expr, expected, "{expression}");
+        }
+    }
+
+    #[test]
+    fn accepts_conventional_three_argument_taylor_with_default_variable() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(&mut engine, "Taylor(Exp(x),0,6)", StepVerbosity::Standard)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(
+            engine
+                .eval(&format!(
+                    "Simplify(({})-(1+x+x^2/2+x^3/6+x^4/24+x^5/120+x^6/720))",
+                    result.value
+                ))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0"
+        );
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "compose_taylor"));
     }
 
     #[test]

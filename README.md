@@ -95,6 +95,23 @@ cargo build -p app
 ./scripts/test-gate.sh domain steps
 ```
 
+### Test stdin/stdout interface
+
+The development-only `yaclue-stdio` binary exposes the same unified input
+dispatch as the desktop application. It reads one request per line and writes
+one JSON result per line. A plain line is treated as an expression with steps
+enabled; JSON lines may set `expression`, `steps`, and `verbosity`.
+
+```bash
+printf '%s\n' 'Limit(x,0)' | cargo run -q -p app --features test-cli --bin yaclue-stdio
+printf '%s\n' '{"expression":"D(x)x^2","steps":false,"verbosity":"concise"}' \
+  | cargo run -q -p app --features test-cli --bin yaclue-stdio
+```
+
+The desktop frontend also includes a collapsed command-line test component
+for sending multiple lines through this protocol interactively. This interface
+is intended for repository testing and is not a stable public API.
+
 ### Android
 
 The Android shell is included in the repository. Building it requires a JDK,
@@ -124,15 +141,16 @@ first launch, YaClue copies them into its private application storage so the
 CAS can load them as ordinary files. Android removes that storage when the
 application is uninstalled.
 
-The Android port is currently intended for development testing. A distributable
-release APK requires a persistent signing key; the repository does not contain
-one.
+The Android port is currently intended for development testing. Prereleases
+include a test-signed arm64 APK that can be installed directly for evaluation.
+It is not an app-store package: a distributable release APK or AAB requires a
+persistent signing key, and the repository does not contain one.
 
 Contributor checks and CI/release-build details are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md). GitHub Actions runs formatting, Clippy,
 fast engine and processing tests, and the frontend JavaScript check on every
-push and pull request. Prerelease tags currently build bundled Linux, macOS,
-and Windows packages after the complete test suite passes.
+push and pull request. Prerelease tags build bundled Linux, macOS, and Windows
+packages plus an Android arm64 test APK after the complete test suite passes.
 
 The engine boots the script library through a `DefaultDirectory` +
 `Load("yacasinit.ys")` sequence (see `processing/src/engine/rust.rs`); the step

@@ -83,6 +83,13 @@ code { padding: 1px 4px; color: #34425d; background: #ebeff5; border-radius: 4px
 #plot { width: 100%; height: 390px; margin-top: 15px; background: #fbfcfe; border: 1px solid var(--border); border-radius: 10px; }
 #raw-box { margin-top: 15px; color: var(--muted); font-size: 11px; }
 pre { max-height: 280px; padding: 12px; overflow: auto; color: #283247; background: #f7f9fd; border-radius: 8px; }
+.stdio-panel summary { cursor: pointer; color: #40516f; font-weight: 700; }
+.stdio-panel summary span { margin-left: 6px; color: var(--muted); font-size: 10px; font-weight: 400; }
+.stdio-panel > p { margin: 10px 0; font-size: 11px; }
+.stdio-panel textarea { min-height: 92px; }
+.stdio-actions { display: flex; align-items: center; gap: 14px; margin-top: 10px; }
+.stdio-actions .text-button { margin-top: 0; }
+.stdio-panel pre { min-height: 54px; margin-bottom: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 700px) {
   .app-header { height: 68px; padding: 0 16px; }
   main { margin-top: 12px; padding: 0 10px 80px; }
