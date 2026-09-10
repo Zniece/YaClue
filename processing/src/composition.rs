@@ -803,6 +803,7 @@ mod tests {
             ("D(x)Simplify((x+x)/2)", "1"),
             ("D(x)Expand((x+1)^2)", "((2*x)+2)"),
             ("D(x)Apart(1/(x^2-1),x)", "-2*x/(x^2-1)^2"),
+            ("Integrate(x)Apart((x+1)/(x^2-1),x)", "Ln(x-1)"),
         ] {
             let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
                 .unwrap()

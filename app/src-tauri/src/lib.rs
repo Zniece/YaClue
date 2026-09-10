@@ -1370,6 +1370,12 @@ mod tests {
             .iter()
             .any(|step| step.rule == "compose_algebra_transform"));
 
+        let apart =
+            process_expression_with_engine(request("Apart((x+1)/(x^2-1),x)", true), &mut engine)
+                .unwrap();
+        assert_eq!(apart.kind, "algebra");
+        assert!(!apart.expression.contains("List"), "{}", apart.expression);
+
         let limited = process_expression_with_engine(
             request("D(x)Limit(t,0)(Sin(t)/t+x^2)", true),
             &mut engine,

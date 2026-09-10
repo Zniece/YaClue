@@ -288,8 +288,16 @@ Apart(_f) <-- Apart(f,x);
 
 Apart(_f,_var) <--
 [
-  Local(rat);
+  Local(rat,gcd);
   rat:=RationalForm(f,var);
+  /* PartFracExpand assumes a reduced rational function.  Reuse the
+   * RationalForm already computed here instead of calling GcdReduce, which
+  * would construct it a second time. */
+  If(Degree(rat[2],var) > 0,
+    [
+      gcd:=Gcd(rat[1],rat[2]);
+      rat:={Div(rat[1],gcd),Div(rat[2],gcd)};
+    ]);
   If(Degree(rat[1],var) = 0 And Degree(rat[2],var) = 0,
      [
        rat:={Coef(rat[1],var,0),Coef(rat[2],var,0)};
@@ -356,4 +364,3 @@ GcdReduce(_f,_var)<--
   denom:=denom/lc;
   Expand(numer)/Expand(denom);
 ];
-

@@ -103,6 +103,7 @@ mod tests {
                 "1/(2*(x-1))-1/(2*(x+1))",
                 Some("x"),
             ),
+            (TransformKind::Apart, "(x+1)/(x^2-1)", "1/(x-1)", Some("x")),
         ] {
             let result = transform(&mut engine, input, kind, variable).unwrap();
             assert!(
