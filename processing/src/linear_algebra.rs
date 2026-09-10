@@ -1,7 +1,7 @@
 //! Structured processing API for common matrix operations.
 
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{strip_tex_delimiters, validate_expression};
+use crate::input::{fresh_internal_symbols, strip_tex_delimiters, validate_expression};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
@@ -136,13 +136,25 @@ pub struct EigenSpaceResult {
 /// Compute a pivoted exact `P*A = L*D*U` decomposition.
 pub fn pldu(engine: &mut dyn Engine, matrix: &str) -> Result<PlduResult, EngineError> {
     validate_expression(matrix, "矩阵")?;
+    let [a, p, l, d, u, ok] = fresh_internal_symbols(
+        "Pldu",
+        &[matrix],
+        [
+            "Matrix",
+            "Permutation",
+            "Lower",
+            "Diagonal",
+            "Upper",
+            "Verified",
+        ],
+    );
     let command = format!(
-        "[Local(a,p,l,d,u,ok); a:={matrix}; \
-         InputCheck(IsSquareMatrix(a),\"argument must be a square matrix\"); \
-         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+        "[Local({a},{p},{l},{d},{u},{ok}); {a}:={matrix}; \
+         InputCheck(IsSquareMatrix({a}),\"argument must be a square matrix\"); \
+         InputCheck(Length({a})>0 And Length({a})<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix dimension limit exceeded\"); \
-         {{p,l,d,u}}:=PLDU(a); ok:=(p*a-l*d*u)=ZeroMatrix(Length(a)); \
-         {{Length(a),p,l,d,u,ok}};]"
+         {{{p},{l},{d},{u}}}:=PLDU({a}); {ok}:=({p}*{a}-{l}*{d}*{u})=ZeroMatrix(Length({a})); \
+         {{Length({a}),{p},{l},{d},{u},{ok}}};]"
     );
     let evaluated = engine.eval(&command)?;
     let fields = exact_fields(&evaluated.expr, "PLDU result", 6)?;
@@ -161,14 +173,16 @@ pub fn pldu(engine: &mut dyn Engine, matrix: &str) -> Result<PlduResult, EngineE
 /// Compute an exact upper Cholesky factor after checking symmetry.
 pub fn cholesky(engine: &mut dyn Engine, matrix: &str) -> Result<CholeskyResult, EngineError> {
     validate_expression(matrix, "矩阵")?;
+    let [a, r, ok] =
+        fresh_internal_symbols("Cholesky", &[matrix], ["Matrix", "Factor", "Verified"]);
     let command = format!(
-        "[Local(a,r,ok); a:={matrix}; \
-         InputCheck(IsSquareMatrix(a),\"argument must be a square matrix\"); \
-         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+        "[Local({a},{r},{ok}); {a}:={matrix}; \
+         InputCheck(IsSquareMatrix({a}),\"argument must be a square matrix\"); \
+         InputCheck(Length({a})>0 And Length({a})<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix dimension limit exceeded\"); \
-         InputCheck(a=Transpose(a),\"matrix must be symmetric\"); \
-         r:=Cholesky(a); ok:=(Transpose(r)*r-a)=ZeroMatrix(Length(a)); \
-         {{Length(a),r,ok}};]"
+         InputCheck({a}=Transpose({a}),\"matrix must be symmetric\"); \
+         {r}:=Cholesky({a}); {ok}:=(Transpose({r})*{r}-{a})=ZeroMatrix(Length({a})); \
+         {{Length({a}),{r},{ok}}};]"
     );
     let evaluated = engine.eval(&command)?;
     let fields = exact_fields(&evaluated.expr, "Cholesky result", 3)?;
@@ -189,29 +203,34 @@ pub fn gram_schmidt(
     normalized: bool,
 ) -> Result<GramSchmidtResult, EngineError> {
     validate_expression(vectors, "向量组")?;
+    let [w, s, b, ok, i, j] = fresh_internal_symbols(
+        "GramSchmidt",
+        &[vectors],
+        ["Vectors", "Structure", "Basis", "Verified", "I", "J"],
+    );
     let algorithm = if normalized {
-        "OrthonormalBasis(w)"
+        format!("OrthonormalBasis({w})")
     } else {
-        "OrthogonalBasis(w)"
+        format!("OrthogonalBasis({w})")
     };
     let unit_check = if normalized {
-        "For(i:=1,i<=Length(b),i++) If(Not(Simplify(InProduct(b[i],b[i]))=1),ok:=False);"
+        format!("For({i}:=1,{i}<=Length({b}),{i}++) If(Not(Simplify(InProduct({b}[{i}],{b}[{i}]))=1),{ok}:=False);")
     } else {
-        ""
+        String::new()
     };
     let command = format!(
-        "[Local(w,s,b,ok,i,j); w:={vectors}; \
-         InputCheck(IsMatrix(w),\"vectors must have equal dimensions\"); \
-         InputCheck(Length(w)>0 And Length(w)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+        "[Local({w},{s},{b},{ok},{i},{j}); {w}:={vectors}; \
+         InputCheck(IsMatrix({w}),\"vectors must have equal dimensions\"); \
+         InputCheck(Length({w})>0 And Length({w})<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"vector count limit exceeded\"); \
-         InputCheck(Length(w[1])>0 And Length(w[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(Length({w}[1])>0 And Length({w}[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"vector dimension limit exceeded\"); \
-         s:=LinearStructure(w); InputCheck(s[2]=Length(w),\"vectors must be linearly independent\"); \
-         b:={algorithm}; \
-         ok:=True; For(i:=1,i<Length(b),i++) For(j:=i+1,j<=Length(b),j++) \
-              If(Not(InProduct(b[i],b[j])=0),ok:=False); \
+         {s}:=LinearStructure({w}); InputCheck({s}[2]=Length({w}),\"vectors must be linearly independent\"); \
+         {b}:={algorithm}; \
+         {ok}:=True; For({i}:=1,{i}<Length({b}),{i}++) For({j}:={i}+1,{j}<=Length({b}),{j}++) \
+              If(Not(InProduct({b}[{i}],{b}[{j}])=0),{ok}:=False); \
          {unit_check} \
-         {{Length(w),Length(w[1]),b,ok}};]"
+         {{Length({w}),Length({w}[1]),{b},{ok}}};]"
     );
     let evaluated = engine.eval(&command)?;
     let fields = exact_fields(&evaluated.expr, "Gram-Schmidt result", 4)?;
@@ -282,17 +301,21 @@ pub fn eigen_spaces(
     for eigenvalue in eigenvalues {
         validate_expression(eigenvalue, "特征值")?;
     }
+    let mut inputs = Vec::with_capacity(eigenvalues.len() + 1);
+    inputs.push(matrix);
+    inputs.extend(eigenvalues.iter().copied());
+    let [a, values_symbol] = fresh_internal_symbols("EigenSpaces", &inputs, ["Matrix", "Values"]);
     let values = if eigenvalues.is_empty() {
-        "EigenValues(a)".to_string()
+        format!("EigenValues({a})")
     } else {
         format!("{{{}}}", eigenvalues.join(","))
     };
     let command = format!(
-        "[Local(a,values); a:={matrix}; \
-         InputCheck(IsSquareMatrix(a),\"argument must be a square matrix\"); \
-         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+        "[Local({a},{values_symbol}); {a}:={matrix}; \
+         InputCheck(IsSquareMatrix({a}),\"argument must be a square matrix\"); \
+         InputCheck(Length({a})>0 And Length({a})<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix dimension limit exceeded\"); \
-         values:={values}; {{Length(a),EigenSpaces(a,values)}};]"
+         {values_symbol}:={values}; {{Length({a}),EigenSpaces({a},{values_symbol})}};]"
     );
     let evaluated = engine.eval(&command)?;
     let fields = list_items(&evaluated.expr, "EigenSpaces result")?;
@@ -339,14 +362,15 @@ pub fn linear_structure(
     matrix: &str,
 ) -> Result<LinearStructureResult, EngineError> {
     validate_expression(matrix, "矩阵")?;
+    let [a] = fresh_internal_symbols("LinearStructure", &[matrix], ["Matrix"]);
     let command = format!(
-        "[Local(a); a:={matrix}; \
-         InputCheck(IsMatrix(a),\"argument must be a matrix\"); \
-         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+        "[Local({a}); {a}:={matrix}; \
+         InputCheck(IsMatrix({a}),\"argument must be a matrix\"); \
+         InputCheck(Length({a})>0 And Length({a})<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix row limit exceeded\"); \
-         InputCheck(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(Length({a}[1])>0 And Length({a}[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix column limit exceeded\"); \
-         LinearStructure(a);]"
+         LinearStructure({a});]"
     );
     let evaluated = engine.eval(&command)?;
     let fields = exact_fields(&evaluated.expr, "LinearStructure result", 5)?;
@@ -366,14 +390,15 @@ pub fn linear_structure_steps_with_verbosity(
     verbosity: StepVerbosity,
 ) -> Result<LinearStructureStepResult, EngineError> {
     validate_expression(matrix, "矩阵")?;
+    let [a] = fresh_internal_symbols("LinearStructureDetailed", &[matrix], ["Matrix"]);
     let command = format!(
-        "[Local(a); a:={matrix}; \
-         InputCheck(IsMatrix(a),\"argument must be a matrix\"); \
-         InputCheck(Length(a)>0 And Length(a)<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+        "[Local({a}); {a}:={matrix}; \
+         InputCheck(IsMatrix({a}),\"argument must be a matrix\"); \
+         InputCheck(Length({a})>0 And Length({a})<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix row limit exceeded\"); \
-         InputCheck(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
+         InputCheck(Length({a}[1])>0 And Length({a}[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix column limit exceeded\"); \
-         LinearStructureDetailed(a);]"
+         LinearStructureDetailed({a});]"
     );
     let evaluated = engine.eval_expr(&command)?;
     let fields = exact_fields(&evaluated, "LinearStructureDetailed result", 6)?;
@@ -591,34 +616,37 @@ pub fn compute(
 }
 
 fn checked_command(left: &str, operation: MatrixOperation, right: Option<&str>) -> String {
-    let matrix_check = "InputCheck(IsMatrix(a),\"left operand must be a matrix\")";
-    let square_check = "InputCheck(IsSquareMatrix(a),\"matrix must be square\")";
-    let singular_check = "InputCheck(Not(IsZero(Determinant(a))),\"matrix must be nonsingular\")";
+    let inputs = right.map_or_else(|| vec![left], |right| vec![left, right]);
+    let [a, b] = fresh_internal_symbols("MatrixOperation", &inputs, ["Left", "Right"]);
+    let matrix_check = format!("InputCheck(IsMatrix({a}),\"left operand must be a matrix\")");
+    let square_check = format!("InputCheck(IsSquareMatrix({a}),\"matrix must be square\")");
+    let singular_check =
+        format!("InputCheck(Not(IsZero(Determinant({a}))),\"matrix must be nonsingular\")");
     let body = match operation {
         MatrixOperation::Add => format!(
-            "b:={}; InputCheck(IsMatrix(b),\"right operand must be a matrix\"); \
-             InputCheck(Dimensions(a)=Dimensions(b),\"matrix dimensions must match\"); a+b",
+            "{b}:={}; InputCheck(IsMatrix({b}),\"right operand must be a matrix\"); \
+             InputCheck(Dimensions({a})=Dimensions({b}),\"matrix dimensions must match\"); {a}+{b}",
             right.unwrap()
         ),
         MatrixOperation::Multiply => format!(
-            "b:={}; InputCheck(IsMatrix(b),\"right operand must be a matrix\"); \
-             InputCheck(Length(a[1])=Length(b),\"matrix dimensions are incompatible\"); a*b",
+            "{b}:={}; InputCheck(IsMatrix({b}),\"right operand must be a matrix\"); \
+             InputCheck(Length({a}[1])=Length({b}),\"matrix dimensions are incompatible\"); {a}*{b}",
             right.unwrap()
         ),
-        MatrixOperation::Transpose => "Transpose(a)".into(),
-        MatrixOperation::Determinant => format!("{square_check}; Determinant(a)"),
+        MatrixOperation::Transpose => format!("Transpose({a})"),
+        MatrixOperation::Determinant => format!("{square_check}; Determinant({a})"),
         MatrixOperation::Inverse => {
-            format!("{square_check}; {singular_check}; Inverse(a)")
+            format!("{square_check}; {singular_check}; Inverse({a})")
         }
         MatrixOperation::Solve => format!(
-            "b:={}; InputCheck(IsVector(b),\"right operand must be a vector\"); {square_check}; \
-             InputCheck(Length(a)=Length(b),\"matrix and vector dimensions must match\"); \
-             {singular_check}; MatrixSolve(a,b)",
+            "{b}:={}; InputCheck(IsVector({b}),\"right operand must be a vector\"); {square_check}; \
+             InputCheck(Length({a})=Length({b}),\"matrix and vector dimensions must match\"); \
+             {singular_check}; MatrixSolve({a},{b})",
             right.unwrap()
         ),
-        MatrixOperation::Eigenvalues => format!("{square_check}; EigenValues(a)"),
+        MatrixOperation::Eigenvalues => format!("{square_check}; EigenValues({a})"),
     };
-    format!("[Local(a,b); a:={left}; {matrix_check}; {body};]")
+    format!("[Local({a},{b}); {a}:={left}; {matrix_check}; {body};]")
 }
 
 fn unresolved(expr: &Expr, operation: MatrixOperation) -> bool {
@@ -715,6 +743,22 @@ mod tests {
         )
         .unwrap();
         assert!(eigenvalues.output.contains("Sqrt(33)"));
+    }
+
+    #[test]
+    fn matrix_operations_preserve_symbols_matching_former_temporaries() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let determinant = compute(
+            &mut engine,
+            "{{a,0},{0,1}}",
+            MatrixOperation::Determinant,
+            None,
+        )
+        .unwrap();
+        assert_eq!(determinant.output, "a");
+
+        let sum = compute(&mut engine, "{{a}}", MatrixOperation::Add, Some("{{b}}")).unwrap();
+        assert_eq!(sum.output, "List(List((a + b)))");
     }
 
     #[test]
