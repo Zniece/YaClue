@@ -1,12 +1,12 @@
 //! Improper integrals as a finite semantic reduction to ordinary definite
 //! integrals and independent one-sided limits.
 
-use std::collections::BTreeSet;
-
 use crate::assumptions::{self, AssumptionFact, AssumptionSpec};
 use crate::binding;
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
+use crate::input::{
+    fresh_internal_symbols, strip_tex_delimiters, validate_expression, validate_symbol,
+};
 use crate::limits::{self, LimitCondition, LimitDirection, LimitStatus, Relation};
 use crate::objects::{
     ComponentStatus, DefinedObjectKind, DefinedObjectResult, DefinedObjectStatus, ObjectComponent,
@@ -65,7 +65,7 @@ pub fn principal_value(
 ) -> Result<DefinedObjectResult, EngineError> {
     validate_request(request)?;
     let source = source_expression("PrincipalValueIntegral", request);
-    let cutoff = fresh_symbol(request, "YaClueRadius");
+    let cutoff = fresh_symbol(request, "PrincipalValueRadius");
     let command = if request.lower == "-Infinity"
         && request.upper == "Infinity"
         && request.singular_points.is_empty()
@@ -83,7 +83,7 @@ pub fn principal_value(
         let upper = bound_value(&request.upper)?;
         let center = bound_value(point)?;
         let radius = (center - lower).min(upper - center);
-        let dummy = fresh_symbol(request, "YaCluePvVar");
+        let dummy = fresh_symbol(request, "PrincipalValueVariable");
         let left = binding::substitute_free(
             &request.expression,
             &request.variable,
@@ -282,7 +282,7 @@ fn execute_segment(
         ));
     }
 
-    let cutoff = fresh_symbol(request, &format!("YaClueCutoff{branch}"));
+    let cutoff = fresh_symbol(request, &format!("ImproperCutoff{branch}"));
     let (command, at, direction) = if segment.lower.improper {
         (
             finite_integral(request, &cutoff, &segment.upper.value),
@@ -487,22 +487,15 @@ fn finite_integral(request: &ImproperIntegralRequest, lower: &str, upper: &str) 
     )
 }
 
-fn fresh_symbol(request: &ImproperIntegralRequest, base: &str) -> String {
-    let analysis = binding::analyze(&request.expression).ok();
-    let mut occupied = analysis
-        .map(|analysis| {
-            analysis
-                .free_symbols
-                .into_iter()
-                .chain(analysis.bound_symbols)
-                .collect::<BTreeSet<_>>()
-        })
-        .unwrap_or_default();
-    occupied.insert(request.variable.clone());
-    (0_u32..)
-        .map(|index| format!("{base}{index}"))
-        .find(|candidate| !occupied.contains(candidate))
-        .unwrap()
+fn fresh_symbol(request: &ImproperIntegralRequest, namespace: &str) -> String {
+    let mut inputs = vec![
+        request.expression.as_str(),
+        request.variable.as_str(),
+        request.lower.as_str(),
+        request.upper.as_str(),
+    ];
+    inputs.extend(request.singular_points.iter().map(String::as_str));
+    fresh_internal_symbols(namespace, &inputs, ["Value"])[0].clone()
 }
 
 fn bound_value(value: &str) -> Result<f64, EngineError> {
@@ -650,6 +643,20 @@ mod tests {
             upper: upper.into(),
             singular_points: points.iter().map(|point| (*point).into()).collect(),
         }
+    }
+
+    #[test]
+    fn internal_symbols_avoid_every_request_fragment() {
+        let request = request(
+            "YaCluePrincipalValueRadiusInternal0Value*Exp(-x)",
+            "0",
+            "Infinity",
+            &["YaCluePrincipalValueRadiusInternal1Value"],
+        );
+        assert_eq!(
+            fresh_symbol(&request, "PrincipalValueRadius"),
+            "YaCluePrincipalValueRadiusInternal2Value"
+        );
     }
 
     #[test]
