@@ -20,11 +20,9 @@ const DEFAULT_PRECISION: u32 = 10;
 /// rule exists for a particular outer operation. They must remain held rather
 /// than falling through to raw Yacas evaluation.
 const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
-    "Apart",
     "Determinant",
     "DoubleIntegral",
     "EigenValues",
-    "Expand",
     "Extrema",
     "FindRoot",
     "ImproperIntegral",
@@ -37,11 +35,9 @@ const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
     "Plot",
     "PolarIntegral",
     "PrincipalValueIntegral",
-    "Simplify",
     "Solve",
     "SolveMatrix",
     "Taylor",
-    "Tidy",
     "Transpose",
 ];
 
@@ -50,6 +46,7 @@ const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
 pub enum CompositionOperator {
     Derivative,
     Factor,
+    AlgebraTransform,
     Integral,
     Substitute,
     Approximate,
@@ -95,6 +92,30 @@ pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
         name: "Factor",
         operator: CompositionOperator::Factor,
         arities: UNARY_ARITY,
+        value_argument: ValueArgument::First,
+    },
+    OperatorSignature {
+        name: "Expand",
+        operator: CompositionOperator::AlgebraTransform,
+        arities: UNARY_ARITY,
+        value_argument: ValueArgument::First,
+    },
+    OperatorSignature {
+        name: "Simplify",
+        operator: CompositionOperator::AlgebraTransform,
+        arities: UNARY_ARITY,
+        value_argument: ValueArgument::First,
+    },
+    OperatorSignature {
+        name: "Tidy",
+        operator: CompositionOperator::AlgebraTransform,
+        arities: UNARY_ARITY,
+        value_argument: ValueArgument::First,
+    },
+    OperatorSignature {
+        name: "Apart",
+        operator: CompositionOperator::AlgebraTransform,
+        arities: &[2],
         value_argument: ValueArgument::First,
     },
     OperatorSignature {
@@ -437,6 +458,27 @@ fn apply(
                 arbitrary_constants: Vec::new(),
             })
         }
+        CompositionOperator::AlgebraTransform => {
+            let (kind, variable) = match operation.signature.name {
+                "Expand" => (TransformKind::Expand, None),
+                "Simplify" => (TransformKind::Simplify, None),
+                "Tidy" => (TransformKind::Tidy, None),
+                "Apart" => (TransformKind::Apart, arguments.get(1).map(String::as_str)),
+                _ => unreachable!("registered algebra transform"),
+            };
+            let result = algebra::transform(engine, current, kind, variable)?;
+            Ok(ApplyOutcome {
+                value: result.output.clone(),
+                steps: vec![operation_step(
+                    "compose_algebra_transform",
+                    result.output,
+                    "对上一结果应用代数变换。",
+                    result.tex,
+                )],
+                unresolved: result.unresolved,
+                arbitrary_constants: Vec::new(),
+            })
+        }
         CompositionOperator::Substitute => {
             let result = engine.eval(&format!(
                 "Subst({},{})({current})",
@@ -674,6 +716,34 @@ mod tests {
                 CompositionOperator::Approximate,
             ]
         );
+    }
+
+    #[test]
+    fn lowers_registered_algebra_transforms_inside_compositions() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (expression, expected) in [
+            ("D(x)Simplify((x+x)/2)", "1"),
+            ("D(x)Expand((x+1)^2)", "((2*x)+2)"),
+            ("D(x)Apart(1/(x^2-1),x)", "-2*x/(x^2-1)^2"),
+        ] {
+            let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{expression}");
+            assert_eq!(
+                engine
+                    .eval(&format!("Simplify(({})-({expected}))", result.value))
+                    .unwrap()
+                    .expr
+                    .to_string(),
+                "0",
+                "{expression}: {result:#?}"
+            );
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "compose_algebra_transform"));
+        }
     }
 
     #[test]

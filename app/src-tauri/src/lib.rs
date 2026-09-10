@@ -1353,6 +1353,16 @@ mod tests {
             .symbols
             .iter()
             .any(|name| name.starts_with('y')));
+
+        let transformed =
+            process_expression_with_engine(request("D(x)Simplify((x+x)/2)", true), &mut engine)
+                .unwrap();
+        assert_eq!(transformed.kind, "composition");
+        assert_eq!(transformed.expression, "1");
+        assert!(transformed
+            .steps
+            .iter()
+            .any(|step| step.rule == "compose_algebra_transform"));
     }
 
     #[test]
