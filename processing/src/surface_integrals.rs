@@ -1,7 +1,7 @@
 //! Structured scalar-area and vector-flux integrals on parametric surfaces.
 
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{analyze_expression, strip_tex_delimiters, validate_symbol};
+use crate::input::{analyze_expression, render_one_tex, validate_symbol};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -245,7 +245,7 @@ fn evaluate(
         return Err(EngineError::Eval("曲面积分构造证书失败".into()));
     }
     let tex = if render_value {
-        strip_tex_delimiters(&engine.render_tex_batch(std::slice::from_ref(&value))?[0])
+        render_one_tex(engine, &value)?
     } else {
         String::new()
     };

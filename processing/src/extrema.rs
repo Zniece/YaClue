@@ -2,9 +2,7 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::equations::{self, Assignment, SolveCompleteness, SolveStatus};
-use crate::input::{
-    analyze_expression, strip_tex_delimiters, validate_expression, validate_symbol,
-};
+use crate::input::{analyze_expression, render_one_tex, validate_expression, validate_symbol};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -328,7 +326,7 @@ fn analyze_lagrange_internal(
     };
     let display = lagrange_display(&candidates);
     let tex = if render_value {
-        strip_tex_delimiters(&engine.render_tex_batch(&[display])?[0])
+        render_one_tex(engine, &display)?
     } else {
         String::new()
     };
@@ -601,7 +599,7 @@ fn analyze_internal(
         )
     };
     let tex = if render_value {
-        strip_tex_delimiters(&engine.render_tex_batch(&[display])?[0])
+        render_one_tex(engine, &display)?
     } else {
         String::new()
     };

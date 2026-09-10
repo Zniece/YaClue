@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use crate::engine::EngineError;
+use crate::engine::{Engine, EngineError};
 use yacas_rs::value::{spine_refs, LispObject, ObjectKind};
 
 thread_local! {
@@ -203,6 +203,20 @@ pub fn strip_tex_delimiters(tex: &str) -> String {
         .to_string()
 }
 
+pub(crate) fn render_one_tex(
+    engine: &mut dyn Engine,
+    expression: &String,
+) -> Result<String, EngineError> {
+    let mut rendered = engine.render_tex_batch(std::slice::from_ref(expression))?;
+    if rendered.len() != 1 {
+        return Err(EngineError::Parse(format!(
+            "单项 TeX 渲染应返回 1 项，实际返回 {} 项",
+            rendered.len()
+        )));
+    }
+    Ok(strip_tex_delimiters(&rendered.pop().unwrap()))
+}
+
 fn validate_safe_text(input: &str, label: &str) -> Result<(), EngineError> {
     if input.trim().is_empty()
         || input
@@ -327,6 +341,21 @@ fn contains_atom(node: &Rc<LispObject>, symbol: &str) -> bool {
 mod tests {
     use super::*;
 
+    struct EmptyTexEngine;
+
+    impl Engine for EmptyTexEngine {
+        fn eval(&mut self, _command: &str) -> Result<crate::engine::EvalResult, EngineError> {
+            unreachable!()
+        }
+
+        fn render_tex_batch(
+            &mut self,
+            _expressions: &[String],
+        ) -> Result<Vec<String>, EngineError> {
+            Ok(Vec::new())
+        }
+    }
+
     #[test]
     fn analysis_uses_the_language_parser_and_separates_symbol_roles() {
         let result = analyze_expression("Sin(x)+Pi*y==1e10", "方程").unwrap();
@@ -380,6 +409,14 @@ mod tests {
             reclaimed <= baseline + 2,
             "{baseline} -> {expanded} -> {reclaimed}"
         );
+    }
+
+    #[test]
+    fn single_tex_render_rejects_wrong_result_count() {
+        assert!(matches!(
+            render_one_tex(&mut EmptyTexEngine, &"x".to_string()),
+            Err(EngineError::Parse(_))
+        ));
     }
 
     #[test]

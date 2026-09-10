@@ -1,9 +1,7 @@
 //! Structured bounded iterated integrals.
 
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{
-    analyze_expression, strip_tex_delimiters, validate_expression, validate_symbol,
-};
+use crate::input::{analyze_expression, render_one_tex, validate_expression, validate_symbol};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
@@ -630,7 +628,7 @@ fn evaluate(
         inner_value.clone()
     };
     let tex = if render_value {
-        strip_tex_delimiters(&engine.render_tex_batch(std::slice::from_ref(&value))?[0])
+        render_one_tex(engine, &value)?
     } else {
         String::new()
     };
@@ -767,7 +765,7 @@ fn evaluate_triple(
         .value
         .clone();
     let tex = if render_value {
-        strip_tex_delimiters(&engine.render_tex_batch(std::slice::from_ref(&value))?[0])
+        render_one_tex(engine, &value)?
     } else {
         String::new()
     };
