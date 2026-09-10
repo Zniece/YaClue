@@ -9,3 +9,13 @@ TestYacas(LastStepExpr(StepsI(x^2/Sqrt(4 - x^2), x)),
           2*(ArcSin(x/2) - ((x*Sqrt(4 - x^2))/4)));
 Verify(FirstRule(StepsI(Sqrt(4 - x^2), x)), "method-trig-sub");
 Verify(FirstRule(StepsI(x^3/Sqrt(4 - x^2), x)), "method-trig-sub");
+
+/* 用户参数占用默认哑元名称时继续使用三角换元，并选择 theta2。 */
+Verify(FirstRule(StepsI((theta+theta1)*x^2/Sqrt(4 - x^2), x)),
+       "method-trig-sub");
+Verify(IsFreeOf(theta,
+       LastStepExpr(StepsI((theta+theta1)*x^2/Sqrt(4 - x^2), x))), False);
+Verify(IsFreeOf(theta1,
+       LastStepExpr(StepsI((theta+theta1)*x^2/Sqrt(4 - x^2), x))), False);
+Verify(IsFreeOf(theta2,
+       LastStepExpr(StepsI((theta+theta1)*x^2/Sqrt(4 - x^2), x))), True);

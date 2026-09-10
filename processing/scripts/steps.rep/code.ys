@@ -662,12 +662,12 @@ SI'Parts(integrand, u, dvf, vval, var) :=
 
 /* ---------- 三角换元 θ 机器(M2c:sin 形式,Sqrt(d - v^2)) ----------
    被积式含 Sqrt(d - v^2)(d 正数常数)且裸形规则未接住时:
-   v = Sqrt(d)*Sin(theta)。整条管线先静默算通,回代后验"无 theta 残留、
+   v = Sqrt(d)*Sin(dummy)。dummy 按被积式动态选择 theta/theta1/...；
+   整条管线先静默算通,回代后验"无 dummy 残留、
    无 Integrate 泄漏"才提交;失败(如 R 次数过高产生 Sin(4*theta))
    自动回落 direct,绝不输出半成品。
    双倍角/三倍角展开由恒等表承担(覆盖 R 次数 <= 2 的 theta 域
-   反导数词汇表)。注意:换元哑元名不得与 SD'Merge 的局部变量
-   (t 等)冲突,故用 theta。 */
+   反导数词汇表)。 */
 
 /* 恒等式表只构建一次(实测每次重建约 1s,θ 流程要调两次) */
 SI'TrigIdTable := {};
@@ -692,33 +692,41 @@ SI'TrigIdentity() :=
 
 SI'TrigSub(integrand, v, d) :=
 [
-  Local(substv, jac, radpattern, tform, sub, cur, pre, steps, final, id, ids);
-  substv := Sqrt(d) * Sin(theta);
-  /* 雅可比对换元变量 theta 求(Deriv(v) 是概念错误:substv 中已无 v) */
-  jac := Deriv(theta) substv;
+  Local(substv, jac, radpattern, tform, sub, cur, pre, steps, final, id, ids,
+        dummy, dummyIndex);
+  dummy := theta;
+  dummyIndex := 0;
+  While(Not(IsFreeOf(dummy, integrand)) Or dummy = v Or Not(IsFreeOf(dummy, d)))
+  [
+    dummyIndex++;
+    dummy := Atom(ConcatStrings("theta", String(dummyIndex)));
+  ];
+  substv := Sqrt(d) * Sin(dummy);
+  /* 雅可比对换元哑元求导(Deriv(v) 是概念错误:substv 中已无 v) */
+  jac := Deriv(dummy) substv;
   tform := ApplyPure("Subst", {v, substv, integrand}) * jac;
   /* 根式重写:Sqrt(d - (Sqrt(d)*Sin(theta))^2) = Sqrt(d)*Cos(theta)
      (theta ∈ (-pi/2, pi/2) 教科书约定;引擎 Simplify 不做此事,
      由换元数据按精确规范形 Subst) */
   radpattern := ApplyPure("Subst", {v, substv, Sqrt(d - v ^ 2)});
-  tform := ApplyPure("Subst", {radpattern, Sqrt(d) * Cos(theta), tform});
-  /* 约简 theta 形态(如 ((2Sin)^2*2Cos)/(2Cos) -> 4*Sin(theta)^2) */
+  tform := ApplyPure("Subst", {radpattern, Sqrt(d) * Cos(dummy), tform});
+  /* 约简哑元形态(如 ((2Sin)^2*2Cos)/(2Cos) -> 4*Sin(dummy)^2) */
   tform := Simplify(tform);
-  /* theta 域积分(静默) */
-  sub := SI'Diff(tform, theta);
+  /* 哑元域积分(静默) */
+  sub := SI'Diff(tform, dummy);
   cur := sub[2];
   /* 静默回代:恒等展开 -> 三角形 -> 裸 theta;
      pre 留作发射判据(发射循环看到的是已转换的 cur) */
   pre := cur;
-  ids := SI'TrigIdentity();
+  ids := ApplyPure("Subst", {theta, dummy, SI'TrigIdentity()});
   ForEach(id, ids)
     If (Not(IsFreeOf(id[1], cur)),
       cur := ApplyPure("Subst", {id[1], id[2], cur}));
-  cur := ApplyPure("Subst", {Sin(theta), v / Sqrt(d), cur});
-  cur := ApplyPure("Subst", {Cos(theta), Sqrt(d - v ^ 2) / Sqrt(d), cur});
-  final := ApplyPure("Subst", {theta, ArcSin(v / Sqrt(d)), cur});
-  /* 提交门禁:theta 消净且无 Integrate 泄漏 */
-  If (IsFreeOf(theta, final) And IsFreeOf(Integrate, final),
+  cur := ApplyPure("Subst", {Sin(dummy), v / Sqrt(d), cur});
+  cur := ApplyPure("Subst", {Cos(dummy), Sqrt(d - v ^ 2) / Sqrt(d), cur});
+  final := ApplyPure("Subst", {dummy, ArcSin(v / Sqrt(d)), cur});
+  /* 提交门禁:哑元消净且无 Integrate 泄漏 */
+  If (IsFreeOf(dummy, final) And IsFreeOf(Integrate, final),
     [
       steps := {{"method-trig-sub", "m", integrand, integrand},
                 {"trig-sub-rule", "p", integrand, Int(tform)}};
@@ -727,9 +735,9 @@ SI'TrigSub(integrand, v, d) :=
       ForEach(id, ids)
         If (Not(IsFreeOf(id[1], pre)),
           steps := Append(steps, {"trig-identity-rule", "s", id[1], id[2]}));
-      steps := Append(steps, {"trig-sub-back", "s", Sin(theta), v / Sqrt(d)});
-      steps := Append(steps, {"trig-sub-back", "s", Cos(theta), Sqrt(d - v ^ 2) / Sqrt(d)});
-      steps := Append(steps, {"back-sub-rule", "s", theta, ArcSin(v / Sqrt(d))});
+      steps := Append(steps, {"trig-sub-back", "s", Sin(dummy), v / Sqrt(d)});
+      steps := Append(steps, {"trig-sub-back", "s", Cos(dummy), Sqrt(d - v ^ 2) / Sqrt(d)});
+      steps := Append(steps, {"back-sub-rule", "s", dummy, ArcSin(v / Sqrt(d))});
       /* final 用静默阶段已过门禁的结果(与步骤序列的 Subst 链一致) */
       {steps, final};
     ],
@@ -740,12 +748,11 @@ SI'TrigSub(integrand, v, d) :=
    f 为纯常数时让位给 arcsin-rule 裸形(一步更简洁) */
 10 # SI'Diff(Sqrt(_d - _v ^ 2), _v)_(d > 0) <--
   SI'TrigSub(Sqrt(d - v ^ 2), v, d);
-/* IsFreeOf(theta, f):用户积分式含 theta 时让位 direct(换元哑元防冲突) */
-10 # SI'Diff(_f / Sqrt(_d - _v ^ 2), _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f) And Not(IsFreeOf(v, f)) And IsFreeOf(theta, f)) <--
+10 # SI'Diff(_f / Sqrt(_d - _v ^ 2), _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f) And Not(IsFreeOf(v, f))) <--
   SI'TrigSub(f / Sqrt(d - v ^ 2), v, d);
-10 # SI'Diff(_f * Sqrt(_d - _v ^ 2), _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f) And IsFreeOf(theta, f)) <--
+10 # SI'Diff(_f * Sqrt(_d - _v ^ 2), _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f)) <--
   SI'TrigSub(f * Sqrt(d - v ^ 2), v, d);
-10 # SI'Diff(Sqrt(_d - _v ^ 2) * _f, _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f) And IsFreeOf(theta, f)) <--
+10 # SI'Diff(Sqrt(_d - _v ^ 2) * _f, _v)_(d > 0 And IsPoly'(f, v) And IsFreeOf(Sqrt(d - v ^ 2), f)) <--
   SI'TrigSub(Sqrt(d - v ^ 2) * f, v, d);
 
 /* ============================================================
