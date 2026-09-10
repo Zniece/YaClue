@@ -346,7 +346,6 @@ pub fn linear_structure(
                \"matrix row limit exceeded\"); \
          InputCheck(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix column limit exceeded\"); \
-         InputCheck(Apply(And, IsRational /@ Flatten(a)),\"matrix entries must be exact rational numbers\"); \
          LinearStructure(a);]"
     );
     let evaluated = engine.eval(&command)?;
@@ -374,7 +373,6 @@ pub fn linear_structure_steps_with_verbosity(
                \"matrix row limit exceeded\"); \
          InputCheck(Length(a[1])>0 And Length(a[1])<={MAX_LINEAR_STRUCTURE_DIMENSION},\
                \"matrix column limit exceeded\"); \
-         InputCheck(Apply(And, IsRational /@ Flatten(a)),\"matrix entries must be exact rational numbers\"); \
          LinearStructureDetailed(a);]"
     );
     let evaluated = engine.eval_expr(&command)?;

@@ -881,7 +881,7 @@ Function("LinearStructureDetailed", {A})
     matrix := GenMatrix({{i,j}, A[i][j]}, rows, columns);
     For(row := 1, row <= rows, row++)
         For(column := 1, column <= columns, column++)
-            Check(IsRational(matrix[row][column]),
+            InputCheck(IsRational(matrix[row][column]),
                   "LinearStructure: entries must be exact rational numbers");
 
     pivots := {};
@@ -963,7 +963,7 @@ Function("LinearStructure", {A})
     matrix := GenMatrix({{i,j}, A[i][j]}, rows, columns);
     For(row := 1, row <= rows, row++)
         For(column := 1, column <= columns, column++)
-            Check(IsRational(matrix[row][column]),
+            InputCheck(IsRational(matrix[row][column]),
                   "LinearStructure: entries must be exact rational numbers");
 
     pivots := {};
