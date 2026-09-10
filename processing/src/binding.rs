@@ -75,7 +75,13 @@ pub struct BindingSignature {
     pub name: &'static str,
     pub arities: &'static [usize],
     pub variable_argument: usize,
-    pub body_argument_from_end: usize,
+    pub body_argument: ArgumentPosition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ArgumentPosition {
+    At(usize),
+    FromEnd(usize),
 }
 
 const DERIVATIVE_ARITIES: &[usize] = &[2, 3];
@@ -89,43 +95,43 @@ pub const BINDING_SIGNATURES: &[BindingSignature] = &[
         name: "D",
         arities: DERIVATIVE_ARITIES,
         variable_argument: 0,
-        body_argument_from_end: 0,
+        body_argument: ArgumentPosition::FromEnd(0),
     },
     BindingSignature {
         name: "Deriv",
         arities: DERIVATIVE_ARITIES,
         variable_argument: 0,
-        body_argument_from_end: 0,
+        body_argument: ArgumentPosition::FromEnd(0),
     },
     BindingSignature {
         name: "Integrate",
         arities: INTEGRAL_ARITIES,
         variable_argument: 0,
-        body_argument_from_end: 0,
+        body_argument: ArgumentPosition::FromEnd(0),
     },
     BindingSignature {
         name: "Limit",
         arities: LIMIT_ARITIES,
         variable_argument: 0,
-        body_argument_from_end: 0,
+        body_argument: ArgumentPosition::FromEnd(0),
     },
     BindingSignature {
         name: "Sum",
         arities: SUM_ARITIES,
         variable_argument: 0,
-        body_argument_from_end: 0,
+        body_argument: ArgumentPosition::FromEnd(0),
     },
     BindingSignature {
         name: "ImproperIntegral",
         arities: DEFINED_INTEGRAL_ARITIES,
-        variable_argument: 0,
-        body_argument_from_end: 0,
+        variable_argument: 1,
+        body_argument: ArgumentPosition::At(0),
     },
     BindingSignature {
         name: "PrincipalValueIntegral",
         arities: DEFINED_INTEGRAL_ARITIES,
-        variable_argument: 0,
-        body_argument_from_end: 0,
+        variable_argument: 1,
+        body_argument: ArgumentPosition::At(0),
     },
 ];
 
@@ -133,9 +139,13 @@ fn binder_spec(head: &str, argument_count: usize) -> Option<BinderSpec> {
     let signature = BINDING_SIGNATURES
         .iter()
         .find(|signature| signature.name == head && signature.arities.contains(&argument_count))?;
+    let body = match signature.body_argument {
+        ArgumentPosition::At(index) => (index < argument_count).then_some(index)?,
+        ArgumentPosition::FromEnd(offset) => argument_count.checked_sub(offset + 1)?,
+    };
     Some(BinderSpec {
         variable: signature.variable_argument,
-        body: argument_count.checked_sub(signature.body_argument_from_end + 1)?,
+        body,
     })
 }
 
@@ -608,6 +618,13 @@ mod tests {
                 .iter()
                 .any(|signature| signature.name == name));
         }
+    }
+
+    #[test]
+    fn improper_integral_binds_the_variable_in_the_leading_integrand() {
+        let result = analyze("ImproperIntegral(t^(a-1)*Exp(-t),t,0,Infinity)").unwrap();
+        assert_eq!(result.free_symbols, ["a"]);
+        assert_eq!(result.bound_symbols, ["t"]);
     }
 
     #[test]

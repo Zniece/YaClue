@@ -475,8 +475,8 @@ fn source_expression(head: &str, request: &ImproperIntegralRequest) -> String {
         format!(",{{{}}}", request.singular_points.join(","))
     };
     format!(
-        "{head}({},{},{}{},({}))",
-        request.variable, request.lower, request.upper, points, request.expression
+        "{head}(({}),{},{},{}{})",
+        request.expression, request.variable, request.lower, request.upper, points
     )
 }
 

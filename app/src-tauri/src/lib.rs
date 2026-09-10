@@ -353,13 +353,14 @@ fn dispatch_expression_with_engine(
             (head @ ("ImproperIntegral" | "PrincipalValueIntegral"), arguments)
                 if matches!(arguments.len(), 4 | 5) =>
             {
-                let variable = &arguments[0];
-                let lower = &arguments[1];
-                let upper = &arguments[2];
-                let (points, expression) = if arguments.len() == 5 {
-                    (list_or_single(&arguments[3], "奇点列表")?, &arguments[4])
+                let expression = &arguments[0];
+                let variable = &arguments[1];
+                let lower = &arguments[2];
+                let upper = &arguments[3];
+                let points = if arguments.len() == 5 {
+                    list_or_single(&arguments[4], "奇点列表")?
                 } else {
-                    (Vec::new(), &arguments[3])
+                    Vec::new()
                 };
                 let object_request = ImproperIntegralRequest {
                     expression: expression.clone(),
@@ -1189,6 +1190,20 @@ mod tests {
             processing::protocol::Conditionality::Conditional
         );
 
+        let explicit_gamma = process_expression_with_engine(
+            request("ImproperIntegral(t^(a-1)*Exp(-t),t,0,Infinity)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(explicit_gamma.kind, "intrinsic");
+        assert!(explicit_gamma.expression.contains("Gamma"));
+        assert_eq!(explicit_gamma.semantic.symbols, ["a".to_string()]);
+        assert_eq!(explicit_gamma.semantic.bound_symbols, ["t".to_string()]);
+        assert_eq!(
+            explicit_gamma.outcome.conditionality,
+            processing::protocol::Conditionality::Conditional
+        );
+
         let direct_gamma =
             process_expression_with_engine(request("Gamma(3)", false), &mut engine).unwrap();
         assert_eq!(direct_gamma.kind, "evaluation");
@@ -1207,14 +1222,14 @@ mod tests {
         assert!(!polar_template.steps.is_empty());
 
         let principal_value = process_expression_with_engine(
-            request("PrincipalValueIntegral(x,-1,1,{0},1/x)", false),
+            request("PrincipalValueIntegral(1/x,x,-1,1,{0})", false),
             &mut engine,
         )
         .unwrap();
         assert_eq!(principal_value.expression, "0");
 
         let divergent = process_expression_with_engine(
-            request("ImproperIntegral(x,-1,1,{0},1/x)", false),
+            request("ImproperIntegral(1/x,x,-1,1,{0})", false),
             &mut engine,
         )
         .unwrap();
