@@ -166,11 +166,32 @@ pub fn cmd_system_call(
     let cmd = crate::standard::internal_unstringify(s)
         .unwrap_or(s)
         .to_string();
-    // system() semantics: executed via sh -c; exit code 0 -> True.
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&cmd)
-        .status();
+    // Preserve the blocking system() fast path when no evaluation deadline is
+    // active. With a deadline, poll the child so a host command cannot bypass
+    // the engine timeout.
+    let mut command = std::process::Command::new("sh");
+    command.arg("-c").arg(&cmd);
+    let status = if env.eval_deadline.is_none() {
+        command.status()
+    } else {
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(_) => return Ok(env.false_atom()),
+        };
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) => {}
+                Err(error) => break Err(error),
+            }
+            if env.check_eval_deadline().is_err() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(YacasError::UserInterrupt);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
     match status {
         Ok(st) => {
             if st.success() {

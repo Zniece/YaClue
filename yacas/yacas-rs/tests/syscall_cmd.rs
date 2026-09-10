@@ -38,3 +38,15 @@ fn system_call_and_name() {
         println!("P| {p} => {}", run(&mut e, p));
     }
 }
+
+#[test]
+fn system_call_observes_evaluation_deadline() {
+    let mut env = Environment::new();
+    env.set_eval_timeout(Some(std::time::Duration::from_millis(50)));
+    let started = std::time::Instant::now();
+    assert_eq!(
+        run(&mut env, r#"SystemCall("sleep 2")"#),
+        "ERR(UserInterrupt)"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+}
