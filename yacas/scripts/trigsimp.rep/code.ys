@@ -398,6 +398,19 @@ Log("item",item);
   result;
 ];
 
+/* 对函数参数中的三角代数子树做一次有界的深层规范化。
+   Substitute 只遍历现有语法树；命中加法候选后立即改写该子树，
+   不对生成结果再次递归。最后保留一次既有的顶层规范化。 */
+TrigSimpNestedPredicate(_node) <--
+  Type(node) = "+" And (HasFunc(node,Sin) Or HasFunc(node,Cos));
+TrigSimpNestedChange(_node) <-- Simplify(TrigSimpCombine(node));
+TrigSimpCombineNested(expr) :=
+[
+  Local(result);
+  result := Substitute(expr,"TrigSimpNestedPredicate","TrigSimpNestedChange");
+  Simplify(TrigSimpCombine(result));
+];
+
 
 
 CosAdd(t):=
@@ -454,4 +467,3 @@ Out( 6 ) = Complex(Cos(a)*Cos(b)+Sin(a)*Sin(b),Sin(a)*Cos(b)-Cos(a)*Sin(b));
 
 
 */
-

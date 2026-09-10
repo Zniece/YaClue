@@ -1236,6 +1236,28 @@ mod tests {
         );
         assert!(!polar_template.steps.is_empty());
 
+        let gaussian_disk = process_expression_with_engine(
+            request(
+                "PolarIntegral(Exp(-(x^2+y^2)),x,y,r,theta,0,2,0,2*Pi)",
+                true,
+            ),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(gaussian_disk.kind, "polar_integral");
+        assert_eq!(
+            gaussian_disk.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+        assert_eq!(
+            gaussian_disk.data["result"]["integral"]["status"],
+            "evaluated"
+        );
+        assert!(!gaussian_disk.data["result"]["transformed_integrand"]
+            .as_str()
+            .unwrap()
+            .contains("theta"));
+
         let principal_value = process_expression_with_engine(
             request("PrincipalValueIntegral(1/x,x,-1,1,{0})", false),
             &mut engine,

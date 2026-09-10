@@ -462,7 +462,7 @@ fn evaluate_polar(
     let [tx, ty, drx, dtx, dry, dty, jacobian_symbol, transformed, verified] =
         polar_temporary_symbols(expression, x, y, radius, angle, region);
     let transform = engine.eval_expr(&format!(
-        "[Local({tx},{ty},{drx},{dtx},{dry},{dty},{jacobian_symbol},{transformed},{verified});{tx}:={x_substitution};{ty}:={y_substitution};{drx}:=Eval(ApplyPure(\"Deriv\",{{{radius},{tx}}}));{dtx}:=Eval(ApplyPure(\"Deriv\",{{{angle},{tx}}}));{dry}:=Eval(ApplyPure(\"Deriv\",{{{radius},{ty}}}));{dty}:=Eval(ApplyPure(\"Deriv\",{{{angle},{ty}}}));{verified}:=IsZero(Simplify({drx}-Cos({angle}))) And IsZero(Simplify({dtx}+{radius}*Sin({angle}))) And IsZero(Simplify({dry}-Sin({angle}))) And IsZero(Simplify({dty}-{radius}*Cos({angle})));{jacobian_symbol}:={radius};{transformed}:=Eval(ApplyPure(\"Subst\",{{{x},{tx},{expression}}}));{transformed}:=Eval(ApplyPure(\"Subst\",{{{y},{ty},{transformed}}}));{{{jacobian_symbol},{verified},Simplify(TrigSimpCombine({transformed}*{radius})),N({}),N({}),N({}),N({})}};]",
+        "[Local({tx},{ty},{drx},{dtx},{dry},{dty},{jacobian_symbol},{transformed},{verified});{tx}:={x_substitution};{ty}:={y_substitution};{drx}:=Eval(ApplyPure(\"Deriv\",{{{radius},{tx}}}));{dtx}:=Eval(ApplyPure(\"Deriv\",{{{angle},{tx}}}));{dry}:=Eval(ApplyPure(\"Deriv\",{{{radius},{ty}}}));{dty}:=Eval(ApplyPure(\"Deriv\",{{{angle},{ty}}}));{verified}:=IsZero(Simplify({drx}-Cos({angle}))) And IsZero(Simplify({dtx}+{radius}*Sin({angle}))) And IsZero(Simplify({dry}-Sin({angle}))) And IsZero(Simplify({dty}-{radius}*Cos({angle})));{jacobian_symbol}:={radius};{transformed}:=Eval(ApplyPure(\"Subst\",{{{x},{tx},{expression}}}));{transformed}:=Eval(ApplyPure(\"Subst\",{{{y},{ty},{transformed}}}));{{{jacobian_symbol},{verified},TrigSimpCombineNested({transformed}*{radius}),N({}),N({}),N({}),N({})}};]",
         region.radial_lower,
         region.radial_upper,
         region.angle_lower,
@@ -1184,6 +1184,46 @@ mod tests {
     }
 
     #[test]
+    fn evaluates_gaussian_disk_after_nested_trigonometric_normalization() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let gaussian = polar_integral_steps(
+            &mut engine,
+            "Exp(-(x^2+y^2))",
+            "x",
+            "y",
+            "r",
+            "theta",
+            PolarRegion {
+                radial_lower: "0",
+                radial_upper: "2",
+                angle_lower: "0",
+                angle_upper: "2*Pi",
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            gaussian.result.integral.status,
+            IteratedIntegralStatus::Evaluated,
+            "{gaussian:#?}"
+        );
+        assert!(!gaussian.result.transformed_integrand.contains("theta"));
+        assert!(gaussian
+            .steps
+            .iter()
+            .any(|step| step.rule == "iterated-integral-outer"));
+        assert_eq!(
+            gaussian.steps.last().map(|step| step.rule.as_str()),
+            Some("polar-integral-result")
+        );
+        let numeric = engine
+            .eval(&format!("N({})", gaussian.result.integral.value))
+            .unwrap();
+        let actual = numeric_value(&numeric.expr).unwrap();
+        let expected = std::f64::consts::PI * (1.0 - (-4.0_f64).exp());
+        assert!((actual - expected).abs() < 1e-9, "{gaussian:#?}");
+    }
+
+    #[test]
     fn polar_steps_expose_transform_and_reject_invalid_regions() {
         let mut engine = RustEngine::spawn().unwrap();
         let region = PolarRegion {
@@ -1269,6 +1309,7 @@ mod tests {
         };
         engine.reset_counts();
         polar_integral(&mut engine, "1", "x", "y", "r", "theta", region).unwrap();
+        assert_eq!(engine.eval_calls, 2);
         assert_eq!(engine.batch_sizes, [1]);
 
         engine.reset_counts();
@@ -1283,6 +1324,7 @@ mod tests {
             StepVerbosity::Concise,
         )
         .unwrap();
+        assert_eq!(engine.eval_calls, 2);
         assert_eq!(engine.batch_sizes, [polar.steps.len()]);
     }
 
