@@ -249,7 +249,7 @@ pub fn derive_definite(
     from: &str,
     to: &str,
 ) -> Result<Vec<Step>, EngineError> {
-    derive_definite_with_options(engine, expr, var, from, to, &QuadratureOptions::default())
+    derive_definite_configured(engine, expr, var, from, to, None, StepVerbosity::Detailed)
 }
 
 pub fn derive_definite_with_verbosity(
@@ -260,15 +260,7 @@ pub fn derive_definite_with_verbosity(
     to: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    derive_definite_configured(
-        engine,
-        expr,
-        var,
-        from,
-        to,
-        &QuadratureOptions::default(),
-        verbosity,
-    )
+    derive_definite_configured(engine, expr, var, from, to, None, verbosity)
 }
 
 pub fn derive_definite_with_options(
@@ -285,7 +277,7 @@ pub fn derive_definite_with_options(
         var,
         from,
         to,
-        options,
+        Some(options),
         StepVerbosity::Detailed,
     )
 }
@@ -296,7 +288,7 @@ fn derive_definite_configured(
     var: &str,
     from: &str,
     to: &str,
-    options: &QuadratureOptions,
+    numeric_fallback: Option<&QuadratureOptions>,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
     validate_expression(expr, "被积表达式")?;
@@ -309,6 +301,9 @@ fn derive_definite_configured(
         verbosity,
     )?;
     if steps.last().is_some_and(|step| step.rule == "direct") {
+        let Some(options) = numeric_fallback else {
+            return Ok(steps);
+        };
         let lower = numeric_scalar(engine, from, "下限")?;
         let upper = numeric_scalar(engine, to, "上限")?;
         let result = adaptive_simpson(engine, expr, var, (lower, upper), options)?;
@@ -541,8 +536,18 @@ mod tests {
     #[test]
     fn definite_integral_falls_back_to_bounded_quadrature() {
         let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
-        let steps = derive_definite(&mut engine, "Sin(x)/Sqrt(4-x^2)", "x", "0", "1")
-            .expect("数值定积分失败");
+        let analytic = derive_definite(&mut engine, "Sin(x)/Sqrt(4-x^2)", "x", "0", "1")
+            .expect("解析定积分步骤失败");
+        assert_eq!(analytic.last().unwrap().rule, "direct");
+        let steps = derive_definite_with_options(
+            &mut engine,
+            "Sin(x)/Sqrt(4-x^2)",
+            "x",
+            "0",
+            "1",
+            &QuadratureOptions::default(),
+        )
+        .expect("数值定积分失败");
         let last = steps.last().unwrap();
         assert_eq!(last.rule, "numeric-integration-rule");
         let value: f64 = last.expr.parse().unwrap();

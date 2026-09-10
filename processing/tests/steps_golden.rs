@@ -19,7 +19,11 @@
 use std::collections::BTreeSet;
 
 use processing::engine::{Engine, RustEngine};
-use processing::steps::{derive_definite, derive_integrals, derive_steps, derive_steps_order};
+use processing::quadrature::QuadratureOptions;
+use processing::steps::{
+    derive_definite, derive_definite_with_options, derive_integrals, derive_steps,
+    derive_steps_order,
+};
 
 const GOLDEN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/steps_golden.txt");
 
@@ -105,15 +109,15 @@ const CASES: &[(&str, &str, &str)] = &[
 ];
 
 /// 定积分用例:(expr, var, from, to)
-const DEF_CASES: &[(&str, &str, &str, &str)] = &[
-    ("x^2", "x", "0", "2"),
-    ("Sin(x)", "x", "0", "Pi"),
-    ("Exp(x)", "x", "0", "1"),
-    ("x^3", "x", "-1", "1"),              // 奇对称区间,FTC 得 0
-    ("x^2", "x", "-1", "1"),              // 偶对称区间,化为半区间的两倍
-    ("x^2/Sqrt(4 - x^2)", "x", "0", "2"), // θ 链 + 代限值 → Pi
-    ("x*Sqrt(4 - x^2)", "x", "0", "2"),
-    ("Sin(x)/Sqrt(4 - x^2)", "x", "0", "1"), // 无解析原函数 → 数值求积兜底
+const DEF_CASES: &[(&str, &str, &str, &str, bool)] = &[
+    ("x^2", "x", "0", "2", false),
+    ("Sin(x)", "x", "0", "Pi", false),
+    ("Exp(x)", "x", "0", "1", false),
+    ("x^3", "x", "-1", "1", false),              // 奇对称区间,FTC 得 0
+    ("x^2", "x", "-1", "1", false),              // 偶对称区间,化为半区间的两倍
+    ("x^2/Sqrt(4 - x^2)", "x", "0", "2", false), // θ 链 + 代限值 → Pi
+    ("x*Sqrt(4 - x^2)", "x", "0", "2", false),
+    ("Sin(x)/Sqrt(4 - x^2)", "x", "0", "1", true), // 显式数值求积
 ];
 
 /// code.ys 登记的全部规则键(普通键,含顶层追加的 simplify)。
@@ -210,9 +214,20 @@ fn golden_matches_baseline() {
         }
         body.push_str(&text);
     }
-    for (expr, var, from, to) in DEF_CASES {
-        let steps = derive_definite(&mut engine, expr, var, from, to)
-            .unwrap_or_else(|e| panic!("定积分用例 {expr} [{from},{to}] 生成失败: {e}"));
+    for (expr, var, from, to, numeric_fallback) in DEF_CASES {
+        let steps = if *numeric_fallback {
+            derive_definite_with_options(
+                &mut engine,
+                expr,
+                var,
+                from,
+                to,
+                &QuadratureOptions::default(),
+            )
+        } else {
+            derive_definite(&mut engine, expr, var, from, to)
+        }
+        .unwrap_or_else(|e| panic!("定积分用例 {expr} [{from},{to}] 生成失败: {e}"));
         let mut text = format!("### ID {expr} @ {var} [{from},{to}]\n");
         for st in &steps {
             text.push_str(&format!(
