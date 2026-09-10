@@ -224,7 +224,7 @@ async function calculate() {
     if (result.kind === "plot" || result.kind === "numeric_ode") renderPlot(result);
     else renderSummary(result);
     renderSteps(result.steps || []);
-    rawEl.textContent = JSON.stringify(result.data, null, 2);
+    rawEl.textContent = JSON.stringify(result, null, 2);
     rawBoxEl.hidden = false;
   } catch (error) {
     showError(error);

@@ -1204,6 +1204,21 @@ mod tests {
             processing::protocol::Conditionality::Conditional
         );
 
+        let symbolic_integral = process_expression_with_engine(
+            request("Integrate(x)(theta+theta1)*x^2/Sqrt(4-x^2)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(symbolic_integral.kind, "integral");
+        assert!(!symbolic_integral.expression.is_empty());
+        assert!(!symbolic_integral.tex.is_empty());
+        assert!(!symbolic_integral.steps.is_empty());
+        assert_eq!(
+            symbolic_integral.semantic.symbols,
+            ["theta".to_string(), "theta1".to_string()]
+        );
+        assert_eq!(symbolic_integral.semantic.bound_symbols, ["x".to_string()]);
+
         let direct_gamma =
             process_expression_with_engine(request("Gamma(3)", false), &mut engine).unwrap();
         assert_eq!(direct_gamma.kind, "evaluation");
