@@ -303,7 +303,7 @@ fn analyze_lagrange_internal(
         solutions
     } else {
         let equation_refs = eliminated.iter().map(String::as_str).collect::<Vec<_>>();
-        let solve = equations::solve(engine, &equation_refs, &[x, y]);
+        let solve = equations::solve_without_residual_verification(engine, &equation_refs, &[x, y]);
         match solve {
             Ok(result) if complete_solution(&result) => result.solutions,
             Ok(_) | Err(EngineError::Eval(_)) => Vec::new(),
@@ -350,11 +350,12 @@ fn solve_lagrange_by_substitution(
     y: &str,
 ) -> Result<Option<Vec<Vec<Assignment>>>, EngineError> {
     for (primary, secondary) in [(x, y), (y, x)] {
-        let relation_solution = match equations::solve(engine, &[relation], &[primary]) {
-            Ok(result) => result,
-            Err(EngineError::Eval(_)) => continue,
-            Err(error) => return Err(error),
-        };
+        let relation_solution =
+            match equations::solve_without_residual_verification(engine, &[relation], &[primary]) {
+                Ok(result) => result,
+                Err(EngineError::Eval(_)) => continue,
+                Err(error) => return Err(error),
+            };
         if relation_solution.status != SolveStatus::Solved
             || relation_solution.solutions.len() != 1
             || relation_solution.solutions[0].len() != 1
@@ -373,12 +374,15 @@ fn solve_lagrange_by_substitution(
             ))?
             .to_string();
         let reduced_constraint = format!("({reduced})==0");
-        let secondary_solutions =
-            match equations::solve(engine, &[&reduced_constraint], &[secondary]) {
-                Ok(result) => result,
-                Err(EngineError::Eval(_)) => continue,
-                Err(error) => return Err(error),
-            };
+        let secondary_solutions = match equations::solve_without_residual_verification(
+            engine,
+            &[&reduced_constraint],
+            &[secondary],
+        ) {
+            Ok(result) => result,
+            Err(EngineError::Eval(_)) => continue,
+            Err(error) => return Err(error),
+        };
         if !complete_solution(&secondary_solutions) {
             continue;
         }

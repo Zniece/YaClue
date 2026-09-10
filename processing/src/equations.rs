@@ -267,6 +267,23 @@ pub fn solve(
     equations: &[&str],
     variables: &[&str],
 ) -> Result<SolveResult, EngineError> {
+    solve_configured(engine, equations, variables, true)
+}
+
+pub(crate) fn solve_without_residual_verification(
+    engine: &mut dyn Engine,
+    equations: &[&str],
+    variables: &[&str],
+) -> Result<SolveResult, EngineError> {
+    solve_configured(engine, equations, variables, false)
+}
+
+fn solve_configured(
+    engine: &mut dyn Engine,
+    equations: &[&str],
+    variables: &[&str],
+    verify_residuals: bool,
+) -> Result<SolveResult, EngineError> {
     if equations.is_empty() {
         return Err(EngineError::InvalidInput("至少需要一个方程".into()));
     }
@@ -306,7 +323,13 @@ pub fn solve(
         equations.len() < variables.len()
     };
     if rectangular_system {
-        return solve_rectangular(engine, equations, &variables, variable_source);
+        return solve_rectangular(
+            engine,
+            equations,
+            &variables,
+            variable_source,
+            verify_residuals,
+        );
     }
 
     let scalar = equations.len() == 1 && variables.len() == 1;
@@ -352,8 +375,11 @@ pub fn solve(
 
     let parsed_solutions = parse_solutions(&raw_expr, scalar)?;
     let had_candidates = !parsed_solutions.is_empty();
-    let (mut solutions, rejected_candidates) =
-        verify_candidates(engine, parsed_solutions, equations)?;
+    let (mut solutions, rejected_candidates) = if verify_residuals {
+        verify_candidates(engine, parsed_solutions, equations)?
+    } else {
+        (parsed_solutions, false)
+    };
     let infinite = solutions.iter().flatten().any(|assignment| {
         assignment.variable == assignment.value
             && variables
@@ -451,6 +477,7 @@ fn solve_rectangular(
     equations: &[&str],
     variables: &[&str],
     variable_source: VariableSource,
+    verify_residuals: bool,
 ) -> Result<SolveResult, EngineError> {
     const MAX_SUBPROBLEMS: usize = 32;
     let underdetermined = equations.len() < variables.len();
@@ -474,7 +501,8 @@ fn solve_rectangular(
     let mut saw_complete_subproblem = false;
     let mut saw_unresolved = false;
     for (equation_subset, variable_subset) in subproblems {
-        let mut result = solve(engine, &equation_subset, &variable_subset)?;
+        let mut result =
+            solve_configured(engine, &equation_subset, &variable_subset, verify_residuals)?;
         match result.status {
             SolveStatus::Solved => {
                 saw_complete_subproblem |= result.completeness == SolveCompleteness::Complete;
