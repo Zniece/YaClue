@@ -69,7 +69,10 @@ impl ReplEngine {
             .args(["-pc", "--rootdir", &scripts])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            // Error protocol is carried on stdout. Discard the otherwise
+            // unread diagnostic stream so a noisy child cannot fill a pipe
+            // and deadlock.
+            .stderr(Stdio::null())
             .spawn()
             .map_err(|e| EngineError::Spawn(format!("无法启动 yacas({bin}): {e}")))?;
 
@@ -138,10 +141,13 @@ impl ReplEngine {
         if self.dead {
             self.respawn()?;
         }
-        writeln!(self.stdin, "{command};")
+        if let Err(error) = writeln!(self.stdin, "{command};")
             .and_then(|_| writeln!(self.stdin, "{SENTINEL};"))
             .and_then(|_| self.stdin.flush())
-            .map_err(|e| EngineError::Io(format!("写入 yacas 失败: {e}")))?;
+        {
+            self.dead = true;
+            return Err(EngineError::Io(format!("写入 yacas 失败: {error}")));
+        }
 
         let mut lines = Vec::new();
         loop {
@@ -161,6 +167,7 @@ impl ReplEngine {
                     ));
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    self.dead = true;
                     return Err(EngineError::Io("yacas 子进程意外退出".into()));
                 }
             }
@@ -285,4 +292,40 @@ pub(super) fn steps_boot_cmds_from_dir(dir: &str) -> Vec<String> {
         format!("DefaultDirectory(\"{dir}/\")"),
         "Load(\"steps.rep/code.ys\")".to_string(),
     ]
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn child_disconnect_marks_engine_dead() {
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut engine = ReplEngine {
+            child,
+            stdin,
+            rx,
+            dead: false,
+            result_symbol: "YaClue'TestResult".into(),
+        };
+
+        assert!(matches!(engine.eval_raw("1"), Err(EngineError::Io(_))));
+        assert!(engine.dead);
+    }
 }
