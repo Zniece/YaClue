@@ -8,6 +8,7 @@
 use processing::algebra::{transform, TransformKind};
 use processing::engine::{EngineError, RustEngine};
 use processing::equations::{solve as solve_equations, SolveCompleteness, SolveStatus};
+use processing::equivalence::{verify, Equivalence, ProofBudget, VerificationMethod};
 use processing::improper_integrals::{evaluate as improper_integral, ImproperIntegralRequest};
 use processing::intrinsics::{try_lower_improper_integral, IntrinsicKind};
 use processing::limits::{limit, limit_steps, LimitDirection, LimitStatus};
@@ -136,6 +137,28 @@ fn defined_object_release_contract() {
     assert_eq!(lowered.intrinsic, IntrinsicKind::Gamma);
     assert!(lowered.value.replace(' ', "").contains("Gamma((1/x))"));
     assert!(!lowered.conditions.is_empty());
+}
+
+#[test]
+fn bounded_equivalence_release_contract() {
+    let mut engine = RustEngine::spawn().unwrap();
+    let equal = verify(
+        &mut engine,
+        "Integrate(t,0,X)Sin(t^2)",
+        "Integrate(u,0,X)Sin(u^2)",
+        ProofBudget::default(),
+    )
+    .unwrap();
+    assert_eq!(equal.conclusion, Equivalence::ProvenEqual);
+    assert_eq!(equal.method, Some(VerificationMethod::AlphaEquivalent));
+    assert_eq!(equal.usage.cas_requests, 0);
+
+    let different = verify(&mut engine, "Sin(x)", "Cos(x)", ProofBudget::default()).unwrap();
+    assert_eq!(different.conclusion, Equivalence::ProvenDifferent);
+    assert!(matches!(
+        different.method,
+        Some(VerificationMethod::NumericCounterexample) | Some(VerificationMethod::ResidualProof)
+    ));
 }
 
 #[test]

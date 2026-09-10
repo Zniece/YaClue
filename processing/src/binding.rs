@@ -241,6 +241,36 @@ pub fn alpha_equivalent(left: &str, right: &str) -> Result<bool, EngineError> {
     Ok(canonical(left)? == canonical(right)?)
 }
 
+/// Compare parsed trees without evaluation or alpha-renaming.
+pub fn structurally_equal(left: &str, right: &str) -> Result<bool, EngineError> {
+    Ok(structural(left)? == structural(right)?)
+}
+
+fn structural(input: &str) -> Result<String, EngineError> {
+    validate_safe_text(input, "表达式")?;
+    with_parse_env(|env| {
+        let tree = yacas_rs::parser::parse_expression(env, &format!("{input};"))
+            .map_err(|error| EngineError::InvalidInput(format!("表达式语法错误: {error:?}")))?
+            .ok_or_else(|| EngineError::InvalidInput("表达式为空".into()))?;
+        Ok(structural_node(&tree))
+    })
+}
+
+fn structural_node(node: &Rc<LispObject>) -> String {
+    match &node.kind {
+        ObjectKind::Atom(name) => format!("A{}:{name}", name.len()),
+        ObjectKind::Number(number) => {
+            let value = number.string();
+            format!("N{}:{value}", value.len())
+        }
+        ObjectKind::Generic(generic) => format!("G{}", generic.type_name()),
+        ObjectKind::Sublist(first) => {
+            let children = spine_refs(first).map(structural_node).collect::<String>();
+            format!("L{}:[{children}]", spine_refs(first).count())
+        }
+    }
+}
+
 fn canonical(input: &str) -> Result<String, EngineError> {
     validate_safe_text(input, "表达式")?;
     with_parse_env(|env| {
@@ -582,6 +612,10 @@ mod tests {
 
     #[test]
     fn alpha_equivalence_respects_free_symbols_and_nested_shadowing() {
+        assert!(structurally_equal("x + 1", "x+1").unwrap());
+        assert!(
+            !structurally_equal("Integrate(t,0,X)Sin(t^2)", "Integrate(u,0,X)Sin(u^2)").unwrap()
+        );
         assert!(alpha_equivalent("Integrate(t,0,X)Sin(t^2)", "Integrate(u,0,X)Sin(u^2)").unwrap());
         assert!(!alpha_equivalent("Integrate(t,0,X)Sin(t^2)", "Integrate(u,0,Y)Sin(u^2)").unwrap());
         assert!(alpha_equivalent(

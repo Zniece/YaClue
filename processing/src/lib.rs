@@ -10,6 +10,7 @@ pub mod binding;
 pub mod composition;
 pub mod engine;
 pub mod equations;
+pub mod equivalence;
 pub mod extrema;
 pub mod improper_integrals;
 pub mod input;
