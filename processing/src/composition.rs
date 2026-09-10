@@ -5,12 +5,14 @@ use serde::Serialize;
 
 use crate::algebra::{self, TransformKind};
 use crate::engine::{Engine, EngineError};
-use crate::input::{root_call, strip_tex_delimiters, validate_expression, RootCall};
+use crate::input::{
+    analyze_expression, root_call, strip_tex_delimiters, validate_expression, RootCall,
+};
 use crate::numeric;
 use crate::ode::{self, OdeStatus};
 use crate::steps::{
-    derive_integrals_with_verbosity, derive_steps_order_with_verbosity, Step, StepImportance,
-    StepVerbosity,
+    derive_antiderivative_family_with_verbosity, derive_steps_order_with_verbosity, Step,
+    StepImportance, StepVerbosity,
 };
 
 const MAX_COMPOSITION_DEPTH: usize = 16;
@@ -290,12 +292,32 @@ pub fn execute_steps(
     let mut steps = Vec::new();
     let mut unresolved = false;
     let mut arbitrary_constants = Vec::new();
+    let mut occupied_symbols = analyze_expression(expression, "组合表达式")?.symbols;
     for index in (0..operations.len()).rev() {
         let operation = &operations[index];
-        let outcome = apply(engine, operation, &current, verbosity)?;
+        occupied_symbols.extend(arbitrary_constants.iter().cloned());
+        occupied_symbols.sort();
+        occupied_symbols.dedup();
+        let new_constant = (operation.signature.operator == CompositionOperator::Integral
+            && operation.arguments.len() == 2)
+            .then(|| {
+                crate::semantic::display_arbitrary_constants(&occupied_symbols, 1)
+                    .into_iter()
+                    .next()
+                    .expect("one arbitrary constant was requested")
+            });
+        let outcome = apply(
+            engine,
+            operation,
+            &current,
+            new_constant.as_deref(),
+            verbosity,
+        )?;
         current = outcome.value;
         unresolved |= outcome.unresolved;
         arbitrary_constants.extend(outcome.arbitrary_constants);
+        let active_symbols = analyze_expression(&current, "组合中间结果")?.symbols;
+        arbitrary_constants.retain(|constant| active_symbols.contains(constant));
         steps.extend(wrap_pending_steps(outcome.steps, &operations[..index]));
     }
     let tex = steps
@@ -441,6 +463,7 @@ fn apply(
     engine: &mut dyn Engine,
     operation: &Operation,
     current: &str,
+    new_constant: Option<&str>,
     verbosity: StepVerbosity,
 ) -> Result<ApplyOutcome, EngineError> {
     let arguments = &operation.arguments;
@@ -466,19 +489,33 @@ fn apply(
             from_steps(steps)
         }
         CompositionOperator::Integral => {
-            let steps = if arguments.len() == 4 {
-                crate::steps::derive_definite_with_verbosity(
+            if arguments.len() == 4 {
+                let steps = crate::steps::derive_definite_with_verbosity(
                     engine,
                     current,
                     &arguments[0],
                     &arguments[1],
                     &arguments[2],
                     verbosity,
-                )?
+                )?;
+                from_steps(steps)
             } else {
-                derive_integrals_with_verbosity(engine, current, &arguments[0], verbosity)?
-            };
-            from_steps(steps)
+                let constant = new_constant
+                    .ok_or_else(|| EngineError::Parse("组合不定积分缺少生成常数身份".into()))?;
+                let result = derive_antiderivative_family_with_verbosity(
+                    engine,
+                    current,
+                    &arguments[0],
+                    constant.into(),
+                    verbosity,
+                )?;
+                Ok(ApplyOutcome {
+                    value: result.result.expression,
+                    steps: result.steps,
+                    unresolved: result.result.representative.starts_with("Integrate("),
+                    arbitrary_constants: result.result.arbitrary_constants,
+                })
+            }
         }
         CompositionOperator::Factor => {
             let result = algebra::transform(engine, current, TransformKind::Factor, None)?;
@@ -678,6 +715,64 @@ mod tests {
         );
         assert!(result.arbitrary_constants.is_empty());
         assert!(!result.value.contains(" + C"));
+        let family_step = result
+            .steps
+            .iter()
+            .find(|step| step.rule == "antiderivative-family")
+            .unwrap();
+        assert!(family_step.expr.starts_with("D(x)("));
+        assert!(family_step.expr.contains(" + C)"));
+    }
+
+    #[test]
+    fn generated_integral_constants_participate_in_later_operations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let repeated = execute_steps(
+            &mut engine,
+            "Integrate(x)Integrate(x)x",
+            StepVerbosity::Standard,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(repeated.status, CompositionStatus::Completed);
+        assert_eq!(repeated.arbitrary_constants, ["C", "C1"]);
+        assert!(repeated.value.contains("C"));
+        assert!(repeated.value.contains("C1"));
+        assert_eq!(
+            engine
+                .eval(&format!(
+                    "Simplify(ApplyPure(\"D\",{{x,ApplyPure(\"D\",{{x,{}}})}})-x)",
+                    repeated.value
+                ))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0",
+            "{}",
+            repeated.value
+        );
+
+        let expanded = execute_steps(
+            &mut engine,
+            "Expand(Integrate(x)x)",
+            StepVerbosity::Standard,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(expanded.arbitrary_constants, ["C"]);
+        assert!(expanded.value.contains('C'));
+
+        let collision = execute_steps(
+            &mut engine,
+            "Integrate(x)Integrate(x)C*x",
+            StepVerbosity::Standard,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(collision.arbitrary_constants, ["C1", "C2"]);
+        assert!(collision.value.contains("C"));
+        assert!(collision.value.contains("C1"));
+        assert!(collision.value.contains("C2"));
     }
 
     #[test]
@@ -777,15 +872,9 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(result.status, CompositionStatus::Completed);
-        assert_eq!(
-            engine
-                .eval(&format!("Simplify(({})-4)", result.value))
-                .unwrap()
-                .expr
-                .to_string(),
-            "0"
-        );
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert!(result.value.contains('C'));
+        assert_eq!(result.arbitrary_constants, ["C"]);
         assert_eq!(
             result.operators,
             [
@@ -805,7 +894,7 @@ mod tests {
             ("D(x)Simplify((x+x)/2)", "1"),
             ("D(x)Expand((x+1)^2)", "((2*x)+2)"),
             ("D(x)Apart(1/(x^2-1),x)", "-2*x/(x^2-1)^2"),
-            ("Integrate(x)Apart((x+1)/(x^2-1),x)", "Ln(x-1)"),
+            ("Integrate(x)Apart((x+1)/(x^2-1),x)", "Ln(x-1)+C"),
         ] {
             let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
                 .unwrap()

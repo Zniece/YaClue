@@ -1203,6 +1203,31 @@ mod tests {
             .position(|step| step.why.contains("外层求导"))
             .unwrap();
         assert!(integration < outer_derivative);
+        assert!(composed
+            .semantic
+            .symbol_identities
+            .iter()
+            .all(|identity| identity.role != SymbolRole::ArbitraryConstant));
+        assert!(composed
+            .steps
+            .iter()
+            .any(|step| { step.rule == "antiderivative-family" && step.expr.contains(" + C)") }));
+
+        let repeated_integral =
+            process_expression_with_engine(request("Integrate(x)Integrate(x)x", true), &mut engine)
+                .unwrap();
+        assert_eq!(repeated_integral.kind, "composition");
+        assert!(repeated_integral.expression.contains('C'));
+        assert!(repeated_integral.expression.contains("C1"));
+        assert_eq!(
+            repeated_integral
+                .semantic
+                .symbol_identities
+                .iter()
+                .filter(|identity| identity.role == SymbolRole::ArbitraryConstant)
+                .count(),
+            2
+        );
 
         let matrix = process_expression_with_engine(
             request("{{1,2},{3,4}}*{{5,6},{7,8}}", false),
