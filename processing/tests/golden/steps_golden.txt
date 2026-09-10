@@ -216,6 +216,14 @@ sinh-rule	Cosh(x)	\cosh x	双曲正弦积分: ∫Sinh(x) dx = Cosh(x)
 cosh-rule	Sinh(x)	\sinh x	双曲余弦积分: ∫Cosh(x) dx = Sinh(x)
 ### I Tanh(x) @ x
 tanh-rule	Ln(Cosh(x))	\ln \cosh x	双曲正切积分: ∫Tanh(x) dx = Ln(Cosh(x))
+### I Sin(x)^3*Cos(x)^2 @ x
+method-trig-power-product	Int(((Sin(x) ^ 3) * (Cos(x) ^ 2)))	\mathrm{ Int }\left( \left( \sin x\right)  ^{3} \left( \cos x\right)  ^{2}\right) 	方法: 三角函数幂积换元
+trig-power-separate	Int(((Sin(x) * (1 - (Cos(x) ^ 2))) * (Cos(x) ^ 2)))	\mathrm{ Int }\left( \sin x \left( 1 - \left( \cos x\right)  ^{2}\right)  \left( \cos x\right)  ^{2}\right) 	抽出一个奇次三角因子，并用勾股恒等式改写剩余偶次幂
+u-sub-rule	Int(((u ^ 4) - (u ^ 2)))	\mathrm{ Int }\left( u ^{4} - u ^{2}\right) 	换元: u = g(x), du = g'(x) dx
+difference-rule	(Int((u ^ 4)) - Int((u ^ 2)))	\mathrm{ Int }\left( u ^{4}\right)  - \mathrm{ Int }\left( u ^{2}\right) 	差法则: 分别计算两项，再将结果相减
+power-rule	(((u ^ 5) / 5) - Int((u ^ 2)))	\frac{u ^{5}}{5}  - \mathrm{ Int }\left( u ^{2}\right) 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+power-rule	(((u ^ 5) / 5) - ((u ^ 3) / 3))	\frac{u ^{5}}{5}  - \frac{u ^{3}}{3} 	幂法则: ∫x^n dx = x^(n+1)/(n + 1) (n ≠ -1)
+back-sub-rule	(((Cos(x) ^ 5) / 5) - ((Cos(x) ^ 3) / 3))	\frac{\left( \cos x\right)  ^{5}}{5}  - \frac{\left( \cos x\right)  ^{3}}{3} 	回代: u → g(x)
 ### I Tan(x)^3 @ x
 tan-power-reduction-rule	(((Tan(x) ^ 2) / 2) - Int(Tan(x)))	\frac{\left( \tan x\right)  ^{2}}{2}  - \mathrm{ Int }\left( \tan x\right) 	正切幂递推: ∫Tan^n(u) du = Tan^(n-1)(u)/(n-1) - ∫Tan^(n-2)(u) du
 tan-rule	(((Tan(x) ^ 2) / 2) - (- Ln(Cos(x))))	\frac{\left( \tan x\right)  ^{2}}{2}  + \ln \cos x	正切积分: ∫Tan(x) dx = -Ln(Cos(x))

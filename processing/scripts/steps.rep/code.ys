@@ -80,6 +80,20 @@ Tidy(expr) :=
   If (probe = expr, expr, s);
 ];
 
+/* 生成只在教学推导中使用的哑元，避开用户已有符号。 */
+Steps'FreshSymbol(base, expressions) :=
+[
+  Local(candidate, index);
+  candidate := Atom(base);
+  index := 0;
+  While(Not(IsFreeOf(candidate, expressions)))
+  [
+    index++;
+    candidate := Atom(ConcatStrings(base, String(index)));
+  ];
+  candidate;
+];
+
 /* ============================================================
    求导步骤 StepsD
    ============================================================ */
@@ -123,6 +137,20 @@ StepsD(expr, var) :=
   Local(steps, cur, p, sa, sb);
   steps := {{"sum-rule", "p", a + b, DPrime(a) + DPrime(b)}};
   cur := DPrime(a) + DPrime(b);
+  sa := SD'Diff(a, v);
+  cur := SD'Advance(cur, sa, "DPrime");
+  steps := Concat(steps, sa[1]);
+  sb := SD'Diff(b, v);
+  cur := SD'Advance(cur, sb, "DPrime");
+  steps := Concat(steps, sb[1]);
+  {steps, cur};
+];
+
+10 # SD'Diff(_a - _b, _v) <--
+[
+  Local(steps, cur, sa, sb);
+  steps := {{"difference-rule", "p", a - b, DPrime(a) - DPrime(b)}};
+  cur := DPrime(a) - DPrime(b);
   sa := SD'Diff(a, v);
   cur := SD'Advance(cur, sa, "DPrime");
   steps := Concat(steps, sa[1]);
@@ -366,6 +394,20 @@ SI'PartFrac(integrand, p, q, v) :=
   {steps, cur};
 ];
 
+10 # SI'Diff(_a - _b, _v) <--
+[
+  Local(steps, cur, sa, sb);
+  steps := {{"difference-rule", "p", a - b, Int(a) - Int(b)}};
+  cur := Int(a) - Int(b);
+  sa := SI'Diff(a, v);
+  cur := SD'Advance(cur, sa, "Int");
+  steps := Concat(steps, sa[1]);
+  sb := SI'Diff(b, v);
+  cur := SD'Advance(cur, sb, "Int");
+  steps := Concat(steps, sb[1]);
+  {steps, cur};
+];
+
 /* 常数倍法则 */
 10 # SI'Diff(_c * _f, _v)_(IsFreeOf(v, c)) <--
 [
@@ -424,6 +466,47 @@ SI'PartFrac(integrand, p, q, v) :=
   {{{"cosh-rule", "p", Cosh(u), Sinh(u)}}, Sinh(u)};
 10 # SI'Diff(Tanh(_u), _v)_(u = v) <--
   {{{"tanh-rule", "p", Tanh(u), Ln(Cosh(u))}}, Ln(Cosh(u))};
+
+/* ---------- 正弦/余弦幂积:抽出奇次因子后换元 ---------- */
+
+SI'TrigProductOddSin(m, n, u, integrand) :=
+[
+  Local(k, dummy, rewritten, transformed, sub, final, steps);
+  k := (m-1)/2;
+  dummy := Steps'FreshSymbol("u", {integrand});
+  rewritten := Sin(u)*(1-Cos(u)^2)^k*Cos(u)^n;
+  transformed := -Expand((1-dummy^2)^k*dummy^n);
+  sub := SI'Diff(transformed, dummy);
+  final := Tidy(ApplyPure("Subst", {dummy, Cos(u), sub[2]}));
+  steps := {{"method-trig-power-product", "m", integrand, integrand},
+            {"trig-power-separate", "p", integrand, Int(rewritten)},
+            {"u-sub-rule", "p", rewritten, Int(transformed)}};
+  steps := Concat(steps, sub[1]);
+  steps := Append(steps, {"back-sub-rule", "s", dummy, Cos(u)});
+  {steps, final};
+];
+
+SI'TrigProductOddCos(m, n, u, integrand) :=
+[
+  Local(k, dummy, rewritten, transformed, sub, final, steps);
+  k := (n-1)/2;
+  dummy := Steps'FreshSymbol("u", {integrand});
+  rewritten := Cos(u)*(1-Sin(u)^2)^k*Sin(u)^m;
+  transformed := Expand((1-dummy^2)^k*dummy^m);
+  sub := SI'Diff(transformed, dummy);
+  final := Tidy(ApplyPure("Subst", {dummy, Sin(u), sub[2]}));
+  steps := {{"method-trig-power-product", "m", integrand, integrand},
+            {"trig-power-separate", "p", integrand, Int(rewritten)},
+            {"u-sub-rule", "p", rewritten, Int(transformed)}};
+  steps := Concat(steps, sub[1]);
+  steps := Append(steps, {"back-sub-rule", "s", dummy, Sin(u)});
+  {steps, final};
+];
+
+10 # SI'Diff(Sin(_u)^_m * Cos(_u)^_n, _v)_(u = v And IsInteger(m) And IsInteger(n) And m >= 1 And n >= 1 And (IsOdd(m) Or IsOdd(n))) <--
+  If(IsOdd(m),
+    SI'TrigProductOddSin(m, n, u, Sin(u)^m*Cos(u)^n),
+    SI'TrigProductOddCos(m, n, u, Sin(u)^m*Cos(u)^n));
 
 /* ---------- 幂约简递推:Sin^n / Cos^n(u = v,n 整数 >= 2) ----------
    ∫Sin^n u du = -(Sin^(n-1)u*Cosu)/n + ((n-1)/n)*∫Sin^(n-2)u du,
@@ -692,14 +775,8 @@ SI'TrigIdentity() :=
 SI'TrigSub(integrand, v, d) :=
 [
   Local(substv, jac, radpattern, tform, sub, cur, pre, steps, final, id, ids,
-        dummy, dummyIndex);
-  dummy := theta;
-  dummyIndex := 0;
-  While(Not(IsFreeOf(dummy, integrand)) Or dummy = v Or Not(IsFreeOf(dummy, d)))
-  [
-    dummyIndex++;
-    dummy := Atom(ConcatStrings("theta", String(dummyIndex)));
-  ];
+        dummy);
+  dummy := Steps'FreshSymbol("theta", {integrand, v, d});
   substv := Sqrt(d) * Sin(dummy);
   /* 雅可比对换元哑元求导(Deriv(v) 是概念错误:substv 中已无 v) */
   jac := Deriv(dummy) substv;
@@ -843,12 +920,15 @@ RuleBase("Steps'Text", {key});
 10 # Steps'Text("back-sub-rule") <-- "回代: u → g(x)";
 10 # Steps'Text("parts-rule") <-- "分部积分: ∫u dv = u*v - ∫v du";
 10 # Steps'Text("partial-fraction-rule") <-- "部分分式: P/Q 分解为最简分式之和,逐项积分";
+10 # Steps'Text("difference-rule") <-- "差法则: 分别计算两项，再将结果相减";
 
 /* 方法横幅(M2b):多步策略的第一步,宣告所用方法 */
 10 # Steps'Text("method-u-sub") <-- "方法: 换元积分法";
 10 # Steps'Text("method-parts") <-- "方法: 分部积分法";
 10 # Steps'Text("method-partial-fraction") <-- "方法: 部分分式积分法";
 10 # Steps'Text("method-trig-sub") <-- "方法: 三角换元";
+10 # Steps'Text("method-trig-power-product") <-- "方法: 三角函数幂积换元";
+10 # Steps'Text("trig-power-separate") <-- "抽出一个奇次三角因子，并用勾股恒等式改写剩余偶次幂";
 10 # Steps'Text("trig-sub-rule") <-- "三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)";
 10 # Steps'Text("trig-identity-rule") <-- "三角恒等展开";
 10 # Steps'Text("power-reduction-rule") <-- "幂约简递推: ∫Sin^n(u) du = -(Sin^(n-1)(u)*Cos(u))/n + ((n-1)/n)*∫Sin^(n-2)(u) du (Cos^n 对称)";
@@ -905,6 +985,8 @@ RuleBase("Steps'Importance", {key});
 10 # Steps'Importance("method-parts") <-- 2;
 10 # Steps'Importance("method-partial-fraction") <-- 2;
 10 # Steps'Importance("method-trig-sub") <-- 2;
+10 # Steps'Importance("method-trig-power-product") <-- 2;
+10 # Steps'Importance("trig-power-separate") <-- 2;
 10 # Steps'Importance("u-sub-rule") <-- 2;
 10 # Steps'Importance("back-sub-rule") <-- 2;
 10 # Steps'Importance("parts-rule") <-- 2;

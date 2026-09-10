@@ -88,6 +88,7 @@ const CASES: &[(&str, &str, &str)] = &[
     ("I", "Sinh(x)", "x"),           // sinh-rule
     ("I", "Cosh(x)", "x"),           // cosh-rule
     ("I", "Tanh(x)", "x"),           // tanh-rule
+    ("I", "Sin(x)^3*Cos(x)^2", "x"), // 三角幂积真实换元链
     ("I", "Tan(x)^3", "x"),          // tan-power-reduction-rule
     ("I", "Sec(x)^3", "x"),          // sec-power-reduction-rule + sec-rule
     ("I", "2/Sqrt(1 - x^2)", "x"),   // arcsin-rule(反正弦形)
@@ -142,6 +143,7 @@ const EXPECTED_RULES: &[&str] = &[
     "cos-rule",
     "cosh-rule",
     "direct",
+    "difference-rule",
     "exp-rule",
     "exponential-rule",
     "identity-rule",
@@ -149,6 +151,7 @@ const EXPECTED_RULES: &[&str] = &[
     "method-partial-fraction",
     "method-parts",
     "method-trig-sub",
+    "method-trig-power-product",
     "method-u-sub",
     "numeric-integration-rule",
     "partial-fraction-rule",
@@ -169,6 +172,7 @@ const EXPECTED_RULES: &[&str] = &[
     "tan-rule",
     "tan-power-reduction-rule",
     "trig-identity-rule",
+    "trig-power-separate",
     "trig-sub-back",
     "trig-sub-rule",
     "tanh-rule",

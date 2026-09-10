@@ -558,6 +558,43 @@ mod tests {
     }
 
     #[test]
+    fn mixed_trigonometric_powers_use_a_real_teaching_chain() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (integrand, var) in [
+            ("Sin(x)^3*Cos(x)^2", "x"), // 奇次 Sin
+            ("Sin(x)^2*Cos(x)^3", "x"), // 奇次 Cos
+            ("Sin(u)^3*Cos(u)^2", "u"), // 哑元与积分变量同名时必须让位
+        ] {
+            let steps = derive_integrals(&mut engine, integrand, var).unwrap();
+            assert_eq!(steps[0].rule, "method-trig-power-product");
+            assert!(steps.iter().any(|step| step.rule == "trig-power-separate"));
+            assert!(steps.iter().any(|step| step.rule == "u-sub-rule"));
+            assert!(steps.iter().any(|step| step.rule == "back-sub-rule"));
+            assert!(steps.iter().all(|step| step.rule != "direct"), "{steps:#?}");
+            let result = &steps.last().unwrap().expr;
+            assert!(!result.contains("Cos((-"), "{result}");
+            assert!(!result.contains("Sin((-"), "{result}");
+            let usub = steps.iter().find(|step| step.rule == "u-sub-rule").unwrap();
+            if var != "x" {
+                assert!(
+                    usub.expr.contains("u1"),
+                    "哑元未避让积分变量: {}",
+                    usub.expr
+                );
+            }
+            assert_eq!(
+                engine
+                    .eval_expr(&format!(
+                        "Simplify(TrigSimpCombineNested(ApplyPure(\"D\",{{{var},{result}}})-({integrand})))"
+                    ))
+                    .unwrap()
+                    .to_string(),
+                "0"
+            );
+        }
+    }
+
+    #[test]
     fn derive_steps_rejects_injection() {
         if !crate::engine::cpp_reference_available() {
             eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
