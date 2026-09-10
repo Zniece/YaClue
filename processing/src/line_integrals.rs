@@ -1,7 +1,7 @@
 //! Structured scalar and vector line integrals on bounded parametric curves.
 
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{analyze_expression, render_one_tex, validate_symbol};
+use crate::input::{analyze_expression, fresh_internal_symbols, render_one_tex, validate_symbol};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -131,6 +131,30 @@ fn evaluate(
     request: &LineIntegralRequest,
     render_value: bool,
 ) -> Result<LineIntegralResult, EngineError> {
+    let inputs = request
+        .field
+        .iter()
+        .chain(&request.coordinates)
+        .chain(&request.curve)
+        .map(String::as_str)
+        .chain([
+            request.parameter.as_str(),
+            request.lower.as_str(),
+            request.upper.as_str(),
+        ])
+        .collect::<Vec<_>>();
+    let [v, s, f, g, i, c] = fresh_internal_symbols(
+        "LineIntegral",
+        &inputs,
+        [
+            "Velocity",
+            "Speed",
+            "Field",
+            "Integrand",
+            "Value",
+            "Verified",
+        ],
+    );
     let velocity = request
         .curve
         .iter()
@@ -166,17 +190,17 @@ fn evaluate(
         "Undefined".into()
     };
     let raw_integrand = match request.kind {
-        LineIntegralKind::ScalarArcLength => "f[1]*s".into(),
+        LineIntegralKind::ScalarArcLength => format!("{f}[1]*{s}"),
         LineIntegralKind::VectorWork => (1..=request.coordinates.len())
-            .map(|index| format!("f[{index}]*v[{index}]"))
+            .map(|index| format!("{f}[{index}]*{v}[{index}]"))
             .collect::<Vec<_>>()
             .join("+"),
     };
     let command = format!(
-        "[Local(v,s,f,g,i,c); v:=Simplify({velocity}); s:={speed_command}; \
-         f:=Simplify({field}); g:=Simplify({raw_integrand}); \
-         i:=Integrate({parameter},{lower},{upper})g; c:=IsZero(Simplify(g-({raw_integrand}))); \
-         {{v,s,f,g,i,IsFreeOf(Integrate,i),c}};]",
+        "[Local({v},{s},{f},{g},{i},{c}); {v}:=Simplify({velocity}); {s}:={speed_command}; \
+         {f}:=Simplify({field}); {g}:=Simplify({raw_integrand}); \
+         {i}:=Integrate({parameter},{lower},{upper}){g}; {c}:=IsZero(Simplify({g}-({raw_integrand}))); \
+         {{{v},{s},{f},{g},{i},IsFreeOf(Integrate,{i}),{c}}};]",
         velocity = list(&velocity),
         field = list(&field_on_curve),
         parameter = request.parameter,
@@ -367,6 +391,18 @@ mod tests {
                 .to_string(),
             "True"
         );
+    }
+
+    #[test]
+    fn preserves_field_parameters_matching_former_temporaries() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = compute(
+            &mut engine,
+            &request(LineIntegralKind::ScalarArcLength, &["i"], &["t", "0"]),
+        )
+        .unwrap();
+        assert!(result.completed && result.integrand_verified);
+        assert_eq!(result.value, "i");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Structured scalar-area and vector-flux integrals on parametric surfaces.
 
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{analyze_expression, render_one_tex, validate_symbol};
+use crate::input::{analyze_expression, fresh_internal_symbols, render_one_tex, validate_symbol};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -174,6 +174,34 @@ fn evaluate(
     request: &SurfaceIntegralRequest,
     render_value: bool,
 ) -> Result<SurfaceIntegralResult, EngineError> {
+    let inputs = request
+        .field
+        .iter()
+        .chain(&request.coordinates)
+        .chain(&request.surface)
+        .chain(&request.parameters)
+        .chain(&request.lower)
+        .chain(&request.upper)
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let [ru, rv, n, a, f, g, i, ic, o, oc, nc, c] = fresh_internal_symbols(
+        "SurfaceIntegral",
+        &inputs,
+        [
+            "Ru",
+            "Rv",
+            "Normal",
+            "Area",
+            "Field",
+            "Integrand",
+            "Inner",
+            "InnerComplete",
+            "Outer",
+            "OuterComplete",
+            "NormalVerified",
+            "IntegrandVerified",
+        ],
+    );
     let tangent_u = derivatives(&request.surface, &request.parameters[0]);
     let tangent_v = derivatives(&request.surface, &request.parameters[1]);
     let normal = cross(&tangent_u, &tangent_v);
@@ -187,31 +215,33 @@ fn evaluate(
         .map(|component| substitute_surface(component, &request.coordinates, &request.surface))
         .collect::<Vec<_>>();
     let area_command: String = if request.kind == SurfaceIntegralKind::ScalarArea {
-        "Simplify(Sqrt(n[1]^2+n[2]^2+n[3]^2))".into()
+        format!("Simplify(Sqrt({n}[1]^2+{n}[2]^2+{n}[3]^2))")
     } else {
         "Undefined".into()
     };
     let raw_integrand: String = match request.kind {
-        SurfaceIntegralKind::ScalarArea => "f[1]*a".into(),
-        SurfaceIntegralKind::VectorFlux => "f[1]*n[1]+f[2]*n[2]+f[3]*n[3]".into(),
+        SurfaceIntegralKind::ScalarArea => format!("{f}[1]*{a}"),
+        SurfaceIntegralKind::VectorFlux => {
+            format!("{f}[1]*{n}[1]+{f}[2]*{n}[2]+{f}[3]*{n}[3]")
+        }
     };
     let normal_certificate = match request.orientation {
         SurfaceOrientation::ParameterOrder => {
-            "And(IsZero(Simplify(n[1]-(ru[2]*rv[3]-ru[3]*rv[2]))),IsZero(Simplify(n[2]-(ru[3]*rv[1]-ru[1]*rv[3]))),IsZero(Simplify(n[3]-(ru[1]*rv[2]-ru[2]*rv[1]))))"
+            format!("And(IsZero(Simplify({n}[1]-({ru}[2]*{rv}[3]-{ru}[3]*{rv}[2]))),IsZero(Simplify({n}[2]-({ru}[3]*{rv}[1]-{ru}[1]*{rv}[3]))),IsZero(Simplify({n}[3]-({ru}[1]*{rv}[2]-{ru}[2]*{rv}[1]))))")
         }
         SurfaceOrientation::Reversed => {
-            "And(IsZero(Simplify(n[1]+(ru[2]*rv[3]-ru[3]*rv[2]))),IsZero(Simplify(n[2]+(ru[3]*rv[1]-ru[1]*rv[3]))),IsZero(Simplify(n[3]+(ru[1]*rv[2]-ru[2]*rv[1]))))"
+            format!("And(IsZero(Simplify({n}[1]+({ru}[2]*{rv}[3]-{ru}[3]*{rv}[2]))),IsZero(Simplify({n}[2]+({ru}[3]*{rv}[1]-{ru}[1]*{rv}[3]))),IsZero(Simplify({n}[3]+({ru}[1]*{rv}[2]-{ru}[2]*{rv}[1]))))")
         }
     };
     let command = format!(
-        "[Local(ru,rv,n,a,f,g,i,ic,o,oc,nc,c); \
-         ru:=Simplify({tangent_u}); rv:=Simplify({tangent_v}); n:=Simplify({normal}); \
-         a:={area_command}; f:=Simplify({field}); g:=Simplify({raw_integrand}); \
-         i:=Integrate({u},{u_lower},{u_upper})g; ic:=IsFreeOf(Integrate,i); \
-         If(ic,[o:=Integrate({v},{v_lower},{v_upper})i; oc:=IsFreeOf(Integrate,o);], \
-               [o:=Undefined;oc:=False;]); \
-         nc:={normal_certificate}; c:=IsZero(Simplify(g-({raw_integrand}))); \
-         {{ru,rv,n,a,f,g,i,o,ic,oc,nc,c}};]",
+        "[Local({ru},{rv},{n},{a},{f},{g},{i},{ic},{o},{oc},{nc},{c}); \
+         {ru}:=Simplify({tangent_u}); {rv}:=Simplify({tangent_v}); {n}:=Simplify({normal}); \
+         {a}:={area_command}; {f}:=Simplify({field}); {g}:=Simplify({raw_integrand}); \
+         {i}:=Integrate({u},{u_lower},{u_upper}){g}; {ic}:=IsFreeOf(Integrate,{i}); \
+         If({ic},[{o}:=Integrate({v},{v_lower},{v_upper}){i}; {oc}:=IsFreeOf(Integrate,{o});], \
+               [{o}:=Undefined;{oc}:=False;]); \
+         {nc}:={normal_certificate}; {c}:=IsZero(Simplify({g}-({raw_integrand}))); \
+         {{{ru},{rv},{n},{a},{f},{g},{i},{o},{ic},{oc},{nc},{c}}};]",
         tangent_u = list(&tangent_u),
         tangent_v = list(&tangent_v),
         normal = list(&oriented_normal),
@@ -442,6 +472,18 @@ mod tests {
                 .to_string(),
             "True"
         );
+    }
+
+    #[test]
+    fn preserves_field_parameters_matching_former_temporaries() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = compute(
+            &mut engine,
+            &request(SurfaceIntegralKind::ScalarArea, &["a"]),
+        )
+        .unwrap();
+        assert!(result.completed && result.normal_verified && result.integrand_verified);
+        assert_eq!(result.value, "(6 * a)");
     }
 
     #[test]
