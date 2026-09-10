@@ -54,16 +54,15 @@ const TEMPLATES = {
   ],
 };
 
-function renderTemplates(group) {
+function renderTemplates() {
   const target = $("#template-list");
   target.innerHTML = "";
-  TEMPLATES[group].forEach(([label, expression, help]) => {
+  Object.values(TEMPLATES).flat().forEach(([label, expression, help]) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "template";
-    button.innerHTML = `<strong></strong><small></small>`;
-    button.querySelector("strong").textContent = label;
-    button.querySelector("small").textContent = help;
+    button.className = "shortcut";
+    button.textContent = label;
+    button.title = help;
     button.addEventListener("click", () => {
       exprEl.value = expression;
       $("#input-help").textContent = help;
@@ -278,15 +277,11 @@ async function clearAssumptions() {
   catch (error) { resetOutput(); showError(error); }
 }
 
-document.querySelectorAll("[data-group]").forEach((button) => button.addEventListener("click", () => {
-  document.querySelectorAll("[data-group]").forEach((item) => item.classList.toggle("active", item === button));
-  renderTemplates(button.dataset.group);
-}));
 $("#output-mode").addEventListener("change", () => { $("#verbosity-field").hidden = $("#output-mode").value !== "steps"; });
 $("#clear-expression").addEventListener("click", () => { exprEl.value = ""; exprEl.focus(); });
 $("#go").addEventListener("click", calculate);
 $("#add-assumption").addEventListener("click", addAssumption);
 $("#clear-assumptions").addEventListener("click", clearAssumptions);
 exprEl.addEventListener("keydown", (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate(); });
-renderTemplates("calculus");
+renderTemplates();
 refreshAssumptions().catch(showError);

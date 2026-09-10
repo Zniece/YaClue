@@ -28,14 +28,11 @@ label[hidden] { display: none; }
 input, select, textarea { color: #172033; background: #fbfcfe; border: 1px solid #cfd7e4; border-radius: 9px; outline: none; }
 input, select { min-height: 36px; padding: 7px 10px; }
 input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49, 95, 197, .1); }
-.template-bar { display: flex; gap: 5px; margin-top: 22px; overflow-x: auto; border-bottom: 1px solid var(--border); }
-.template-bar button { flex: 0 0 auto; padding: 9px 11px; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; font-size: 12px; }
-.template-bar button.active { color: var(--blue); border-color: var(--blue); }
-.template-list { display: flex; gap: 8px; padding: 12px 0 17px; overflow-x: auto; }
-.template { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 11px; color: #24314a; background: #f7f9fc; border: 1px solid var(--border); border-radius: 9px; }
-.template:hover { border-color: #9eb2df; background: var(--blue-soft); }
-.template strong { font-size: 12px; }
-.template small { max-width: 190px; overflow: hidden; color: var(--muted); font: 9px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.shortcut-header { display: flex; align-items: baseline; gap: 8px; margin-top: 22px; color: #40516f; font-size: 12px; font-weight: 700; }
+.shortcut-header small { color: var(--muted); font-size: 10px; font-weight: 400; }
+.shortcut-list { display: flex; flex-wrap: wrap; gap: 7px; padding: 9px 0 17px; }
+.shortcut { padding: 7px 10px; color: #34425d; background: #f7f9fc; border: 1px solid var(--border); border-radius: 8px; font-size: 11px; }
+.shortcut:hover, .shortcut:focus-visible { color: var(--blue); border-color: #9eb2df; background: var(--blue-soft); }
 .expression-label { margin-bottom: 6px; }
 .expression-box { position: relative; }
 textarea { width: 100%; min-height: 112px; padding: 15px 42px 15px 15px; resize: vertical; font: 16px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
