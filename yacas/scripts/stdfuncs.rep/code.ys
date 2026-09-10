@@ -3,6 +3,7 @@
 4 # Sin(ArcSin(_x))           <-- x;
 4 # Sin(ArcCos(_x)) <-- Sqrt(1-x^2);
 4 # Sin(ArcTan(_x)) <-- x/Sqrt(1+x^2);
+4 # Sin(n_IsNegativeNumber * _x)_(Not IsConstant(x)) <-- -Sin((-n)*x);
 5 # Sin(- _x)_(Not IsConstant(x))                 <-- -Sin(x);
 6 # (Sin(x_IsConstant))_(IsNegativeNumber(N(Eval(x))))   <-- -Sin(-x);
 
@@ -37,6 +38,7 @@
 4 # Cos(ArcCos(_x))           <-- x;
 4 # Cos(ArcSin(_x)) <-- Sqrt(1-x^2);
 4 # Cos(ArcTan(_x)) <-- 1/Sqrt(1+x^2);
+4 # Cos(n_IsNegativeNumber * _x)_(Not IsConstant(x)) <-- Cos((-n)*x);
 5 # Cos(- _x)_(Not IsConstant(x))                 <-- Cos(x);
 6 # (Cos(x_IsConstant))_(IsNegativeNumber(N(Eval(x))))   <-- Cos(-x);
 // must prevent it from looping
@@ -85,6 +87,7 @@
 4 # Tan(ArcTan(_x))           <-- x;
 4 # Tan(ArcSin(_x)) <-- x/Sqrt(1-x^2);
 4 # Tan(ArcCos(_x)) <-- Sqrt(1-x^2)/x;
+4 # Tan(n_IsNegativeNumber * _x)_(Not IsConstant(x)) <-- -Tan((-n)*x);
 5 # Tan(- _x)_(Not IsConstant(x))                  <-- -Tan(x);
 6 # (Tan(x_IsConstant))_(IsNegativeNumber(N(Eval(x))))   <-- -Tan(-x);
 
@@ -156,6 +159,7 @@
 110 # ArcSin(Complex(_r,_i)) <--
     (- I) * Ln((I*Complex(r,i)) + ((1-(Complex(r,i)^2))^(1/2)));
 
+149 # ArcSin(n_IsNegativeNumber * _x)_(Not IsConstant(x)) <-- -ArcSin((-n)*x);
 150 # ArcSin(- _x)_(Not IsConstant(x))             <-- -ArcSin(x);
 160 # (ArcSin(x_IsConstant))_(IsNegativeNumber(N(Eval(x)))) <-- -ArcSin(-x);
 
@@ -192,6 +196,7 @@
 110 # ArcTan(Complex(_r,_i)) <--
      (- I*0.5)*Ln(Complex(1,Complex(r,i))/ Complex(1, - Complex(r,i)));
 
+149 # ArcTan(n_IsNegativeNumber * _x)_(Not IsConstant(x)) <-- -ArcTan((-n)*x);
 150 # ArcTan(- _x)_(Not IsConstant(x))             <-- -ArcTan(x);
 160 # (ArcTan(x_IsConstant))_(IsNegativeNumber(N(Eval(x)))) <-- -ArcTan(-x);
 

@@ -309,8 +309,8 @@ back-sub-rule	((-8 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 3)) / 3)	\frac{ - 8 \left( \fr
 method-trig-sub	Int(((x ^ 2) * Sqrt((4 - (x ^ 2)))))	\mathrm{ Int }\left( x ^{2} \sqrt{4 - x ^{2}}\right) 	方法: 三角换元
 trig-sub-rule	Int((16 * ((Sin(theta) ^ 2) * (Cos(theta) ^ 2))))	\mathrm{ Int }\left( 16 \left( \sin \theta \right)  ^{2} \left( \cos \theta \right)  ^{2}\right) 	三角换元: x = Sqrt(a)*Sin(theta), dx = Sqrt(a)*Cos(theta) dt, Sqrt(a^2 - x^2) = Sqrt(a)*Cos(theta)
 constant-multiple-rule	(16 * Int(((Sin(theta) ^ 2) * (Cos(theta) ^ 2))))	16 \mathrm{ Int }\left( \left( \sin \theta \right)  ^{2} \left( \cos \theta \right)  ^{2}\right) 	常数倍法则: ∫c*f dx = c*∫f dx
-direct	(16 * ((theta + (Sin((-4 * theta)) / 4)) / 8))	2 \left( \theta  - \frac{\sin 4 \theta }{4} \right) 	直接积分
-trig-identity-rule	(2 * (theta + ((- (4 * ((Sin(theta) * Cos(theta)) * ((2 * (Cos(theta) ^ 2)) - 1)))) / 4)))	2 \left( \theta  - \sin \theta  \cos \theta  \left( 2 \left( \cos \theta \right)  ^{2} - 1\right) \right) 	三角恒等展开
+direct	(16 * ((theta - (Sin((4 * theta)) / 4)) / 8))	2 \left( \theta  - \frac{\sin 4 \theta }{4} \right) 	直接积分
+trig-identity-rule	(2 * (theta - ((4 * ((Sin(theta) * Cos(theta)) * ((2 * (Cos(theta) ^ 2)) - 1))) / 4)))	2 \left( \theta  - \sin \theta  \cos \theta  \left( 2 \left( \cos \theta \right)  ^{2} - 1\right) \right) 	三角恒等展开
 trig-sub-back	(2 * (theta - (((x / 2) * Cos(theta)) * ((2 * (Cos(theta) ^ 2)) - 1))))	2 \left( \theta  - \frac{\left( 2 \left( \cos \theta \right)  ^{2} - 1\right)  \cos \theta  x}{2} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 trig-sub-back	(2 * (theta - ((((2 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 2)) - 1) * ((Sqrt((4 - (x ^ 2))) / 2) * x)) / 2)))	2 \left( \theta  - \frac{\left( 2 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{2} - 1\right)  x \sqrt{4 - x ^{2}}}{4} \right) 	三角回代: Sin(theta) = x/Sqrt(a), Cos(theta) = Sqrt(a^2 - x^2)/Sqrt(a)
 back-sub-rule	(2 * (ArcSin((x / 2)) - ((((2 * ((Sqrt((4 - (x ^ 2))) / 2) ^ 2)) - 1) * (x * Sqrt((4 - (x ^ 2))))) / 4)))	2 \left( \arcsin \frac{x}{2}  - \frac{\left( 2 \left( \frac{\sqrt{4 - x ^{2}}}{2} \right)  ^{2} - 1\right)  x \sqrt{4 - x ^{2}}}{4} \right) 	回代: u → g(x)

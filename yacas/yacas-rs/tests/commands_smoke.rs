@@ -79,6 +79,26 @@ fn if_not_equals() {
 }
 
 #[test]
+fn analytic_function_parity_normalizes_negative_coefficients() {
+    let mut env = Environment::new();
+    let scripts = concat!(env!("CARGO_MANIFEST_DIR"), "/../../yacas/scripts/");
+    assert_eq!(
+        run(&mut env, &format!("DefaultDirectory(\"{scripts}\")")),
+        "True"
+    );
+    assert_eq!(run(&mut env, "Load(\"yacasinit.ys\")"), "True");
+    for (source, expected) in [
+        ("Sin(-5*x)", "-Sin(5*x)"),
+        ("Cos(-5*x)", "Cos(5*x)"),
+        ("Tan(-5*x)", "-Tan(5*x)"),
+        ("ArcSin(-5*x)", "-ArcSin(5*x)"),
+        ("ArcTan(-5*x)", "-ArcTan(5*x)"),
+    ] {
+        assert_eq!(run(&mut env, source), expected, "{source}");
+    }
+}
+
+#[test]
 fn head_tail_length_listify_string_type() {
     let mut env = Environment::new();
     assert_eq!(run(&mut env, "Head({aa,bb,cc})"), "aa"); // 照 cyacas 实测(6a 曾错返 "List")
