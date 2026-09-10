@@ -4,6 +4,7 @@ use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{
     analyze_expression, strip_tex_delimiters, validate_expression, validate_symbol,
 };
+use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -63,6 +64,12 @@ pub struct InfiniteSeriesResult {
     pub tex: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct InfiniteSeriesStepResult {
+    pub result: InfiniteSeriesResult,
+    pub steps: Vec<Step>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PowerSeriesStatus {
@@ -86,6 +93,12 @@ pub struct PowerSeriesResult {
     pub left_included: bool,
     pub right_included: bool,
     pub tex: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PowerSeriesStepResult {
+    pub result: PowerSeriesResult,
+    pub steps: Vec<Step>,
 }
 
 pub fn finite_sum(
@@ -123,14 +136,30 @@ pub fn infinite_series(
     variable: &str,
     from: &str,
 ) -> Result<InfiniteSeriesResult, EngineError> {
+    infinite_series_internal(engine, term, variable, from, true)
+}
+
+fn infinite_series_internal(
+    engine: &mut dyn Engine,
+    term: &str,
+    variable: &str,
+    from: &str,
+    render_value: bool,
+) -> Result<InfiniteSeriesResult, EngineError> {
     validate_request(term, variable, from)?;
     if from.parse::<i64>().is_err() {
         return Err(EngineError::InvalidInput(
             "无穷级数下限必须是显式整数".into(),
         ));
     }
-    let evaluated = engine.eval(&format!("SeriesConvergence({variable},{from},{term})"))?;
-    let analysis = list(&evaluated.expr, "收敛分析")?;
+    let command = format!("SeriesConvergence({variable},{from},{term})");
+    let (expression, tex) = if render_value {
+        let evaluated = engine.eval(&command)?;
+        (evaluated.expr, strip_tex_delimiters(&evaluated.tex))
+    } else {
+        (engine.eval_expr(&command)?, String::new())
+    };
+    let analysis = list(&expression, "收敛分析")?;
     if analysis.len() != 5 {
         return Err(EngineError::Parse("收敛分析字段数量错误".into()));
     }
@@ -157,8 +186,60 @@ pub fn infinite_series(
         test_value,
         conditions,
         value,
-        tex: strip_tex_delimiters(&evaluated.tex),
+        tex,
     })
+}
+
+pub fn infinite_series_steps(
+    engine: &mut dyn Engine,
+    term: &str,
+    variable: &str,
+    from: &str,
+) -> Result<InfiniteSeriesStepResult, EngineError> {
+    infinite_series_steps_with_verbosity(engine, term, variable, from, StepVerbosity::Detailed)
+}
+
+pub fn infinite_series_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    term: &str,
+    variable: &str,
+    from: &str,
+    verbosity: StepVerbosity,
+) -> Result<InfiniteSeriesStepResult, EngineError> {
+    let mut result = infinite_series_internal(engine, term, variable, from, false)?;
+    let series = format!("Sum({variable},{from},Infinity,{term})");
+    let mut events = vec![StepEvent::new(
+        "series-start",
+        &series,
+        "建立无穷级数并检查通项与适用的收敛判别法。",
+        StepImportance::Routine,
+    )];
+    events.push(StepEvent::new(
+        method_rule(result.method),
+        result.test_value.as_deref().unwrap_or(term),
+        method_explanation(result.method),
+        StepImportance::Key,
+    ));
+    for condition in &result.conditions {
+        events.push(StepEvent::new(
+            "series-condition",
+            condition,
+            "只有满足该条件时，当前判别结论成立。",
+            StepImportance::Key,
+        ));
+    }
+    events.push(StepEvent::new(
+        "series-result",
+        result.value.as_deref().unwrap_or(&series),
+        series_status_explanation(result.status),
+        StepImportance::Key,
+    ));
+    let steps = render_events(engine, events, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(InfiniteSeriesStepResult { result, steps })
 }
 
 /// Analyze `Sum(coefficient * (variable-center)^index)`.
@@ -168,6 +249,17 @@ pub fn power_series(
     index: &str,
     variable: &str,
     center: &str,
+) -> Result<PowerSeriesResult, EngineError> {
+    power_series_internal(engine, coefficient, index, variable, center, true)
+}
+
+fn power_series_internal(
+    engine: &mut dyn Engine,
+    coefficient: &str,
+    index: &str,
+    variable: &str,
+    center: &str,
+    render_value: bool,
 ) -> Result<PowerSeriesResult, EngineError> {
     let coefficient_analysis = analyze_expression(coefficient, "幂级数系数")?;
     validate_symbol(index, "幂级数指标")?;
@@ -196,10 +288,14 @@ pub fn power_series(
             "幂级数中心不能依赖指标或展开变量".into(),
         ));
     }
-    let evaluated = engine.eval(&format!(
-        "PowerSeriesConvergence({index},{center},{coefficient})"
-    ))?;
-    let fields = list(&evaluated.expr, "幂级数分析")?;
+    let command = format!("PowerSeriesConvergence({index},{center},{coefficient})");
+    let (expression, tex) = if render_value {
+        let evaluated = engine.eval(&command)?;
+        (evaluated.expr, strip_tex_delimiters(&evaluated.tex))
+    } else {
+        (engine.eval_expr(&command)?, String::new())
+    };
+    let fields = list(&expression, "幂级数分析")?;
     if fields.len() != 9 {
         return Err(EngineError::Parse("幂级数分析字段数量错误".into()));
     }
@@ -225,14 +321,146 @@ pub fn power_series(
         right_status: parse_optional_status(&fields[6])?,
         left_included: parse_bool(&fields[7], "左端点包含状态")?,
         right_included: parse_bool(&fields[8], "右端点包含状态")?,
-        tex: strip_tex_delimiters(&evaluated.tex),
+        tex,
     })
+}
+
+pub fn power_series_steps(
+    engine: &mut dyn Engine,
+    coefficient: &str,
+    index: &str,
+    variable: &str,
+    center: &str,
+) -> Result<PowerSeriesStepResult, EngineError> {
+    power_series_steps_with_verbosity(
+        engine,
+        coefficient,
+        index,
+        variable,
+        center,
+        StepVerbosity::Detailed,
+    )
+}
+
+pub fn power_series_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    coefficient: &str,
+    index: &str,
+    variable: &str,
+    center: &str,
+    verbosity: StepVerbosity,
+) -> Result<PowerSeriesStepResult, EngineError> {
+    let mut result = power_series_internal(engine, coefficient, index, variable, center, false)?;
+    let mut events = Vec::new();
+    if let Some(radius) = &result.radius {
+        events.push(StepEvent::new(
+            "power-series-radius",
+            radius,
+            "对系数应用比值或根值判别，得到收敛半径。",
+            StepImportance::Key,
+        ));
+    }
+    for (side, endpoint, status, included) in [
+        (
+            "left",
+            &result.left_endpoint,
+            result.left_status,
+            result.left_included,
+        ),
+        (
+            "right",
+            &result.right_endpoint,
+            result.right_status,
+            result.right_included,
+        ),
+    ] {
+        if let (Some(endpoint), Some(status)) = (endpoint, status) {
+            events.push(StepEvent::new(
+                &format!("power-series-endpoint-{side}"),
+                endpoint,
+                if included {
+                    match status {
+                        SeriesStatus::ConditionallyConvergent => {
+                            "代入该端点后级数条件收敛，因此包含此端点。"
+                        }
+                        _ => "代入该端点后级数收敛，因此包含此端点。",
+                    }
+                } else {
+                    "代入该端点后级数发散或无法证明收敛，因此不包含此端点。"
+                },
+                StepImportance::Normal,
+            ));
+        }
+    }
+    let interval = power_series_interval(&result);
+    events.push(StepEvent::new(
+        "power-series-result",
+        &interval,
+        if result.status == PowerSeriesStatus::Convergent {
+            "得到收敛半径，并逐一检查所有有限端点。"
+        } else {
+            "当前有界判别规则不足以确定收敛区间。"
+        },
+        StepImportance::Key,
+    ));
+    let steps = render_events(engine, events, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(PowerSeriesStepResult { result, steps })
 }
 
 fn validate_request(term: &str, variable: &str, from: &str) -> Result<(), EngineError> {
     validate_expression(term, "求和项")?;
     validate_symbol(variable, "求和变量")?;
     validate_expression(from, "求和下限")
+}
+
+fn method_rule(method: ConvergenceMethod) -> &'static str {
+    match method {
+        ConvergenceMethod::Geometric => "series-geometric",
+        ConvergenceMethod::PSeries => "series-p",
+        ConvergenceMethod::Alternating => "series-alternating",
+        ConvergenceMethod::Comparison => "series-comparison",
+        ConvergenceMethod::Term => "series-term",
+        ConvergenceMethod::Ratio => "series-ratio",
+        ConvergenceMethod::Root => "series-root",
+        ConvergenceMethod::None => "series-inconclusive",
+    }
+}
+
+fn method_explanation(method: ConvergenceMethod) -> &'static str {
+    match method {
+        ConvergenceMethod::Geometric => "识别为几何级数，并检查公比绝对值是否小于 1。",
+        ConvergenceMethod::PSeries => "识别为 p 级数；p>1 时收敛，p<=1 时发散。",
+        ConvergenceMethod::Alternating => {
+            "应用交错级数判别，并另外检查绝对值级数以区分绝对收敛与条件收敛。"
+        }
+        ConvergenceMethod::Comparison => "与已知 p 级数比较其尾项阶数。",
+        ConvergenceMethod::Term => "检查通项极限；通项不趋于零时级数必发散。",
+        ConvergenceMethod::Ratio => "计算相邻项绝对值之比的极限并与 1 比较。",
+        ConvergenceMethod::Root => "计算通项绝对值的 n 次方根极限并与 1 比较。",
+        ConvergenceMethod::None => "现有有界判别规则未识别出可证明的收敛方法。",
+    }
+}
+
+fn series_status_explanation(status: SeriesStatus) -> &'static str {
+    match status {
+        SeriesStatus::AbsolutelyConvergent => "判别表明级数绝对收敛。",
+        SeriesStatus::Divergent => "判别表明级数发散。",
+        SeriesStatus::ConditionallyConvergent => "级数收敛，但其绝对值级数发散。",
+        SeriesStatus::Conditional => "收敛性取决于列出的参数条件。",
+        SeriesStatus::Inconclusive => "当前判别规则无法确定该级数的收敛性。",
+    }
+}
+
+fn power_series_interval(result: &PowerSeriesResult) -> String {
+    match (&result.left_endpoint, &result.right_endpoint) {
+        (Some(_), Some(_)) => result.radius.clone().unwrap_or_else(|| "Undefined".into()),
+        _ if result.radius.as_deref() == Some("Infinity") => "Infinity".into(),
+        _ => "Undefined".into(),
+    }
 }
 
 fn list<'a>(expr: &'a Expr, label: &str) -> Result<&'a [Expr], EngineError> {
@@ -431,5 +659,56 @@ mod tests {
         assert!(power_series(&mut engine, "1/k", "x", "x", "0").is_err());
         assert!(power_series(&mut engine, "x/k", "k", "x", "0").is_err());
         assert!(power_series(&mut engine, "1/k", "k", "x", "x+1").is_err());
+    }
+
+    #[test]
+    fn infinite_series_steps_explain_methods_conditions_and_outcomes() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (term, expected_rule) in [
+            ("(1/2)^k", "series-geometric"),
+            ("1/k^2", "series-p"),
+            ("(-1)^(k-1)/k", "series-alternating"),
+            ("k/2^k", "series-ratio"),
+        ] {
+            let output = infinite_series_steps(&mut engine, term, "k", "1").unwrap();
+            assert!(output.steps.iter().any(|step| step.rule == expected_rule));
+            assert_eq!(output.steps.last().unwrap().rule, "series-result");
+        }
+
+        let conditional = infinite_series_steps(&mut engine, "r^k", "k", "0").unwrap();
+        assert_eq!(conditional.result.status, SeriesStatus::Conditional);
+        assert!(conditional
+            .steps
+            .iter()
+            .any(|step| step.rule == "series-condition"));
+
+        let inconclusive = infinite_series_steps(&mut engine, "1/k^2", "k", "0").unwrap();
+        assert_eq!(inconclusive.result.status, SeriesStatus::Inconclusive);
+        assert!(inconclusive
+            .steps
+            .iter()
+            .any(|step| step.rule == "series-inconclusive"));
+    }
+
+    #[test]
+    fn power_series_steps_check_each_finite_endpoint() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let output = power_series_steps(&mut engine, "1/k", "k", "x", "2").unwrap();
+        for rule in [
+            "power-series-radius",
+            "power-series-endpoint-left",
+            "power-series-endpoint-right",
+            "power-series-result",
+        ] {
+            assert!(output.steps.iter().any(|step| step.rule == rule));
+        }
+        assert!(output.result.left_included);
+        assert!(!output.result.right_included);
+
+        let entire = power_series_steps(&mut engine, "1/k!", "k", "x", "0").unwrap();
+        assert!(!entire
+            .steps
+            .iter()
+            .any(|step| step.rule.starts_with("power-series-endpoint-")));
     }
 }
