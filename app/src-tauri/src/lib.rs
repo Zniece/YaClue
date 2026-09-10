@@ -13,6 +13,7 @@ use processing::numeric::{NumericResult, RootResult, TaylorResult};
 use processing::ode::{InitialCondition, OdeResult, OdeStepResult};
 use processing::ode_numeric::{NumericOdeOptions, NumericOdeResult};
 use processing::plot::{SampleOptions, SampledPlot};
+use processing::semantic::{AnalyzedInput, SemanticSummary};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -641,6 +642,16 @@ struct ProcessExpressionResult {
     tex: String,
     steps: Vec<Step>,
     data: Value,
+    semantic: SemanticSummary,
+}
+
+struct DispatchExpressionResult {
+    kind: String,
+    title: String,
+    expression: String,
+    tex: String,
+    steps: Vec<Step>,
+    data: Value,
 }
 
 fn unified_result<T: Serialize>(
@@ -650,8 +661,8 @@ fn unified_result<T: Serialize>(
     tex: String,
     steps: Vec<Step>,
     data: &T,
-) -> Result<ProcessExpressionResult, ErrorResponse> {
-    Ok(ProcessExpressionResult {
+) -> Result<DispatchExpressionResult, ErrorResponse> {
+    Ok(DispatchExpressionResult {
         kind: kind.into(),
         title: title.into(),
         expression,
@@ -677,13 +688,14 @@ fn list_or_single(expression: &str, label: &str) -> Result<Vec<String>, ErrorRes
     })
 }
 
-fn process_expression_with_engine(
+fn dispatch_expression_with_engine(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
-) -> Result<ProcessExpressionResult, ErrorResponse> {
-    let call = processing::input::root_call(&request.expression, "表达式").map_err(message)?;
+    analyzed: &AnalyzedInput,
+) -> Result<DispatchExpressionResult, ErrorResponse> {
+    let call = &analyzed.root_call;
     let verbosity = parse_verbosity(&request.verbosity)?;
-    if let Some(call) = &call {
+    if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
             ("D", [variable, expression]) | ("Deriv", [variable, expression]) => {
                 if request.steps {
@@ -1282,6 +1294,24 @@ fn process_expression_with_engine(
     )
 }
 
+fn process_expression_with_engine(
+    request: ProcessExpressionRequest,
+    engine: &mut RustEngineProxy,
+) -> Result<ProcessExpressionResult, ErrorResponse> {
+    let analyzed =
+        processing::semantic::analyze_input(&request.expression, "表达式").map_err(message)?;
+    let result = dispatch_expression_with_engine(request, engine, &analyzed)?;
+    Ok(ProcessExpressionResult {
+        kind: result.kind,
+        title: result.title,
+        expression: result.expression,
+        tex: result.tex,
+        steps: result.steps,
+        data: result.data,
+        semantic: analyzed.semantic,
+    })
+}
+
 #[tauri::command]
 async fn process_expression(
     request: ProcessExpressionRequest,
@@ -1387,6 +1417,7 @@ mod tests {
             process_expression_with_engine(request("D(x)Sin(x)^2", true), &mut engine).unwrap();
         assert_eq!(derivative.kind, "derivative");
         assert!(!derivative.steps.is_empty());
+        assert_eq!(derivative.semantic.symbols, ["x".to_string()]);
 
         let matrix = process_expression_with_engine(
             request("{{1,2},{3,4}}*{{5,6},{7,8}}", false),
@@ -1395,6 +1426,13 @@ mod tests {
         .unwrap();
         assert_eq!(matrix.kind, "matrix");
         assert!(matrix.expression.contains("19"));
+        assert_eq!(
+            matrix.semantic.shape,
+            Some(processing::semantic::MatrixShape {
+                rows: 2,
+                columns: 2
+            })
+        );
 
         let ode =
             process_expression_with_engine(request("OdeSolve(y'==y)", true), &mut engine).unwrap();
@@ -1409,6 +1447,10 @@ mod tests {
         .unwrap();
         assert_eq!(equations.kind, "equation");
         assert!(!equations.tex.is_empty());
+        assert_eq!(
+            equations.semantic.kind,
+            processing::semantic::ValueKind::SolutionSet
+        );
 
         let double_integral = process_expression_with_engine(
             request("DoubleIntegral(x+y,y,0,x,x,0,1)", true),

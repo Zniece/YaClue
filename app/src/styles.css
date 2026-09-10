@@ -65,6 +65,9 @@ code { padding: 1px 4px; color: #34425d; background: #ebeff5; border-radius: 4px
 #timing { color: var(--muted); font-size: 11px; }
 .result { min-height: 190px; }
 #result-kind { padding: 5px 8px; color: var(--blue); background: var(--blue-soft); border-radius: 12px; font-size: 10px; }
+.semantic-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.semantic-summary[hidden] { display: none; }
+.semantic-summary span { padding: 4px 8px; color: #40516f; background: #f1f4f8; border: 1px solid var(--border); border-radius: 12px; font-size: 10px; }
 .error { padding: 12px 14px; overflow-wrap: anywhere; color: #a92828; background: #fff0f0; border: 1px solid #f2caca; border-radius: 9px; white-space: pre-wrap; }
 .empty-result { padding: 35px; color: var(--muted); text-align: center; }
 #summary { margin-top: 16px; padding: 17px; overflow-x: auto; background: #f8fafd; border: 1px solid var(--border); border-radius: 11px; }

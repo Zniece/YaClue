@@ -14,7 +14,7 @@ thread_local! {
 
 const PARSE_SYMBOL_GC_THRESHOLD: usize = 4096;
 
-fn with_parse_env<T>(f: impl FnOnce(&mut yacas_rs::env::Environment) -> T) -> T {
+pub(crate) fn with_parse_env<T>(f: impl FnOnce(&mut yacas_rs::env::Environment) -> T) -> T {
     PARSE_ENV.with(|cell| {
         let mut env = cell.borrow_mut();
         if env.symtab.len() >= PARSE_SYMBOL_GC_THRESHOLD {
@@ -45,31 +45,7 @@ pub fn root_call(input: &str, label: &str) -> Result<Option<RootCall>, EngineErr
         let tree = yacas_rs::parser::parse_expression(env, &format!("{input};"))
             .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
             .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
-        let ObjectKind::Sublist(first) = &tree.kind else {
-            return Ok(None);
-        };
-        let nodes: Vec<_> = spine_refs(first).collect();
-        let Some(head) = nodes.first().and_then(|node| node.atom_string()) else {
-            return Ok(None);
-        };
-        let mut arguments = Vec::with_capacity(nodes.len().saturating_sub(1));
-        let mut argument_heads = Vec::with_capacity(nodes.len().saturating_sub(1));
-        for argument in &nodes[1..] {
-            arguments.push(yacas_rs::printer::infix_print(env, argument));
-            let argument_head = match &argument.kind {
-                ObjectKind::Sublist(first) => spine_refs(first)
-                    .next()
-                    .and_then(|node| node.atom_string())
-                    .map(|name| name.to_string()),
-                _ => None,
-            };
-            argument_heads.push(argument_head);
-        }
-        Ok(Some(RootCall {
-            head: head.to_string(),
-            arguments,
-            argument_heads,
-        }))
+        Ok(root_call_from_tree(env, &tree))
     })
 }
 
@@ -79,7 +55,6 @@ pub fn analyze_expression(input: &str, label: &str) -> Result<ExpressionAnalysis
     let tree = tree
         .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
         .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
-
     let mut symbols = BTreeSet::new();
     let mut function_heads = BTreeSet::new();
     let mut constants = BTreeSet::new();
@@ -88,6 +63,34 @@ pub fn analyze_expression(input: &str, label: &str) -> Result<ExpressionAnalysis
         symbols: symbols.into_iter().collect(),
         function_heads: function_heads.into_iter().collect(),
         constants: constants.into_iter().collect(),
+    })
+}
+
+pub(crate) fn root_call_from_tree(
+    env: &yacas_rs::env::Environment,
+    tree: &Rc<LispObject>,
+) -> Option<RootCall> {
+    let ObjectKind::Sublist(first) = &tree.kind else {
+        return None;
+    };
+    let nodes: Vec<_> = spine_refs(first).collect();
+    let head = nodes.first()?.atom_string()?;
+    let mut arguments = Vec::with_capacity(nodes.len().saturating_sub(1));
+    let mut argument_heads = Vec::with_capacity(nodes.len().saturating_sub(1));
+    for argument in &nodes[1..] {
+        arguments.push(yacas_rs::printer::infix_print(env, argument));
+        argument_heads.push(match &argument.kind {
+            ObjectKind::Sublist(first) => spine_refs(first)
+                .next()
+                .and_then(|node| node.atom_string())
+                .map(|name| name.to_string()),
+            _ => None,
+        });
+    }
+    Some(RootCall {
+        head: head.to_string(),
+        arguments,
+        argument_heads,
     })
 }
 
@@ -220,7 +223,7 @@ pub(crate) fn render_one_tex(
     Ok(strip_tex_delimiters(&rendered.pop().unwrap()))
 }
 
-fn validate_safe_text(input: &str, label: &str) -> Result<(), EngineError> {
+pub(crate) fn validate_safe_text(input: &str, label: &str) -> Result<(), EngineError> {
     if input.trim().is_empty()
         || input
             .chars()
@@ -233,7 +236,7 @@ fn validate_safe_text(input: &str, label: &str) -> Result<(), EngineError> {
     Ok(())
 }
 
-fn collect_symbols(
+pub(crate) fn collect_symbols(
     node: &Rc<LispObject>,
     symbols: &mut BTreeSet<String>,
     function_heads: &mut BTreeSet<String>,

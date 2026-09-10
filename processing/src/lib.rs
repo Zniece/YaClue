@@ -20,6 +20,7 @@ pub mod ode;
 pub mod ode_numeric;
 pub mod plot;
 pub mod quadrature;
+pub mod semantic;
 pub mod series;
 pub mod steps;
 pub mod surface_integrals;

@@ -10,6 +10,7 @@ const rawEl = $("#raw");
 const emptyEl = $("#empty-result");
 const stateEl = $("#engine-state");
 const timingEl = $("#timing");
+const semanticEl = $("#semantic-summary");
 const assumptions = new Map();
 let calculating = false;
 
@@ -88,6 +89,8 @@ function resetOutput() {
   rawBoxEl.hidden = true;
   rawEl.textContent = "";
   emptyEl.hidden = true;
+  semanticEl.hidden = true;
+  semanticEl.innerHTML = "";
   $("#result-kind").textContent = "";
 }
 
@@ -111,6 +114,35 @@ function renderSummary(result) {
   summaryEl.appendChild(math);
   if (result.tex) renderMath(result.tex, math);
   else math.textContent = result.expression || "计算完成";
+}
+
+function renderSemantic(semantic) {
+  if (!semantic) return;
+  const kindNames = {
+    scalar: "标量",
+    expression: "符号表达式",
+    equation: "方程",
+    matrix: "矩阵",
+    solution_set: "解集",
+    unevaluated: "未求值对象",
+  };
+  const exactnessNames = {
+    exact: "精确",
+    symbolic: "符号",
+    approximate: "近似",
+    unknown: "精确性未知",
+  };
+  const items = [kindNames[semantic.kind] || semantic.kind];
+  if (semantic.shape) items.push(`${semantic.shape.rows} × ${semantic.shape.columns}`);
+  items.push(exactnessNames[semantic.exactness] || semantic.exactness);
+  if (semantic.symbols?.length) items.push(`符号：${semantic.symbols.join(", ")}`);
+  if (semantic.constants?.length) items.push(`常量：${semantic.constants.join(", ")}`);
+  items.forEach((text) => {
+    const chip = document.createElement("span");
+    chip.textContent = text;
+    semanticEl.appendChild(chip);
+  });
+  semanticEl.hidden = false;
 }
 
 function renderSteps(steps) {
@@ -188,6 +220,7 @@ async function calculate() {
     });
     $("#result-title").textContent = result.title;
     $("#result-kind").textContent = result.kind.replaceAll("_", " ");
+    renderSemantic(result.semantic);
     if (result.kind === "plot" || result.kind === "numeric_ode") renderPlot(result);
     else renderSummary(result);
     renderSteps(result.steps || []);
