@@ -168,11 +168,12 @@ pub fn execute_steps(
     let mut current = leaf;
     let mut steps = Vec::new();
     let mut unresolved = false;
-    for operation in operations.iter().rev() {
+    for index in (0..operations.len()).rev() {
+        let operation = &operations[index];
         let outcome = apply(engine, operation, &current, verbosity)?;
         current = outcome.value;
         unresolved |= outcome.unresolved;
-        steps.extend(outcome.steps);
+        steps.extend(wrap_pending_steps(outcome.steps, &operations[..index]));
     }
     let tex = steps
         .last()
@@ -194,6 +195,70 @@ pub fn execute_steps(
             .collect(),
         reason: unresolved.then(|| "至少一个运算保持未求值".into()),
     }))
+}
+
+fn wrap_pending_steps(mut steps: Vec<Step>, pending: &[Operation]) -> Vec<Step> {
+    for step in &mut steps {
+        for operation in pending.iter().rev() {
+            step.expr = wrap_expression(operation, &step.expr);
+            step.tex = wrap_tex(operation, &step.tex);
+        }
+    }
+    steps
+}
+
+fn wrap_expression(operation: &Operation, inner: &str) -> String {
+    let value_index = value_index(operation.signature, operation.arguments.len());
+    match operation.signature.value_argument {
+        ValueArgument::First => {
+            let mut arguments = operation.arguments.clone();
+            arguments[value_index] = inner.into();
+            format!("{}({})", operation.signature.name, arguments.join(","))
+        }
+        ValueArgument::Last => format!(
+            "{}({})({inner})",
+            operation.signature.name,
+            operation.arguments[..value_index].join(",")
+        ),
+    }
+}
+
+fn wrap_tex(operation: &Operation, inner: &str) -> String {
+    let value_index = value_index(operation.signature, operation.arguments.len());
+    let fixed = operation
+        .arguments
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != value_index)
+        .map(|(_, argument)| tex_code(argument))
+        .collect::<Vec<_>>()
+        .join(",");
+    let head = operation.signature.name;
+    if fixed.is_empty() {
+        format!(r"\operatorname{{{head}}}\!\left[{inner}\right]")
+    } else {
+        format!(r"\operatorname{{{head}}}_{{{fixed}}}\!\left[{inner}\right]")
+    }
+}
+
+fn tex_code(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str(r"\backslash "),
+            '{' => escaped.push_str(r"\{"),
+            '}' => escaped.push_str(r"\}"),
+            '_' => escaped.push_str(r"\_"),
+            '^' => escaped.push_str(r"\^{}"),
+            '%' | '#' | '&' | '$' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            '~' => escaped.push_str(r"\sim "),
+            _ => escaped.push(character),
+        }
+    }
+    format!(r"\mathtt{{{escaped}}}")
 }
 
 fn collect_operations(
@@ -406,6 +471,44 @@ mod tests {
                 .to_string(),
             "0"
         );
+    }
+
+    #[test]
+    fn pending_outer_operations_remain_visible_during_inner_steps() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(
+            &mut engine,
+            "D(x)Factor(Integrate(x)2*x*(x^2+1))",
+            StepVerbosity::Detailed,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+
+        let factor = result
+            .steps
+            .iter()
+            .position(|step| step.rule == "compose_factor")
+            .unwrap();
+        assert!(factor > 0);
+        for step in &result.steps[..factor] {
+            assert!(step.expr.starts_with("D(x)(Factor("), "{step:#?}");
+            assert!(step.tex.contains(r"\operatorname{D}"), "{step:#?}");
+            assert!(step.tex.contains(r"\operatorname{Factor}"), "{step:#?}");
+        }
+
+        let factor_step = &result.steps[factor];
+        assert!(factor_step.expr.starts_with("D(x)("), "{factor_step:#?}");
+        assert!(!factor_step.expr.contains("Factor("), "{factor_step:#?}");
+        assert!(
+            factor_step.tex.contains(r"\operatorname{D}"),
+            "{factor_step:#?}"
+        );
+
+        for step in &result.steps[factor + 1..] {
+            assert!(!step.expr.starts_with("D(x)("), "{step:#?}");
+            assert!(!step.tex.contains(r"\operatorname{Factor}"), "{step:#?}");
+        }
     }
 
     #[test]
