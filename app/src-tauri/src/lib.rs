@@ -193,6 +193,12 @@ fn project_domain_semantic(
     input: &SemanticSummary,
     result: &DispatchExpressionResult,
 ) -> Result<SemanticSummary, ErrorResponse> {
+    if result.data.get("held").is_some_and(|held| !held.is_null()) {
+        let mut semantic = input.clone();
+        semantic.kind = ValueKind::Unevaluated;
+        semantic.completeness = None;
+        return Ok(semantic);
+    }
     let generated = arbitrary_constants(result);
     if result.kind != "ode" && generated.is_empty() {
         return Ok(input.clone());
@@ -1400,6 +1406,7 @@ mod tests {
                 "{expression}"
             );
             assert_eq!(result.steps[0].rule, "held-operator-application");
+            assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
         }
     }
 

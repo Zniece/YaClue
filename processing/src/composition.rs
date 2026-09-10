@@ -181,6 +181,14 @@ pub struct CompositionResult {
     pub operators: Vec<CompositionOperator>,
     pub reason: Option<String>,
     pub arbitrary_constants: Vec<String>,
+    pub held: Option<HeldApplication>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HeldApplication {
+    pub source: String,
+    pub operand_head: String,
+    pub pending_operators: Vec<CompositionOperator>,
 }
 
 struct Operation {
@@ -235,14 +243,22 @@ pub fn execute_steps(
                     .collect(),
                 reason: Some(reason),
                 arbitrary_constants: Vec::new(),
+                held: None,
             }));
         }
     };
     if operations.len() < 2 {
-        if !operations.is_empty()
-            && root_call(&leaf, "组合内层表达式")?
-                .is_some_and(|call| STRUCTURED_OPERATOR_NAMES.contains(&call.head.as_str()))
-        {
+        let structured_operand = (!operations.is_empty())
+            .then(|| root_call(&leaf, "组合内层表达式"))
+            .transpose()?
+            .flatten()
+            .filter(|call| STRUCTURED_OPERATOR_NAMES.contains(&call.head.as_str()));
+        if let Some(operand) = structured_operand {
+            let pending_operators = operations
+                .iter()
+                .rev()
+                .map(|operation| operation.signature.operator)
+                .collect();
             let step = operation_step(
                 "held-operator-application",
                 expression.into(),
@@ -260,6 +276,11 @@ pub fn execute_steps(
                     .collect(),
                 reason: Some("组合在语义上有效，但当前没有适用的降低规则".into()),
                 arbitrary_constants: Vec::new(),
+                held: Some(HeldApplication {
+                    source: expression.into(),
+                    operand_head: operand.head,
+                    pending_operators,
+                }),
             }));
         }
         return Ok(None);
@@ -299,6 +320,7 @@ pub fn execute_steps(
             .collect(),
         reason: unresolved.then(|| "至少一个运算保持未求值".into()),
         arbitrary_constants,
+        held: None,
     }))
 }
 
@@ -896,6 +918,10 @@ mod tests {
             assert_eq!(result.value, expression);
             assert_eq!(result.steps.len(), 1);
             assert_eq!(result.steps[0].rule, "held-operator-application");
+            let held = result.held.as_ref().unwrap();
+            assert_eq!(held.source, expression);
+            assert!(!held.operand_head.is_empty());
+            assert!(!held.pending_operators.is_empty());
             assert!(result
                 .reason
                 .as_deref()
