@@ -2,8 +2,8 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{
-    analyze_expression, direct_function_equation, strip_tex_delimiters, validate_expression,
-    validate_symbol,
+    analyze_expression, direct_function_equation, root_call, strip_tex_delimiters,
+    validate_expression, validate_symbol,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -101,6 +101,106 @@ pub fn solve_steps_with_verbosity(
     Ok(EquationStepResult { result, steps })
 }
 
+pub fn solve_system_steps(
+    engine: &mut dyn Engine,
+    equations: &[&str],
+    variables: &[&str],
+) -> Result<EquationStepResult, EngineError> {
+    solve_system_steps_with_verbosity(engine, equations, variables, StepVerbosity::Detailed)
+}
+
+pub fn solve_system_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    equations: &[&str],
+    variables: &[&str],
+    verbosity: StepVerbosity,
+) -> Result<EquationStepResult, EngineError> {
+    let result = solve(engine, equations, variables)?;
+    let normalized = equations
+        .iter()
+        .map(|equation| {
+            equation
+                .split_once("==")
+                .map(|(left, right)| format!("({left})-({right})==0"))
+                .unwrap_or_else(|| format!("{equation}==0"))
+        })
+        .collect::<Vec<_>>();
+    let mut events = vec![StepEvent::new(
+        "equation-system-start",
+        &format!("{{{}}}", equations.join(",")),
+        "建立联立方程组。",
+        StepImportance::Routine,
+    )];
+    events.push(StepEvent::new(
+        "equation-system-variables",
+        &format!("{{{}}}", result.variables.join(",")),
+        match result.variable_source {
+            VariableSource::Explicit => "使用调用方指定的未知量。",
+            VariableSource::Inferred => "从全部方程中发现未知量并固定求解顺序。",
+        },
+        StepImportance::Normal,
+    ));
+    events.push(StepEvent::new(
+        "equation-system-normalize",
+        &format!("{{{}}}", normalized.join(",")),
+        "将每个方程移到一边，形成同一个消元系统。",
+        StepImportance::Normal,
+    ));
+    if equations.len() > 1 || result.variables.len() > 1 {
+        events.push(StepEvent::new(
+            "equation-system-eliminate",
+            &result.raw,
+            "联立消元并保留相容的解分支。",
+            StepImportance::Key,
+        ));
+    }
+    match result.status {
+        SolveStatus::Solved => {
+            for solution in &result.solutions {
+                events.push(StepEvent::new(
+                    "equation-system-branch",
+                    &assignments_expression(solution),
+                    if result.completeness == SolveCompleteness::Parametric {
+                        "得到一个参数化解分支；未被消去的符号作为自由参数。"
+                    } else {
+                        "得到一个同时满足全部方程的解分支。"
+                    },
+                    StepImportance::Normal,
+                ));
+            }
+            events.push(StepEvent::new(
+                "equation-system-verify",
+                "0",
+                "将各分支代回全部原方程，残差均为零。",
+                StepImportance::Routine,
+            ));
+        }
+        SolveStatus::NoSolution => events.push(StepEvent::new(
+            "equation-system-inconsistent",
+            "False",
+            "消元后不存在能同时满足全部方程的分支。",
+            StepImportance::Key,
+        )),
+        SolveStatus::Infinite | SolveStatus::Unresolved => {}
+    }
+    events.push(StepEvent::new(
+        "equation-system-result",
+        &result.raw,
+        match result.status {
+            SolveStatus::Solved if result.completeness == SolveCompleteness::Parametric => {
+                "得到参数化解集。"
+            }
+            SolveStatus::Solved => "得到经过原方程验证的解集。",
+            SolveStatus::NoSolution => "方程组无解。",
+            SolveStatus::Infinite => "方程组恒成立，解不唯一。",
+            SolveStatus::Unresolved => "当前解析方法未能完整求解该方程组。",
+        },
+        StepImportance::Key,
+    ));
+    let steps = render_events(engine, events, verbosity)?;
+    Ok(EquationStepResult { result, steps })
+}
+
 fn algebraic_equation_steps(
     engine: &mut dyn Engine,
     equation: &str,
@@ -125,13 +225,19 @@ fn algebraic_equation_steps(
         })
         .collect::<Vec<_>>();
     let checks = verification_checks.join(",");
+    let denominator = equation
+        .split_once("==")
+        .map(|(left, right)| {
+            format!("NormalForm(GetNumerDenom({left})[2]*GetNumerDenom({right})[2])")
+        })
+        .unwrap_or_else(|| format!("GetNumerDenom({equation})[2]"));
     let diagnostic = engine.eval_expr(&format!(
-        "[Local(p,d,f); p:=NormalForm({residual}); If(CanBeUni({variable},p), [d:=Degree(p,{variable}); f:=If(d<=8,Factor(p),p); {{True,p,d,f,{{{checks}}}}};], {{False,p,0,p,{{{checks}}}}});]"
+        "[Local(p,d,f,q); p:=NormalForm({residual}); q:={denominator}; If(CanBeUni({variable},p), [d:=Degree(p,{variable}); f:=If(d<=8,Factor(p),p); {{True,p,d,f,{{{checks}}},q}};], {{False,p,0,p,{{{checks}}},q}});]"
     ))?;
     let Expr::Call { head, args } = diagnostic else {
         return Err(EngineError::Parse("方程步骤诊断不是列表".into()));
     };
-    if head != "List" || args.len() != 5 {
+    if head != "List" || args.len() != 6 {
         return Err(EngineError::Parse("方程步骤诊断形态异常".into()));
     }
     let polynomial = matches!(&args[0], Expr::Symbol(value) if value == "True");
@@ -141,6 +247,11 @@ fn algebraic_equation_steps(
         _ => None,
     };
     let factored = args[3].to_string();
+    let denominator = args[5].to_string();
+    let has_domain_exclusion = analyze_expression(&denominator, "方程分母")?
+        .symbols
+        .iter()
+        .any(|symbol| symbol == variable);
     let verified = match &args[4] {
         Expr::Call { head, args } if head == "List" => args
             .iter()
@@ -155,6 +266,14 @@ fn algebraic_equation_steps(
         &format!("建立关于 {variable} 的方程。"),
         StepImportance::Routine,
     )];
+    if has_domain_exclusion {
+        events.push(StepEvent::new(
+            "equation-domain-exclusion",
+            &format!("{denominator}!=0"),
+            "原方程的分母不能为零；这些值不属于定义域。",
+            StepImportance::Key,
+        ));
+    }
     if polynomial {
         events.push(StepEvent::new(
             "equation-normalize",
@@ -183,6 +302,8 @@ fn algebraic_equation_steps(
             }),
             _ => {}
         }
+    } else if let Some(event) = direct_radical_event(equation, variable)? {
+        events.push(event);
     } else if let Some(event) = direct_inverse_event(equation, variable)? {
         events.push(event);
     }
@@ -206,7 +327,11 @@ fn algebraic_equation_steps(
                 events.push(StepEvent {
                     rule: "equation-verify".into(),
                     expr: "0".into(),
-                    why: "将该候选解代回原方程，残差为零。".into(),
+                    why: if has_domain_exclusion {
+                        "候选值不在分母排除集中，代回原方程后的残差为零。".into()
+                    } else {
+                        "将该候选解代回原方程，残差为零；去根号产生的增根会在此被拒绝。".into()
+                    },
                     importance: StepImportance::Routine,
                 });
             }
@@ -226,6 +351,45 @@ fn algebraic_equation_steps(
     });
 
     render_events(engine, events, verbosity)
+}
+
+fn direct_radical_event(equation: &str, variable: &str) -> Result<Option<StepEvent>, EngineError> {
+    let Some((left, right)) = equation.split_once("==") else {
+        return Ok(None);
+    };
+    for (radical, other) in [(left.trim(), right.trim()), (right.trim(), left.trim())] {
+        let Some(call) = root_call(radical, "根式方程")? else {
+            continue;
+        };
+        if call.head != "Sqrt" || call.arguments.len() != 1 {
+            continue;
+        }
+        if analyze_expression(other, "根式方程另一侧")?
+            .symbols
+            .iter()
+            .any(|symbol| symbol == variable)
+        {
+            continue;
+        }
+        return Ok(Some(StepEvent::new(
+            "equation-radical-square",
+            &format!("{}==({other})^2", call.arguments[0]),
+            "孤立平方根后两边平方；这一步可能产生增根，最终必须代回原方程。",
+            StepImportance::Key,
+        )));
+    }
+    Ok(None)
+}
+
+fn assignments_expression(assignments: &[Assignment]) -> String {
+    format!(
+        "{{{}}}",
+        assignments
+            .iter()
+            .map(|assignment| format!("{}=={}", assignment.variable, assignment.value))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 fn direct_inverse_event(equation: &str, variable: &str) -> Result<Option<StepEvent>, EngineError> {
@@ -1078,5 +1242,68 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.rule.starts_with("equation-invert-")));
+    }
+
+    #[test]
+    fn system_steps_cover_discovery_parameters_inconsistency_and_verification() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let solved = solve_system_steps(&mut engine, &["x+y==3", "x-y==1"], &[]).unwrap();
+        for rule in [
+            "equation-system-variables",
+            "equation-system-eliminate",
+            "equation-system-verify",
+            "equation-system-result",
+        ] {
+            assert!(solved.steps.iter().any(|step| step.rule == rule));
+        }
+        assert_eq!(solved.result.variable_source, VariableSource::Inferred);
+
+        let parametric = solve_system_steps(&mut engine, &["x+y==3"], &["x", "y"]).unwrap();
+        assert_eq!(
+            parametric.result.completeness,
+            SolveCompleteness::Parametric
+        );
+        assert!(parametric.steps.iter().any(|step| {
+            step.rule == "equation-system-branch" && step.why.contains("自由参数")
+        }));
+
+        let inconsistent =
+            solve_system_steps(&mut engine, &["x+y==3", "x+y==4"], &["x", "y"]).unwrap();
+        assert_eq!(inconsistent.result.status, SolveStatus::NoSolution);
+        assert!(inconsistent
+            .steps
+            .iter()
+            .any(|step| step.rule == "equation-system-inconsistent"));
+    }
+
+    #[test]
+    fn rational_and_radical_steps_expose_domain_and_final_verification() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let rational = solve_steps(&mut engine, "1/(x-1)==2", "x").unwrap();
+        assert!(rational
+            .steps
+            .iter()
+            .any(|step| step.rule == "equation-domain-exclusion"));
+        assert!(rational
+            .steps
+            .iter()
+            .any(|step| { step.rule == "equation-verify" && step.why.contains("排除集") }));
+
+        let radical = solve_steps(&mut engine, "Sqrt(x+1)==3", "x").unwrap();
+        assert!(radical
+            .steps
+            .iter()
+            .any(|step| step.rule == "equation-radical-square"));
+        assert!(radical
+            .steps
+            .iter()
+            .any(|step| step.rule == "equation-verify"));
+
+        let composite = solve_steps(&mut engine, "Sin(2*x)==0", "x").unwrap();
+        assert_eq!(
+            composite.result.completeness,
+            SolveCompleteness::Representative
+        );
+        assert!(composite.result.families.is_empty());
     }
 }
