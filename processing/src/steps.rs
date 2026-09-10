@@ -1,8 +1,8 @@
 //! 加工层的步骤 API:调用引擎的 StepsD'Full/StepsI'Full(.ys 步骤生成器),
 //! 提取结构化步骤(规则名 + 表达式 + 文案 + LaTeX)供 GUI 渲染。
 //!
-//! 步骤数据格式(来自 StepsX'Full):{规则名, 表达式, 文案} 三元组列表;
-//! 本模块将其转为 `Step { rule, expr, why, tex }`。
+//! 步骤数据格式(来自 StepsX'Full):{规则名, 表达式, 文案, 重要度} 四元组列表;
+//! 本模块严格校验后将其转为 `Step { rule, expr, why, tex, importance }`。
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
@@ -113,46 +113,63 @@ fn steps_from_command(
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
     let expr = engine.eval_expr(command)?;
-    let mut events = Vec::new();
+    let events = parse_step_events(&expr, command)?;
+    render_events(engine, events, verbosity)
+}
 
-    if let Expr::Call { head, args } = &expr {
-        if head == "List" {
-            for step in args {
-                if let Expr::Call { args: pair, .. } = step {
-                    if pair.len() >= 2 {
-                        let rule = match &pair[0] {
-                            Expr::Symbol(s) => s.trim_matches('"').to_string(),
-                            other => other.to_string(),
-                        };
-                        let expr_str = pair[1].to_string();
-                        // 四元组 {规则,表达式,文案,重要度}。
-                        let why = match pair.get(2) {
-                            Some(Expr::Symbol(s)) => s.trim_matches('"').to_string(),
-                            Some(other) => other.to_string(),
-                            None => String::new(),
-                        };
-                        let importance = match pair.get(3) {
-                            Some(Expr::Number(value)) if value == "0" => StepImportance::Routine,
-                            Some(Expr::Number(value)) if value == "2" => StepImportance::Key,
-                            _ => StepImportance::Normal,
-                        };
-                        events.push(StepEvent {
-                            rule,
-                            expr: expr_str,
-                            why,
-                            importance,
-                        });
-                    }
-                }
-            }
-        }
+fn parse_step_events(expr: &Expr, command: &str) -> Result<Vec<StepEvent>, EngineError> {
+    let Expr::Call { head, args } = expr else {
+        return Err(EngineError::Parse("步骤结果不是列表".into()));
+    };
+    if head != "List" {
+        return Err(EngineError::Parse(format!(
+            "步骤结果 head 应为 List，实际为 {head}"
+        )));
     }
-    if events.is_empty() {
+    if args.is_empty() {
         return Err(EngineError::Eval(format!(
             "未能生成步骤(表达式可能不受支持): {command}"
         )));
     }
-    render_events(engine, events, verbosity)
+    args.iter()
+        .enumerate()
+        .map(|(index, step)| {
+            let Expr::Call { head, args: fields } = step else {
+                return Err(EngineError::Parse(format!("步骤事件 {index} 不是列表")));
+            };
+            if head != "List" || fields.len() != 4 {
+                return Err(EngineError::Parse(format!(
+                    "步骤事件 {index} 必须是四字段 List"
+                )));
+            }
+            let string_field = |field: &Expr, name: &str| match field {
+                Expr::Symbol(value)
+                    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') =>
+                {
+                    Ok(value[1..value.len() - 1].to_string())
+                }
+                _ => Err(EngineError::Parse(format!(
+                    "步骤事件 {index} 的 {name} 必须是字符串"
+                ))),
+            };
+            let importance = match &fields[3] {
+                Expr::Number(value) if value == "0" => StepImportance::Routine,
+                Expr::Number(value) if value == "1" => StepImportance::Normal,
+                Expr::Number(value) if value == "2" => StepImportance::Key,
+                _ => {
+                    return Err(EngineError::Parse(format!(
+                        "步骤事件 {index} 的 importance 必须是 0、1 或 2"
+                    )))
+                }
+            };
+            Ok(StepEvent {
+                rule: string_field(&fields[0], "rule")?,
+                expr: fields[1].to_string(),
+                why: string_field(&fields[2], "why")?,
+                importance,
+            })
+        })
+        .collect()
 }
 
 /// 对 `expr` 关于 `var` 生成分步求导过程
@@ -342,6 +359,21 @@ mod tests {
     use super::*;
     use crate::engine::{ReplEngine, RustEngine};
     use crate::test_support::CountingEngine;
+
+    #[test]
+    fn malformed_step_events_fail_the_protocol() {
+        for fullform in [
+            "(List (List \"ok\" x \"why\" 1) (Pair \"bad\" y \"why\" 1))",
+            "(List (List \"missing\" x))",
+            "(List (List \"bad-importance\" x \"why\" 9))",
+        ] {
+            let expr = Expr::parse_fullform(fullform).unwrap();
+            assert!(matches!(
+                parse_step_events(&expr, "test"),
+                Err(EngineError::Parse(_))
+            ));
+        }
+    }
 
     #[test]
     fn verbosity_filters_before_rendering_visible_steps() {
