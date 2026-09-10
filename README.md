@@ -140,7 +140,9 @@ Normal builds and tests use Rust. For a specific compatibility question,
 set `YACAS_BIN` to a separately built Yacas executable to enable the optional
 C++ adapter checks. Intentional behavior improvements are governed by this
 project's tests; C++ output is not an automatic replacement for a golden
-baseline.
+baseline. Run those explicitly with
+`cargo test -p processing engine::tests -- --ignored --test-threads=1`;
+without the binary they fail instead of being reported as passed.
 
 This workspace uses the root `Cargo.lock`; member crates do not maintain
 separate lockfiles.

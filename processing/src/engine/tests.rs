@@ -227,11 +227,8 @@ fn display_unary_minus_roundtrip() {
 }
 
 #[test]
+#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
 fn engine_eval_returns_structured() {
-    if !crate::engine::cpp_reference_available() {
-        eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-        return;
-    }
     let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
     let r = engine.eval("D(x) Sin(x)^2").expect("求值失败");
     // (* 2 (* (Cos x) (Sin x)))
@@ -285,11 +282,8 @@ fn engine_eval_returns_structured() {
 }
 
 #[test]
+#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
 fn repl_eval_executes_input_once() {
-    if !crate::engine::cpp_reference_available() {
-        eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-        return;
-    }
     let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
     engine.eval("replReviewCounter:=0").unwrap();
     assert_eq!(
@@ -306,11 +300,8 @@ fn repl_eval_executes_input_once() {
 }
 
 #[test]
+#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
 fn stepsd_works_through_engine() {
-    if !crate::engine::cpp_reference_available() {
-        eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-        return;
-    }
     let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
     // 步骤层 v1:StepsD 返回 {规则名, 表达式} 列表
     let r = engine.eval("StepsD(x*Sin(x), x)").expect("StepsD 求值失败");
@@ -332,11 +323,8 @@ fn stepsd_works_through_engine() {
 }
 
 #[test]
+#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
 fn engine_reports_errors() {
-    if !crate::engine::cpp_reference_available() {
-        eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-        return;
-    }
     let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
     // D 是 bodied 运算符,逗号形式是非法语法——应报错而非静默
     let err = engine.eval("D(x^2,x)").unwrap_err();
@@ -344,11 +332,8 @@ fn engine_reports_errors() {
 }
 
 #[test]
+#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
 fn d_bodied_syntax_works() {
-    if !crate::engine::cpp_reference_available() {
-        eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-        return;
-    }
     let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
     // D 的合法语法(stdopers.ys:39):D(var)expr 与 D(var,order)expr
     let r = engine.eval("D(x) x^2").expect("D(x)x^2 失败");
@@ -371,11 +356,8 @@ fn rust_engine_proxy_end_to_end() {
 }
 
 #[test]
+#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
 fn engine_recovers_after_timeout() {
-    if !crate::engine::cpp_reference_available() {
-        eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-        return;
-    }
     let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
     // 死循环触发超时(引擎被终止)
     let err = engine.eval("While(True) 1").unwrap_err();
