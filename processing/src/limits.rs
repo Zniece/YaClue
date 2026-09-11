@@ -5,9 +5,9 @@ use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, Computation, ObjectDelta, ObjectId, ObjectReference, RuleEvent,
-    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticState,
+    object_from_source, Computation, ComputationOutput, ObjectDelta, ObjectId, ObjectReference,
+    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 use crate::steps::{Step, StepVerbosity};
 use serde::Serialize;
@@ -18,6 +18,37 @@ pub enum LimitDirection {
     Both,
     Left,
     Right,
+}
+
+/// Structured request for the object-native Limit operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LimitRequest {
+    pub variable: String,
+    pub at: String,
+    pub direction: LimitDirection,
+}
+
+/// Limit's domain implementation under the common semantic operation
+/// contract. Other domains should expose an equivalent operation rather than
+/// inventing another string-to-string interface.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LimitOperation;
+
+impl SemanticOperation<LimitRequest> for LimitOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &LimitRequest,
+    ) -> Result<Computation, EngineError> {
+        limit_computation_for_object(
+            engine,
+            input,
+            &request.variable,
+            &request.at,
+            request.direction,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -140,23 +171,35 @@ pub fn limit_computation(
     at: &str,
     direction: LimitDirection,
 ) -> Result<Computation, EngineError> {
-    let source = format!("Limit({variable},{at})({expression})");
     let initial_metadata =
         ResultMetadata::unresolved(Exactness::Unknown, OutcomeReason::AlgorithmUncovered);
-    let mut object = object_from_source(
+    let object = object_from_source(
         ObjectId(1),
-        &source,
+        expression,
         SemanticState {
             kind: ValueKind::Unevaluated,
-            interpretation: SemanticInterpretation::Application {
-                operator: "Limit".into(),
-            },
+            interpretation: SemanticInterpretation::PlainExpression,
             metadata: initial_metadata,
         },
     )?;
+    limit_computation_for_object(engine, &object, variable, at, direction)
+}
+
+/// Object-native Limit boundary.  The operand's AST identity and revision are
+/// the transition input; source printing below is only the temporary adapter
+/// required by the existing Yacas limit program.
+pub fn limit_computation_for_object(
+    engine: &mut dyn Engine,
+    operand: &crate::semantic_core::MathematicalObject,
+    variable: &str,
+    at: &str,
+    direction: LimitDirection,
+) -> Result<Computation, EngineError> {
+    let expression = operand.print_source();
+    let mut object = operand.clone();
     let input = object.reference(None);
-    let data = trace_data(engine, expression, variable, at, direction)?;
-    let result = limit_from_trace_data(engine, expression, variable, at, direction, &data)?;
+    let data = trace_data(engine, &expression, variable, at, direction)?;
+    let result = limit_from_trace_data(engine, &expression, variable, at, direction, &data)?;
     let metadata = limit_metadata(&result)?;
     let output_ast = object_from_source(
         object.id,
@@ -199,7 +242,7 @@ pub fn limit_computation(
     });
     let output = object.reference(None);
     Ok(Computation {
-        object,
+        output: ComputationOutput::Value(object),
         trace: Some(RuleTrace {
             events: limit_rule_events(engine, &data, &result, input, output)?,
         }),
@@ -988,15 +1031,43 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         let computation =
             limit_computation(&mut engine, "Sin(x)/x", "x", "0", LimitDirection::Both).unwrap();
-        assert_eq!(computation.object.semantics.kind, ValueKind::Scalar);
-        assert_eq!(computation.object.revision.0, 1);
-        let trace = computation.trace.unwrap();
+        assert_eq!(
+            computation.value().unwrap().semantics.kind,
+            ValueKind::Scalar
+        );
+        assert_eq!(computation.value().unwrap().revision.0, 1);
+        let trace = computation.trace.as_ref().unwrap();
         assert!(trace.events.len() >= 2);
         assert_eq!(trace.events[0].rule, "limit-start");
         assert_eq!(trace.events[1].rule, "limit-indeterminate-form");
         assert_eq!(trace.events.last().unwrap().rule, "limit-result");
         assert_eq!(trace.events[1].input.revision.0, 0);
         assert_eq!(trace.events.last().unwrap().output.revision.0, 1);
+    }
+
+    #[test]
+    fn object_native_adapter_preserves_operand_identity() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let operand = object_from_source(
+            ObjectId(42),
+            "Sin(x)/x",
+            SemanticState {
+                kind: ValueKind::Unevaluated,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::unresolved(
+                    Exactness::Unknown,
+                    OutcomeReason::AlgorithmUncovered,
+                ),
+            },
+        )
+        .unwrap();
+        let computation =
+            limit_computation_for_object(&mut engine, &operand, "x", "0", LimitDirection::Both)
+                .unwrap();
+        let trace = computation.trace.as_ref().unwrap();
+        assert_eq!(trace.events[0].input.object, ObjectId(42));
+        assert_eq!(computation.value().unwrap().id, ObjectId(42));
+        assert_eq!(computation.value().unwrap().revision.0, 1);
     }
 
     #[test]

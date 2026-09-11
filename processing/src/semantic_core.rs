@@ -296,12 +296,26 @@ pub fn operator_descriptor(name: &str) -> Option<&'static OperatorDescriptor> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticInterpretation {
     PlainExpression,
-    Operator { id: String },
-    Application { operator: String },
+    Operator {
+        id: String,
+    },
+    Application {
+        operator: String,
+    },
     Equation,
     List,
-    Matrix { rows: usize, columns: usize },
-    StructuredUnevaluated { reason: String },
+    Matrix {
+        rows: usize,
+        columns: usize,
+    },
+    /// A valid mathematical application deliberately retained because no
+    /// closed-form evaluation is available yet (for example `Integrate`).
+    HeldApplication {
+        operator: String,
+    },
+    StructuredUnevaluated {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,6 +375,13 @@ impl MathematicalObject {
 
     pub fn view<'a>(&'a self, env: &'a Environment) -> ExpressionView<'a> {
         ExpressionView::new(env, &self.expression)
+    }
+
+    /// Transitional serialization boundary for legacy domain engines. New
+    /// semantic operations must receive this object, rather than a source
+    /// string; only their explicitly marked engine adapter may print it.
+    pub fn print_source(&self) -> String {
+        crate::input::with_parse_env(|env| self.view(env).print_source())
     }
 
     pub(crate) fn raw_expression(&self) -> Rc<LispObject> {
@@ -519,11 +540,41 @@ pub struct RuleTrace {
 }
 
 #[derive(Clone)]
+pub enum ComputationOutput {
+    /// A mathematical value that may be passed to a later semantic operation.
+    Value(MathematicalObject),
+    /// The computation intentionally produced no mathematical value.  Its
+    /// effects are terminal and must not enter the composition data plane.
+    EffectsOnly,
+}
+
+#[derive(Clone)]
 pub struct Computation {
-    pub object: MathematicalObject,
+    pub output: ComputationOutput,
     pub trace: Option<RuleTrace>,
     pub certificates: Vec<Certificate>,
     pub effects: Vec<Effect>,
+}
+
+impl Computation {
+    pub fn value(&self) -> Option<&MathematicalObject> {
+        match &self.output {
+            ComputationOutput::Value(object) => Some(object),
+            ComputationOutput::EffectsOnly => None,
+        }
+    }
+}
+
+/// Common contract for every migrated mathematical domain.  It makes object
+/// identity, revision and semantic state the data-plane boundary; text APIs
+/// are allowed only as adapters around this contract.
+pub trait SemanticOperation<Request> {
+    fn compute(
+        &self,
+        engine: &mut dyn crate::engine::Engine,
+        input: &MathematicalObject,
+        request: &Request,
+    ) -> Result<Computation, crate::engine::EngineError>;
 }
 
 #[cfg(test)]
