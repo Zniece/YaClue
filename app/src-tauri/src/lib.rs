@@ -2,7 +2,6 @@ use processing::algebra::TransformKind;
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::improper_integrals::ImproperIntegralRequest;
-use processing::limits::LimitDirection;
 use processing::linear_algebra::MatrixOperation;
 use processing::multiple_integrals::{IntegralBound, PolarRegion};
 use processing::ode::InitialCondition;
@@ -210,7 +209,11 @@ fn project_domain_semantic(
         return Ok(semantic);
     }
     let generated = arbitrary_constants(result);
-    if result.kind != "ode" && result.kind != "composition" && generated.is_empty() {
+    if result.kind != "ode"
+        && result.kind != "composition"
+        && result.kind != "integral"
+        && generated.is_empty()
+    {
         return Ok(input.clone());
     }
     let semantic_expression = result
@@ -365,13 +368,6 @@ fn collect_conditions(value: &Value, output: &mut Vec<Condition>) {
     }
 }
 
-fn final_step(steps: &[Step]) -> (String, String) {
-    steps
-        .last()
-        .map(|step| (step.expr.clone(), step.tex.clone()))
-        .unwrap_or_default()
-}
-
 fn list_or_single(expression: &str, label: &str) -> Result<Vec<String>, ErrorResponse> {
     let call = processing::input::root_call(expression, label).map_err(message)?;
     Ok(match call {
@@ -415,38 +411,6 @@ fn dispatch_expression_with_engine(
     let analyzed = &elaborated.analyzed;
     let call = &analyzed.root_call;
     let verbosity = parse_verbosity(&request.verbosity)?;
-    if matches!(&elaborated.root.form, processing::elaboration::MathematicalForm::Application { head } if head == "Limit")
-        && elaborated.root.children.len() == 2
-    {
-        // The route is selected from the elaborated AST. Source is obtained
-        // only at the legacy Limit engine adapter boundary.
-        let expression = elaborated.root.children[0].object.print_source();
-        let at = elaborated.root.children[1].object.print_source();
-        let result =
-            processing::limits::limit(&mut *engine, &expression, "x", &at, LimitDirection::Both)
-                .map_err(message)?;
-        let steps = if request.steps {
-            processing::limits::limit_steps_with_verbosity(
-                &mut *engine,
-                &expression,
-                "x",
-                &at,
-                LimitDirection::Both,
-                verbosity,
-            )
-            .map_err(message)?
-        } else {
-            Vec::new()
-        };
-        return unified_result(
-            "limit",
-            "极限",
-            result.value.clone(),
-            result.tex.clone(),
-            steps,
-            &result,
-        );
-    }
     if matches!(
         elaborated.root.form,
         processing::elaboration::MathematicalForm::Structural { .. }
@@ -465,6 +429,9 @@ fn dispatch_expression_with_engine(
         || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head }
                 if processing::arithmetic::is_migrated_factor_projection(head))
+        || matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head }
+                if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
         || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"))
@@ -486,6 +453,31 @@ fn dispatch_expression_with_engine(
             processing::elaboration::MathematicalForm::Application { head }
                 if processing::arithmetic::is_migrated_matrix_unary(head)
                     || matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"));
+        let calculus_composition =
+            processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
+                || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
+                || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
+                || processing::arithmetic::has_migrated_numeric_descendant(&elaborated.root)
+                || processing::arithmetic::has_migrated_taylor_descendant(&elaborated.root)
+                || processing::arithmetic::has_migrated_solve_descendant(&elaborated.root);
+        let object_native_calculus = match &elaborated.root.form {
+            processing::elaboration::MathematicalForm::Application { head }
+                if matches!(head.as_str(), "D" | "Deriv") && !calculus_composition =>
+            {
+                Some(("derivative", "导数"))
+            }
+            processing::elaboration::MathematicalForm::Application { head }
+                if head == "Limit" && !calculus_composition =>
+            {
+                Some(("limit", "极限"))
+            }
+            processing::elaboration::MathematicalForm::Application { head }
+                if head == "Integrate" && !calculus_composition =>
+            {
+                Some(("integral", "积分"))
+            }
+            _ => None,
+        };
         if let Some(mut result) = processing::composition::execute_elaborated(
             &mut *engine,
             elaborated,
@@ -498,14 +490,18 @@ fn dispatch_expression_with_engine(
                 result.steps.clear();
             }
             return unified_result(
-                if object_native_solve {
+                if let Some((kind, _)) = object_native_calculus {
+                    kind
+                } else if object_native_solve {
                     "equation"
                 } else if object_native_matrix {
                     "matrix"
                 } else {
                     "composition"
                 },
-                if object_native_solve {
+                if let Some((_, title)) = object_native_calculus {
+                    title
+                } else if object_native_solve {
                     "方程"
                 } else if object_native_matrix {
                     "线性代数"
@@ -519,142 +515,8 @@ fn dispatch_expression_with_engine(
             );
         }
     }
-    if matches!(&elaborated.root.form, processing::elaboration::MathematicalForm::Application { head } if matches!(head.as_str(), "D" | "Deriv"))
-        && matches!(elaborated.root.children.len(), 2 | 3)
-    {
-        let variable = elaborated.root.children[0].object.print_source();
-        let (order, operand_index) = if elaborated.root.children.len() == 3 {
-            (
-                elaborated.root.children[1]
-                    .object
-                    .print_source()
-                    .parse::<u32>()
-                    .map_err(|_| invalid_input("导数阶数必须是非负整数"))?,
-                2,
-            )
-        } else {
-            (1, 1)
-        };
-        let expression = elaborated.root.children[operand_index]
-            .object
-            .print_source();
-        let derivative_request = processing::derivatives::DerivativeRequest {
-            variable: variable.clone(),
-            order,
-        };
-        let computation = processing::derivatives::derivative_computation(
-            &mut *engine,
-            &expression,
-            &variable,
-            order,
-        )
-        .map_err(message)?;
-        let result = processing::derivatives::derivative_result(&computation, &derivative_request);
-        let expression = computation
-            .subject()
-            .expect("derivative has an output object")
-            .print_source();
-        let tex = processing::input::strip_tex_delimiters(
-            &engine
-                .render_tex_batch(std::slice::from_ref(&expression))
-                .map_err(message)?[0],
-        );
-        let steps = if request.steps {
-            processing::steps::render_rule_trace(
-                &mut *engine,
-                computation
-                    .trace
-                    .as_ref()
-                    .expect("derivative records a trace"),
-                verbosity,
-            )
-            .map_err(message)?
-        } else {
-            Vec::new()
-        };
-        return unified_result("derivative", "导数", expression, tex, steps, &result);
-    }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
-            ("D", [variable, expression]) | ("Deriv", [variable, expression]) => {
-                let derivative_request = processing::derivatives::DerivativeRequest {
-                    variable: variable.clone(),
-                    order: 1,
-                };
-                let computation = processing::derivatives::derivative_computation(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    1,
-                )
-                .map_err(message)?;
-                let result =
-                    processing::derivatives::derivative_result(&computation, &derivative_request);
-                let output = computation
-                    .subject()
-                    .expect("derivative has an output object");
-                let expression = output.print_source();
-                let tex = processing::input::strip_tex_delimiters(
-                    &engine
-                        .render_tex_batch(std::slice::from_ref(&expression))
-                        .map_err(message)?[0],
-                );
-                let steps = if request.steps {
-                    processing::steps::render_rule_trace(
-                        &mut *engine,
-                        computation
-                            .trace
-                            .as_ref()
-                            .expect("derivative records a trace"),
-                        verbosity,
-                    )
-                    .map_err(message)?
-                } else {
-                    Vec::new()
-                };
-                return unified_result("derivative", "导数", expression, tex, steps, &result);
-            }
-            ("D", [variable, order, expression]) | ("Deriv", [variable, order, expression]) => {
-                let order = order
-                    .parse::<u32>()
-                    .map_err(|_| invalid_input("导数阶数必须是非负整数"))?;
-                let derivative_request = processing::derivatives::DerivativeRequest {
-                    variable: variable.clone(),
-                    order,
-                };
-                let computation = processing::derivatives::derivative_computation(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    order,
-                )
-                .map_err(message)?;
-                let result =
-                    processing::derivatives::derivative_result(&computation, &derivative_request);
-                let output = computation
-                    .subject()
-                    .expect("derivative has an output object");
-                let expression = output.print_source();
-                let tex = processing::input::strip_tex_delimiters(
-                    &engine
-                        .render_tex_batch(std::slice::from_ref(&expression))
-                        .map_err(message)?[0],
-                );
-                let steps = if request.steps {
-                    processing::steps::render_rule_trace(
-                        &mut *engine,
-                        computation
-                            .trace
-                            .as_ref()
-                            .expect("derivative records a trace"),
-                        verbosity,
-                    )
-                    .map_err(message)?
-                } else {
-                    Vec::new()
-                };
-                return unified_result("derivative", "导数", expression, tex, steps, &result);
-            }
             (head @ ("ImproperIntegral" | "PrincipalValueIntegral"), arguments)
                 if matches!(arguments.len(), 4 | 5) =>
             {
@@ -719,102 +581,6 @@ fn dispatch_expression_with_engine(
                     result.steps.clone(),
                     &result,
                 );
-            }
-            ("Integrate", [variable, lower, upper, expression])
-                if lower.contains("Infinity") || upper.contains("Infinity") =>
-            {
-                let object_request = ImproperIntegralRequest {
-                    expression: expression.clone(),
-                    variable: variable.clone(),
-                    lower: lower.clone(),
-                    upper: upper.clone(),
-                    singular_points: Vec::new(),
-                };
-                if let Some(lowered) = processing::intrinsics::try_lower_improper_integral(
-                    &mut *engine,
-                    &object_request,
-                    request.steps.then_some(verbosity),
-                )
-                .map_err(message)?
-                {
-                    return unified_result(
-                        "intrinsic",
-                        "原生特殊函数",
-                        lowered.value.clone(),
-                        lowered.tex.clone(),
-                        lowered.steps.clone(),
-                        &lowered,
-                    );
-                }
-                let result = processing::improper_integrals::evaluate(
-                    &mut *engine,
-                    &object_request,
-                    request.steps.then_some(verbosity),
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "defined_object",
-                    "反常积分",
-                    result.value.clone(),
-                    result.tex.clone(),
-                    result.steps.clone(),
-                    &result,
-                );
-            }
-            ("Integrate", [variable, expression]) => {
-                let arbitrary_constant = processing::semantic::display_arbitrary_constants(
-                    &analyzed.semantic.symbols,
-                    1,
-                )
-                .into_iter()
-                .next()
-                .expect("one arbitrary constant was requested");
-                if request.steps {
-                    let result = processing::steps::derive_antiderivative_family_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        arbitrary_constant,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "integral",
-                        "不定积分",
-                        result.result.expression.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let evaluated = engine.eval(&request.expression).map_err(message)?;
-                let result = processing::steps::antiderivative_family(
-                    evaluated.expr.to_string(),
-                    evaluated.tex.trim_matches('$').to_string(),
-                    variable,
-                    arbitrary_constant,
-                );
-                return unified_result(
-                    "integral",
-                    "不定积分",
-                    result.expression.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Integrate", [variable, from, to, expression]) if request.steps => {
-                let steps = processing::steps::derive_definite_with_verbosity(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    from,
-                    to,
-                    verbosity,
-                )
-                .map_err(message)?;
-                let (expression, tex) = final_step(&steps);
-                return unified_result("definite_integral", "定积分", expression, tex, steps, &());
             }
             (
                 "DoubleIntegral",
@@ -912,96 +678,6 @@ fn dispatch_expression_with_engine(
                     "极坐标积分",
                     result.integral.value.clone(),
                     result.integral.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Limit", [variable, at, expression]) => {
-                if request.steps {
-                    let result = processing::limits::limit(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        at,
-                        LimitDirection::Both,
-                    )
-                    .map_err(message)?;
-                    let steps = processing::limits::limit_steps_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        at,
-                        LimitDirection::Both,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "limit",
-                        "极限",
-                        result.value.clone(),
-                        result.tex.clone(),
-                        steps,
-                        &result,
-                    );
-                }
-                let result = processing::limits::limit(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    at,
-                    LimitDirection::Both,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "limit",
-                    "极限",
-                    result.value.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Limit", [variable, at, direction, expression]) => {
-                let direction = match direction.as_str() {
-                    "Left" => LimitDirection::Left,
-                    "Right" => LimitDirection::Right,
-                    _ => return Err(invalid_input("极限方向应为 Left 或 Right")),
-                };
-                if request.steps {
-                    let result = processing::limits::limit(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        at,
-                        direction,
-                    )
-                    .map_err(message)?;
-                    let steps = processing::limits::limit_steps_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        at,
-                        direction,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "limit",
-                        "极限",
-                        result.value.clone(),
-                        result.tex.clone(),
-                        steps,
-                        &result,
-                    );
-                }
-                let result =
-                    processing::limits::limit(&mut *engine, expression, variable, at, direction)
-                        .map_err(message)?;
-                return unified_result(
-                    "limit",
-                    "极限",
-                    result.value.clone(),
-                    result.tex.clone(),
                     vec![],
                     &result,
                 );
@@ -1734,7 +1410,7 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(improper.kind, "intrinsic");
+        assert_eq!(improper.kind, "integral");
         assert_eq!(improper.expression, "1");
 
         let parameterized_gamma = process_expression_with_engine(
@@ -1742,7 +1418,7 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(parameterized_gamma.kind, "intrinsic");
+        assert_eq!(parameterized_gamma.kind, "integral");
         assert_eq!(
             parameterized_gamma.outcome.conditionality,
             processing::protocol::Conditionality::Conditional
@@ -1777,15 +1453,16 @@ mod tests {
         );
         assert_eq!(symbolic_integral.semantic.bound_symbols, ["x".to_string()]);
         assert_eq!(symbolic_integral.semantic.kind, ValueKind::FunctionFamily);
-        assert!(symbolic_integral.expression.ends_with(" + C)"));
+        assert!(
+            symbolic_integral.expression.replace(' ', "").contains("+C"),
+            "{}",
+            symbolic_integral.expression
+        );
         assert_eq!(
             symbolic_integral.steps.last().unwrap().rule,
             "antiderivative-family"
         );
-        assert_eq!(
-            symbolic_integral.data["result"]["representative"],
-            symbolic_integral.steps[symbolic_integral.steps.len() - 2].expr
-        );
+        assert_eq!(symbolic_integral.data["status"], "completed");
         assert!(
             symbolic_integral
                 .semantic

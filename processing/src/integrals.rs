@@ -113,17 +113,25 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
             return Err(EngineError::InvalidInput("该数学对象不具备积分能力".into()));
         }
         let source = input.print_source();
-        let representative = engine
-            .eval_expr(&format!("Integrate({}){source}", request.variable))?
-            .to_string();
+        let derivation = crate::steps::derive_antiderivative_family_with_verbosity(
+            engine,
+            &source,
+            &request.variable,
+            request.arbitrary_constant.clone(),
+            crate::steps::StepVerbosity::Detailed,
+        )?;
+        let representative = derivation.result.representative.clone();
         let unresolved = crate::input::with_parse_env(|env| {
             let parsed = yacas_rs::parser::parse_expression(env, &format!("{representative};"))
                 .map_err(|error| EngineError::Parse(format!("积分结果语法异常: {error:?}")))?
                 .ok_or_else(|| EngineError::Parse("积分结果为空".into()))?;
-            Ok(crate::semantic_core::ExpressionView::new(env, &parsed).head() == Some("Integrate"))
+            Ok(matches!(
+                crate::semantic_core::ExpressionView::new(env, &parsed).head(),
+                Some("Integrate" | "Int")
+            ))
         })?;
         let output_source = if unresolved {
-            representative.clone()
+            format!("Integrate({})({source})", request.variable)
         } else {
             format!("({representative})+{}", request.arbitrary_constant)
         };
@@ -168,65 +176,56 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
                 mode: NormalizationMode::Operation(OperatorId::Integral),
             }),
         });
-        let mut events = crate::steps::derive_integrals_with_verbosity(
-            engine,
-            &source,
-            &request.variable,
-            crate::steps::StepVerbosity::Detailed,
-        )?
-        .into_iter()
-        .map(|step| RuleEvent {
-            rule: step.rule,
-            input: input.reference(None),
-            additional_inputs: Vec::new(),
-            output: output.reference(None),
-            bindings: vec![("variable".into(), request.variable.clone())],
-            conditions: Vec::new(),
-            payload: RulePayload::Structural,
-            importance: match step.importance {
-                crate::steps::StepImportance::Routine => RuleImportance::Routine,
-                crate::steps::StepImportance::Normal => RuleImportance::Normal,
-                crate::steps::StepImportance::Key => RuleImportance::Key,
-            },
-            presentation: Some(RulePresentation {
-                expression: step.expr,
-                explanation: step.why,
-                tex_override: Some(step.tex),
-            }),
-        })
-        .collect::<Vec<_>>();
-        events.push(RuleEvent {
-            rule: if unresolved {
-                "hold-integral"
-            } else {
-                "antiderivative-family"
-            }
-            .into(),
-            input: input.reference(None),
-            additional_inputs: Vec::new(),
-            output: output.reference(None),
-            bindings: vec![
-                ("variable".into(), request.variable.clone()),
-                ("constant".into(), request.arbitrary_constant.clone()),
-            ],
-            conditions: Vec::new(),
-            payload: RulePayload::Rewrite,
-            importance: RuleImportance::Key,
-            presentation: Some(RulePresentation {
-                expression: if unresolved {
-                    output.print_source()
-                } else {
-                    format!("({representative} + {})", request.arbitrary_constant)
-                },
-                explanation: if unresolved {
-                    "保留尚无闭式结果的积分对象。"
-                } else {
-                    "构造包含任意常数的原函数族。"
+        let events = derivation
+            .steps
+            .into_iter()
+            .map(|step| {
+                let is_family = step.rule == "antiderivative-family";
+                let held_family = unresolved && is_family;
+                RuleEvent {
+                    rule: if held_family {
+                        "hold-integral".into()
+                    } else {
+                        step.rule
+                    },
+                    input: input.reference(None),
+                    additional_inputs: Vec::new(),
+                    output: output.reference(None),
+                    bindings: if is_family && !unresolved {
+                        vec![
+                            ("variable".into(), request.variable.clone()),
+                            ("constant".into(), request.arbitrary_constant.clone()),
+                        ]
+                    } else {
+                        vec![("variable".into(), request.variable.clone())]
+                    },
+                    conditions: Vec::new(),
+                    payload: if is_family {
+                        RulePayload::Rewrite
+                    } else {
+                        RulePayload::Structural
+                    },
+                    importance: match step.importance {
+                        crate::steps::StepImportance::Routine => RuleImportance::Routine,
+                        crate::steps::StepImportance::Normal => RuleImportance::Normal,
+                        crate::steps::StepImportance::Key => RuleImportance::Key,
+                    },
+                    presentation: Some(RulePresentation {
+                        expression: if held_family {
+                            output.print_source()
+                        } else {
+                            step.expr
+                        },
+                        explanation: if held_family {
+                            "保留尚无闭式结果的积分对象。".into()
+                        } else {
+                            step.why
+                        },
+                        tex_override: (!held_family).then_some(step.tex),
+                    }),
                 }
-                .into(),
-                tex_override: None,
-            }),
-        });
+            })
+            .collect::<Vec<_>>();
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)

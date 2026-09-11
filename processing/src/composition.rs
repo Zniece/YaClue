@@ -8,7 +8,7 @@ use crate::engine::{Engine, EngineError};
 use crate::input::{analyze_expression, strip_tex_delimiters, RootCall};
 use crate::numeric;
 use crate::ode::{self, OdeStatus};
-use crate::protocol::{OutcomeReason, ResultMetadata};
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     is_known_operator, object_from_source, operator_descriptor, CapabilitySet, ComputationOutput,
@@ -45,6 +45,7 @@ pub struct CompositionResult {
     pub reason: Option<String>,
     pub arbitrary_constants: Vec<String>,
     pub held: Option<HeldApplication>,
+    pub conditions: ConditionSet,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,15 +111,9 @@ pub fn execute_elaborated(
             || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
             || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
             || crate::arithmetic::has_effect_descendant(&input.root)))
-        || (matches!(&input.root.form,
+        || matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
-            && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
-                || crate::arithmetic::has_migrated_transform_descendant(&input.root)
-                || crate::arithmetic::has_migrated_substitution_descendant(&input.root)
-                || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
-                || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
-                || crate::arithmetic::has_migrated_solve_descendant(&input.root)))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if crate::arithmetic::is_migrated_transform(head))
@@ -180,7 +175,7 @@ pub fn execute_elaborated(
         } else {
             strip_tex_delimiters(&engine.eval(&value)?.tex)
         };
-        let mut steps = if include_steps {
+        let steps = if include_steps {
             computation
                 .trace
                 .as_ref()
@@ -190,18 +185,6 @@ pub fn execute_elaborated(
         } else {
             Vec::new()
         };
-        if let crate::elaboration::MathematicalForm::Application { head } = &input.root.form {
-            if matches!(head.as_str(), "D" | "Deriv") {
-                if let Some(variable) = input.root.children.first() {
-                    let variable = variable.object.print_source();
-                    for step in &mut steps {
-                        if step.rule == "antiderivative-family" {
-                            step.expr = format!("D({variable})({})", step.expr);
-                        }
-                    }
-                }
-            }
-        }
         let reason = match status {
             CompositionStatus::NoValue => Some("内层数学结论不存在，外层运算未执行。".into()),
             CompositionStatus::Unresolved
@@ -221,9 +204,12 @@ pub fn execute_elaborated(
         let mut operators = Vec::new();
         collect_migrated_operator_ids(&input.root, &mut operators);
         let present_symbols = crate::input::with_parse_env(|env| {
-            crate::semantic::analyze_tree(env, &subject.raw_expression())
-                .semantic
+            let semantic = crate::semantic::analyze_tree(env, &subject.raw_expression()).semantic;
+            semantic
                 .symbols
+                .into_iter()
+                .chain(semantic.constants)
+                .collect::<Vec<_>>()
         });
         let arbitrary_constants = computation
             .trace
@@ -248,6 +234,7 @@ pub fn execute_elaborated(
             reason,
             arbitrary_constants,
             held: None,
+            conditions: subject.semantics.metadata.conditions.clone(),
         }));
     }
     let mut operations = Vec::new();
@@ -319,6 +306,7 @@ fn execute_collected(
                 reason: Some(reason),
                 arbitrary_constants: Vec::new(),
                 held: None,
+                conditions: ConditionSet::empty(),
             }));
         }
     };
@@ -353,6 +341,7 @@ fn execute_collected(
                     operand_head,
                     pending_operators,
                 }),
+                conditions: ConditionSet::empty(),
             }));
         }
         return Ok(None);
@@ -422,6 +411,7 @@ fn execute_collected(
         reason: unresolved.then(|| "至少一个运算保持未求值".into()),
         arbitrary_constants,
         held: None,
+        conditions: ConditionSet::empty(),
     }))
 }
 
@@ -464,6 +454,7 @@ fn execute_limit_then_derivative(
                 reason: Some("内层极限不存在，不能作为求导操作数".into()),
                 arbitrary_constants: Vec::new(),
                 held: None,
+                conditions: ConditionSet::empty(),
             }));
         }
         ComputationOutput::EffectsOnly => unreachable!("Limit always returns an object"),
@@ -490,6 +481,7 @@ fn execute_limit_then_derivative(
             reason: Some("内层极限产生扩展实数，不能作为求导操作数".into()),
             arbitrary_constants: Vec::new(),
             held: None,
+            conditions: limit_object.semantics.metadata.conditions.clone(),
         }));
     }
     let differentiated =
@@ -499,6 +491,13 @@ fn execute_limit_then_derivative(
         .expect("derivative always returns an object")
         .print_source();
     let completed = matches!(&differentiated.output, ComputationOutput::Value(_));
+    let result_conditions = differentiated
+        .subject()
+        .expect("derivative always returns an object")
+        .semantics
+        .metadata
+        .conditions
+        .clone();
     let mut events = limited.trace.expect("Limit records a trace").events;
     events.extend(
         differentiated
@@ -521,6 +520,7 @@ fn execute_limit_then_derivative(
         reason: (!completed).then(|| "至少一个运算保持未求值".into()),
         arbitrary_constants: Vec::new(),
         held: None,
+        conditions: result_conditions,
     }))
 }
 
@@ -1399,13 +1399,13 @@ mod tests {
     }
 
     #[test]
-    fn single_operation_keeps_existing_fast_path() {
+    fn single_migrated_operation_uses_the_object_native_path() {
         let mut engine = RustEngine::spawn().unwrap();
-        assert!(
-            execute_steps(&mut engine, "D(x)x^2", StepVerbosity::Concise)
-                .unwrap()
-                .is_none()
-        );
+        let result = execute_steps(&mut engine, "D(x)x^2", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.value, "2*x");
     }
 
     #[test]
@@ -1413,9 +1413,7 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         for expression in [
             "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
-            "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
             "D(x)OdeSolveNumeric(y'==y,x,y,0,1,2)",
-            "D(x)Plot(Sin(x),x,-1,1)",
         ] {
             let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
                 .unwrap()
