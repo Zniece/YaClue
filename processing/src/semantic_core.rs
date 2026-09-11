@@ -168,6 +168,7 @@ pub enum OperatorId {
     Solve,
     MatrixTransform,
     MatrixSolve,
+    MatrixAnalyze,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +184,7 @@ pub enum CapabilityId {
     ExpandTaylor,
     SolveEquation,
     TransformMatrix,
+    AnalyzeMatrix,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +360,15 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         capability: CapabilityId::TransformMatrix,
     },
     OperatorDescriptor {
+        id: OperatorId::MatrixAnalyze,
+        names: &["Rank", "RREF", "RowReduce", "EigenValues"],
+        arities: &[1],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::AnalyzeMatrix,
+    },
+    OperatorDescriptor {
         id: OperatorId::OdeSolve,
         names: &["OdeSolve"],
         arities: &[1],
@@ -391,7 +402,6 @@ pub fn is_known_operator(name: &str) -> bool {
         || matches!(
             name,
             "DoubleIntegral"
-                | "EigenValues"
                 | "Extrema"
                 | "FindRoot"
                 | "ImproperIntegral"
@@ -578,6 +588,7 @@ pub enum ObjectCapability {
     MatrixDeterminant,
     MatrixInverse,
     MatrixSolve,
+    MatrixAnalyze,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -618,7 +629,8 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::MatrixTranspose as u8)
                 | (1 << ObjectCapability::MatrixDeterminant as u8)
                 | (1 << ObjectCapability::MatrixInverse as u8)
-                | (1 << ObjectCapability::MatrixSolve as u8),
+                | (1 << ObjectCapability::MatrixSolve as u8)
+                | (1 << ObjectCapability::MatrixAnalyze as u8),
         )
     }
     pub const fn contains(self, capability: ObjectCapability) -> bool {

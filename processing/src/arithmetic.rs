@@ -102,7 +102,10 @@ pub fn is_migrated_numeric_evaluation(head: &str) -> bool {
     matches!(head, "N" | "Approximate")
 }
 pub fn is_migrated_matrix_unary(head: &str) -> bool {
-    matches!(head, "Transpose" | "Determinant" | "Inverse")
+    matches!(
+        head,
+        "Transpose" | "Determinant" | "Inverse" | "Rank" | "RREF" | "RowReduce" | "EigenValues"
+    )
 }
 
 pub fn has_migrated_taylor_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
@@ -546,7 +549,18 @@ fn execute_matrix_unary_application(
         "Transpose" => crate::linear_algebra::MatrixOperation::Transpose,
         "Determinant" => crate::linear_algebra::MatrixOperation::Determinant,
         "Inverse" => crate::linear_algebra::MatrixOperation::Inverse,
-        _ => unreachable!(),
+        _ => {
+            let kind = match head {
+                "Rank" => crate::linear_algebra::MatrixAnalysisKind::Rank,
+                "RREF" | "RowReduce" => crate::linear_algebra::MatrixAnalysisKind::Rref,
+                "EigenValues" => crate::linear_algebra::MatrixAnalysisKind::Eigenvalues,
+                _ => unreachable!(),
+            };
+            let mut current =
+                crate::linear_algebra::MatrixAnalysisOperation.compute(engine, &input, &kind)?;
+            merge_prior_computation(&mut current, &mut operand);
+            return Ok(current);
+        }
     };
     let mut current = crate::linear_algebra::UnaryMatrixOperation.compute(
         engine,

@@ -423,6 +423,169 @@ impl BinarySemanticOperation<crate::semantic_core::ObjectId> for MatrixSolveOper
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixAnalysisKind {
+    Rank,
+    Rref,
+    Eigenvalues,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MatrixAnalysisOperation;
+
+impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        kind: &MatrixAnalysisKind,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::MatrixAnalyze)
+        {
+            return Err(EngineError::InvalidInput(
+                "输入不具备矩阵结构分析能力".into(),
+            ));
+        }
+        let (source, tex, interpretation, value_kind, capabilities, rule) = match kind {
+            MatrixAnalysisKind::Rank => {
+                let result = linear_structure(engine, &input.print_source())?;
+                (
+                    result.rank.to_string(),
+                    result.tex,
+                    SemanticInterpretation::PlainExpression,
+                    ValueKind::Scalar,
+                    CapabilitySet::symbolic_expression(),
+                    "matrix-rank",
+                )
+            }
+            MatrixAnalysisKind::Rref => {
+                let result = linear_structure(engine, &input.print_source())?;
+                (
+                    matrix_expression(&result.rref),
+                    result.tex,
+                    SemanticInterpretation::Matrix {
+                        rows: result.rows,
+                        columns: result.columns,
+                    },
+                    ValueKind::Matrix,
+                    CapabilitySet::matrix(),
+                    "matrix-rref",
+                )
+            }
+            MatrixAnalysisKind::Eigenvalues => {
+                let result = compute(
+                    engine,
+                    &input.print_source(),
+                    MatrixOperation::Eigenvalues,
+                    None,
+                )?;
+                if result.unresolved {
+                    return held_matrix_analysis(input, kind);
+                }
+                let eigenvalue_object =
+                    object_from_source(input.id, &result.output, input.semantics.clone())?;
+                let length = crate::input::with_parse_env(|env| {
+                    eigenvalue_object.view(env).arguments().len()
+                });
+                (
+                    result.output,
+                    result.tex,
+                    SemanticInterpretation::Vector { length },
+                    ValueKind::Expression,
+                    CapabilitySet::empty(),
+                    "matrix-eigenvalues",
+                )
+            }
+        };
+        let semantics = SemanticState {
+            kind: value_kind,
+            interpretation,
+            metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+            capabilities,
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixAnalyze),
+            }),
+        });
+        let event = RuleEvent {
+            rule: rule.into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: Some(RulePresentation {
+                expression: output.print_source(),
+                explanation: "从类型化矩阵对象计算结构不变量。".into(),
+                tex_override: Some(tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+fn held_matrix_analysis(
+    input: &crate::semantic_core::MathematicalObject,
+    kind: &MatrixAnalysisKind,
+) -> Result<Computation, EngineError> {
+    let head = match kind {
+        MatrixAnalysisKind::Rank => "Rank",
+        MatrixAnalysisKind::Rref => "RREF",
+        MatrixAnalysisKind::Eigenvalues => "EigenValues",
+    };
+    let semantics = SemanticState {
+        kind: ValueKind::Unevaluated,
+        interpretation: SemanticInterpretation::HeldApplication {
+            operator: head.into(),
+        },
+        metadata: ResultMetadata::unresolved(
+            Exactness::Symbolic,
+            OutcomeReason::AlgorithmUncovered,
+        ),
+        capabilities: CapabilitySet::empty(),
+        requirements: Vec::new(),
+    };
+    let parsed = object_from_source(
+        input.id,
+        &format!("{head}({})", input.print_source()),
+        semantics.clone(),
+    )?;
+    let mut output = input.clone();
+    output.apply(ObjectDelta {
+        expression: Some(parsed.raw_expression()),
+        semantics: Some(semantics),
+        overlay: None,
+        normalization: None,
+    });
+    Ok(Computation {
+        output: ComputationOutput::Held(output),
+        trace: None,
+        certificates: Vec::new(),
+        effects: Vec::new(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LinearStructureResult {
     pub rows: usize,
@@ -1221,6 +1384,48 @@ mod tests {
             )
             .unwrap();
         assert_eq!(difference.value().unwrap().print_source(), "{{3,3}}");
+    }
+
+    #[test]
+    fn matrix_analysis_outputs_have_distinct_semantic_types() {
+        let input = object_from_source(
+            crate::semantic_core::ObjectId(20),
+            "{{1,2},{2,4}}",
+            SemanticState {
+                kind: ValueKind::Matrix,
+                interpretation: SemanticInterpretation::Matrix {
+                    rows: 2,
+                    columns: 2,
+                },
+                metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                capabilities: CapabilitySet::matrix(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let rank = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::Rank)
+            .unwrap();
+        assert_eq!(rank.value().unwrap().print_source(), "1");
+        assert_eq!(rank.value().unwrap().semantics.kind, ValueKind::Scalar);
+        let rref = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::Rref)
+            .unwrap();
+        assert!(matches!(
+            rref.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::Matrix {
+                rows: 2,
+                columns: 2
+            }
+        ));
+        let eigenvalues = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::Eigenvalues)
+            .unwrap();
+        assert!(matches!(
+            eigenvalues.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::Vector { .. }
+        ));
     }
 
     #[test]

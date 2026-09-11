@@ -949,6 +949,9 @@ fn apply(
         CompositionOperator::MatrixSolve => Err(EngineError::InvalidInput(
             "线性方程组必须通过类型化矩阵对象执行".into(),
         )),
+        CompositionOperator::MatrixAnalyze => Err(EngineError::InvalidInput(
+            "矩阵结构分析必须通过类型化矩阵对象执行".into(),
+        )),
     }
 }
 
