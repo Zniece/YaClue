@@ -757,9 +757,16 @@ impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation
         };
         let semantics = SemanticState {
             kind: ValueKind::Expression,
+            capabilities: if matches!(
+                &interpretation,
+                SemanticInterpretation::MatrixFactorization { .. }
+            ) {
+                CapabilitySet::factorization()
+            } else {
+                CapabilitySet::empty()
+            },
             interpretation,
             metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
-            capabilities: CapabilitySet::empty(),
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &source, semantics.clone())?;
@@ -787,6 +794,92 @@ impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation
                 expression: output.print_source(),
                 explanation: "构造经过验证、可组合的类型化线性代数对象。".into(),
                 tex_override: Some(tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FactorProjectionOperation;
+
+impl SemanticOperation<()> for FactorProjectionOperation {
+    fn compute(
+        &self,
+        _engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        _request: &(),
+    ) -> Result<Computation, EngineError> {
+        let SemanticInterpretation::MatrixFactorization { factor_count, .. } =
+            input.semantics.interpretation
+        else {
+            return Err(EngineError::InvalidInput(
+                "Factors 只接受矩阵分解对象".into(),
+            ));
+        };
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::ExtractFactors)
+        {
+            return Err(EngineError::InvalidInput(
+                "输入不具备分解因子提取能力".into(),
+            ));
+        }
+        let factors = crate::input::with_parse_env(|env| {
+            input
+                .view(env)
+                .arguments()
+                .into_iter()
+                .map(|argument| argument.print_source())
+                .collect::<Vec<_>>()
+        });
+        if factors.len() != factor_count {
+            return Err(EngineError::Parse(format!(
+                "分解对象包含 {} 个 AST 因子，语义契约要求 {factor_count} 个",
+                factors.len()
+            )));
+        }
+        let source = format!("{{{}}}", factors.join(","));
+        let semantics = SemanticState {
+            kind: ValueKind::Expression,
+            interpretation: SemanticInterpretation::List,
+            metadata: input.semantics.metadata.clone(),
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Structural,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::FactorProjection),
+            }),
+        });
+        let event = RuleEvent {
+            rule: "matrix-factor-projection".into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Structural,
+            importance: RuleImportance::Key,
+            presentation: Some(RulePresentation {
+                expression: output.print_source(),
+                explanation: "从类型化矩阵分解对象投影出有序因子列表。".into(),
+                tex_override: None,
             }),
         };
         Ok(Computation {
@@ -1725,6 +1818,17 @@ mod tests {
                 verified: true,
             }
         ));
+        let factors = FactorProjectionOperation
+            .compute(&mut engine, pldu.value().unwrap(), &())
+            .unwrap();
+        assert!(matches!(
+            factors.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::List
+        ));
+        crate::input::with_parse_env(|env| {
+            assert_eq!(factors.value().unwrap().view(env).arguments().len(), 4)
+        });
+        assert_eq!(factors.value().unwrap().id, square.id);
         let cholesky = MatrixDecompositionOperation
             .compute(&mut engine, &square, &MatrixDecompositionKind::Cholesky)
             .unwrap();

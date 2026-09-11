@@ -80,6 +80,11 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
         {
             expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
         }
+        crate::elaboration::MathematicalForm::Application { head }
+            if is_migrated_factor_projection(head) =>
+        {
+            expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
+        }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
                 && expression.children.iter().all(can_execute_elaborated_tree)
@@ -120,6 +125,19 @@ pub fn is_migrated_matrix_unary(head: &str) -> bool {
             | "OrthogonalBasis"
             | "OrthonormalBasis"
     )
+}
+
+pub fn is_migrated_factor_projection(head: &str) -> bool {
+    head == "Factors"
+}
+
+pub fn has_migrated_factor_projection_descendant(
+    expression: &crate::elaboration::ElaboratedObject,
+) -> bool {
+    expression.children.iter().any(|child| {
+        matches!(&child.form, crate::elaboration::MathematicalForm::Application { head } if is_migrated_factor_projection(head))
+            || has_migrated_factor_projection_descendant(child)
+    })
 }
 
 pub fn has_migrated_taylor_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
@@ -226,6 +244,9 @@ pub fn execute_elaborated_structure(
         }
         if is_migrated_matrix_unary(head) {
             return execute_matrix_unary_application(engine, expression, head);
+        }
+        if is_migrated_factor_projection(head) {
+            return execute_factor_projection_application(engine, expression);
         }
         if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix") {
             return execute_matrix_solve_application(engine, expression);
@@ -634,6 +655,29 @@ fn execute_matrix_solve_application(
     )?;
     merge_prior_computation(&mut current, &mut matrix);
     merge_prior_computation(&mut current, &mut vector);
+    Ok(current)
+}
+
+fn execute_factor_projection_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let [operand_node] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(
+            "Factors 需要一个矩阵分解对象".into(),
+        ));
+    };
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, "Factors", 0);
+    }
+    let input = operand
+        .value()
+        .expect("checked factorization operand")
+        .clone();
+    let mut current =
+        crate::linear_algebra::FactorProjectionOperation.compute(engine, &input, &())?;
+    merge_prior_computation(&mut current, &mut operand);
     Ok(current)
 }
 

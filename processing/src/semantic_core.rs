@@ -170,6 +170,7 @@ pub enum OperatorId {
     MatrixSolve,
     MatrixAnalyze,
     MatrixDecompose,
+    FactorProjection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -386,6 +387,15 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
             "OrthogonalBasis",
             "OrthonormalBasis",
         ],
+        arities: &[1],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::AnalyzeMatrix,
+    },
+    OperatorDescriptor {
+        id: OperatorId::FactorProjection,
+        names: &["Factors"],
         arities: &[1],
         forms: CALL,
         value_argument: ValueArgument::First,
@@ -647,6 +657,7 @@ pub enum ObjectCapability {
     MatrixInverse,
     MatrixSolve,
     MatrixAnalyze,
+    ExtractFactors,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -690,6 +701,9 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::MatrixSolve as u8)
                 | (1 << ObjectCapability::MatrixAnalyze as u8),
         )
+    }
+    pub const fn factorization() -> Self {
+        Self(1 << ObjectCapability::ExtractFactors as u8)
     }
     pub const fn contains(self, capability: ObjectCapability) -> bool {
         self.0 & (1 << capability as u8) != 0

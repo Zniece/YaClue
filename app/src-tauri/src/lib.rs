@@ -464,6 +464,9 @@ fn dispatch_expression_with_engine(
                 if processing::arithmetic::is_migrated_matrix_unary(head))
         || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head }
+                if processing::arithmetic::is_migrated_factor_projection(head))
+        || matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"))
         || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
@@ -471,6 +474,7 @@ fn dispatch_expression_with_engine(
         || processing::arithmetic::has_migrated_numeric_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_taylor_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_solve_descendant(&elaborated.root)
+        || processing::arithmetic::has_migrated_factor_projection_descendant(&elaborated.root)
         || processing::arithmetic::has_effect_descendant(&elaborated.root)
         || call
             .as_ref()
@@ -2296,5 +2300,24 @@ mod tests {
                 "{expression}"
             );
         }
+
+        let factors = process_expression_with_engine(
+            request("Factors(PLDU({{4,2},{2,2}}))", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert!(factors.expression.starts_with("{{"));
+        assert!(factors
+            .steps
+            .iter()
+            .any(|step| step.rule == "matrix-pldu-decomposition"));
+        assert!(factors
+            .steps
+            .iter()
+            .any(|step| step.rule == "matrix-factor-projection"));
+        assert_eq!(
+            factors.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
     }
 }

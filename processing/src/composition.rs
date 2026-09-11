@@ -142,6 +142,9 @@ pub fn execute_elaborated(
                 if crate::arithmetic::is_migrated_matrix_unary(head))
         || matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
+                if crate::arithmetic::is_migrated_factor_projection(head))
+        || matches!(&input.root.form,
+            crate::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
@@ -152,6 +155,7 @@ pub fn execute_elaborated(
                 || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
                 || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
                 || crate::arithmetic::has_migrated_solve_descendant(&input.root)
+                || crate::arithmetic::has_migrated_factor_projection_descendant(&input.root)
                 || crate::arithmetic::has_effect_descendant(&input.root))))
         && crate::arithmetic::can_execute_elaborated_tree(&input.root)
     {
@@ -280,6 +284,7 @@ fn collect_migrated_operator_ids(
             || head == "Taylor"
             || head == "Solve"
             || crate::arithmetic::is_migrated_matrix_unary(head)
+            || crate::arithmetic::is_migrated_factor_projection(head)
             || matches!(head.as_str(), "MatrixSolve" | "SolveMatrix")
         {
             if let Some(descriptor) = operator_descriptor(head) {
@@ -954,6 +959,9 @@ fn apply(
         )),
         CompositionOperator::MatrixDecompose => Err(EngineError::InvalidInput(
             "矩阵分解必须通过类型化矩阵对象执行".into(),
+        )),
+        CompositionOperator::FactorProjection => Err(EngineError::InvalidInput(
+            "分解因子必须通过类型化分解对象提取".into(),
         )),
     }
 }
