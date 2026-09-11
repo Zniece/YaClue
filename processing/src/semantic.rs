@@ -67,30 +67,39 @@ pub fn analyze_input(input: &str, label: &str) -> Result<AnalyzedInput, EngineEr
         let tree = yacas_rs::parser::parse_expression(env, &format!("{input};"))
             .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
             .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
-        let root_call = root_call_from_tree(env, &tree);
-        let binding = crate::binding::analyze_tree(&tree);
-        let no_symbols = binding.free_symbols.is_empty() && binding.bound_symbols.is_empty();
-        let symbols = binding.free_symbols;
-        let function_heads = binding.function_heads;
-        let constants = binding.constants;
-        let shape = matrix_shape(&tree);
-        let kind = classify(&tree, shape, no_symbols);
-        let exactness = exactness(&tree, no_symbols, kind);
-        Ok(AnalyzedInput {
-            semantic: SemanticSummary {
-                kind,
-                symbols: symbols.into_iter().collect(),
-                bound_symbols: binding.bound_symbols.into_iter().collect(),
-                symbol_identities: binding.identities.into_iter().collect(),
-                constants: constants.into_iter().collect(),
-                shape,
-                exactness,
-                completeness: (kind == ValueKind::SolutionSet).then_some(Completeness::Unknown),
-            },
-            root_call,
-            function_heads: function_heads.into_iter().collect(),
-        })
+        Ok(analyze_tree(env, &tree))
     })
+}
+
+/// Build the legacy product summary from an already parsed AST. This lets the
+/// elaboration boundary remain the only parser on the request path.
+pub(crate) fn analyze_tree(
+    env: &yacas_rs::env::Environment,
+    tree: &std::rc::Rc<LispObject>,
+) -> AnalyzedInput {
+    let root_call = root_call_from_tree(env, tree);
+    let binding = crate::binding::analyze_tree(tree);
+    let no_symbols = binding.free_symbols.is_empty() && binding.bound_symbols.is_empty();
+    let symbols = binding.free_symbols;
+    let function_heads = binding.function_heads;
+    let constants = binding.constants;
+    let shape = matrix_shape(tree);
+    let kind = classify(tree, shape, no_symbols);
+    let exactness = exactness(tree, no_symbols, kind);
+    AnalyzedInput {
+        semantic: SemanticSummary {
+            kind,
+            symbols: symbols.into_iter().collect(),
+            bound_symbols: binding.bound_symbols.into_iter().collect(),
+            symbol_identities: binding.identities.into_iter().collect(),
+            constants: constants.into_iter().collect(),
+            shape,
+            exactness,
+            completeness: (kind == ValueKind::SolutionSet).then_some(Completeness::Unknown),
+        },
+        root_call,
+        function_heads: function_heads.into_iter().collect(),
+    }
 }
 
 /// Reclassify a domain result without carrying consumed input symbols into the

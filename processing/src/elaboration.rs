@@ -30,16 +30,31 @@ pub struct ElaboratedObject {
     pub children: Vec<ElaboratedObject>,
 }
 
+#[derive(Clone)]
+pub struct ElaboratedInput {
+    pub root: ElaboratedObject,
+    pub analyzed: crate::semantic::AnalyzedInput,
+}
+
 /// Elaborate once, retaining the engine AST nodes instead of serializing and
 /// parsing each child. Every successful product parse has a typed root.
 pub fn elaborate(source: &str) -> Result<ElaboratedObject, EngineError> {
+    Ok(elaborate_input(source)?.root)
+}
+
+/// Single-parse product input boundary: semantic tree and the transitional
+/// summary are both derived from the same AST.
+pub fn elaborate_input(source: &str) -> Result<ElaboratedInput, EngineError> {
     crate::input::validate_safe_text(source, "语义表达式")?;
     crate::input::with_parse_env(|env| {
         let tree = yacas_rs::parser::parse_expression(env, &format!("{source};"))
             .map_err(|error| EngineError::InvalidInput(format!("语义表达式语法错误: {error:?}")))?
             .ok_or_else(|| EngineError::InvalidInput("语义表达式为空".into()))?;
         let mut next_id = 1;
-        Ok(elaborate_node(&tree, &mut next_id))
+        Ok(ElaboratedInput {
+            root: elaborate_node(&tree, &mut next_id),
+            analyzed: crate::semantic::analyze_tree(env, &tree),
+        })
     })
 }
 

@@ -1287,8 +1287,9 @@ pub fn process_expression_with_engine(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
 ) -> Result<ProcessExpressionResult, ErrorResponse> {
-    let analyzed =
-        processing::semantic::analyze_input(&request.expression, "表达式").map_err(message)?;
+    let elaborated =
+        processing::elaboration::elaborate_input(&request.expression).map_err(message)?;
+    let analyzed = elaborated.analyzed;
     let semantic_input = match analyzed.root_call.as_ref() {
         Some(call) if call.head == "Limit" && call.arguments.len() == 2 => {
             processing::semantic::analyze_input(
