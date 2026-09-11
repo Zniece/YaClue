@@ -66,6 +66,9 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
         crate::elaboration::MathematicalForm::Application { head } if head == "Solve" => {
             expression.children.len() == 2 && can_execute_elaborated_tree(&expression.children[0])
         }
+        crate::elaboration::MathematicalForm::Application { head } if head == "OdeSolve" => {
+            expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
+        }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
                 && expression.children.iter().all(can_execute_elaborated_tree)
@@ -106,7 +109,7 @@ pub fn has_migrated_calculus_descendant(expression: &crate::elaboration::Elabora
     expression.children.iter().any(|child| {
         matches!(&child.form,
             crate::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
+                if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate" | "OdeSolve"))
             || has_migrated_calculus_descendant(child)
     })
 }
@@ -186,6 +189,9 @@ pub fn execute_elaborated_structure(
         }
         if head == "Solve" {
             return execute_solve_application(engine, expression);
+        }
+        if head == "OdeSolve" {
+            return execute_ode_solve_application(engine, expression);
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
@@ -420,6 +426,30 @@ fn execute_solve_application(
         },
     )?;
     merge_prior_computation(&mut current, &mut equations);
+    Ok(current)
+}
+
+fn execute_ode_solve_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let [equation_node] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput("OdeSolve 需要一个方程".into()));
+    };
+    let mut equation = execute_elaborated_structure(engine, equation_node)?;
+    if !matches!(equation.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, equation, "OdeSolve", 0);
+    }
+    let input = equation.value().expect("checked ODE equation").clone();
+    let mut current = crate::ode::OdeSolveOperation.compute(
+        engine,
+        &input,
+        &crate::ode::OdeSolveRequest {
+            independent: "x".into(),
+            dependent: "y".into(),
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut equation);
     Ok(current)
 }
 

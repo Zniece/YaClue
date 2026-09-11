@@ -407,6 +407,10 @@ pub enum SemanticInterpretation {
         variables: Vec<String>,
         parameters: Vec<String>,
     },
+    FunctionFamily {
+        variable: String,
+        parameters: Vec<String>,
+    },
     /// A valid mathematical application deliberately retained because no
     /// closed-form evaluation is available yet (for example `Integrate`).
     HeldApplication {
@@ -548,6 +552,7 @@ pub enum ObjectCapability {
     Plot,
     ExpandTaylor,
     SolveEquation,
+    SolveOde,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -579,7 +584,7 @@ impl CapabilitySet {
         )
     }
     pub const fn equation_input() -> Self {
-        Self(1 << ObjectCapability::SolveEquation as u8)
+        Self((1 << ObjectCapability::SolveEquation as u8) | (1 << ObjectCapability::SolveOde as u8))
     }
     pub const fn contains(self, capability: ObjectCapability) -> bool {
         self.0 & (1 << capability as u8) != 0

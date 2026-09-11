@@ -11,6 +11,14 @@ use crate::input::{
     analyze_expression, contains_exact_power, contains_product_factor, contains_ratio_symbols,
     fresh_internal_symbols, strip_tex_delimiters, validate_expression, validate_symbol,
 };
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
+};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
@@ -102,6 +110,130 @@ pub struct OdeResult {
     /// Substitution residual returned by `OdeTest`.
     pub residual: String,
     pub constants: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OdeSolveRequest {
+    pub independent: String,
+    pub dependent: String,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OdeSolveOperation;
+
+impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &OdeSolveRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::SolveOde)
+        {
+            return Err(EngineError::InvalidInput(
+                "该对象不是可求解的微分方程".into(),
+            ));
+        }
+        let result = solve(
+            engine,
+            &input.print_source(),
+            &request.independent,
+            &request.dependent,
+            &[],
+        )?;
+        let solved = result.status == OdeStatus::Solved;
+        let output_source = if solved {
+            result.solution.clone()
+        } else {
+            format!("OdeSolve({})", input.print_source())
+        };
+        let semantics = SemanticState {
+            kind: if solved {
+                ValueKind::FunctionFamily
+            } else {
+                ValueKind::Unevaluated
+            },
+            interpretation: if solved {
+                SemanticInterpretation::FunctionFamily {
+                    variable: request.dependent.clone(),
+                    parameters: result.constants.clone(),
+                }
+            } else {
+                SemanticInterpretation::HeldApplication {
+                    operator: "OdeSolve".into(),
+                }
+            },
+            metadata: if solved {
+                ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+            } else {
+                ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+            },
+            capabilities: if solved {
+                CapabilitySet::symbolic_expression()
+            } else {
+                CapabilitySet::empty()
+            },
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: solved.then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::OdeSolve),
+            }),
+        });
+        let mut bindings = vec![
+            ("independent".into(), request.independent.clone()),
+            ("dependent".into(), request.dependent.clone()),
+        ];
+        bindings.extend(
+            result
+                .constants
+                .iter()
+                .cloned()
+                .map(|constant| ("constant".into(), constant)),
+        );
+        let event = RuleEvent {
+            rule: if solved {
+                "solve-ode"
+            } else {
+                "hold-ode-solve"
+            }
+            .into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings,
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: solved.then(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "求得并验证常微分方程解集。".into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: if solved {
+                ComputationOutput::Value(output)
+            } else {
+                ComputationOutput::Held(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1984,5 +2116,44 @@ mod tests {
         .is_err());
         assert!(solve(&mut engine, "y);Echo(1);(y'==0", "x", "y", &[]).is_err());
         assert_eq!(engine.eval("2+3").unwrap().expr.to_string(), "5");
+    }
+
+    #[test]
+    fn object_ode_solve_returns_a_normalized_function_family() {
+        let input = object_from_source(
+            crate::semantic_core::ObjectId(91),
+            "y'==y",
+            SemanticState {
+                kind: ValueKind::Equation,
+                interpretation: SemanticInterpretation::Equation,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::equation_input(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = OdeSolveOperation
+            .compute(
+                &mut engine,
+                &input,
+                &OdeSolveRequest {
+                    independent: "x".into(),
+                    dependent: "y".into(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(result.output, ComputationOutput::Value(_)));
+        let family = result.value().unwrap();
+        assert_eq!(family.id, crate::semantic_core::ObjectId(91));
+        assert!(family.meets_normalization(NormalizationLevel::Domain));
+        assert!(matches!(
+            family.semantics.interpretation,
+            SemanticInterpretation::FunctionFamily { .. }
+        ));
+        assert!(family
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::Differentiate));
     }
 }
