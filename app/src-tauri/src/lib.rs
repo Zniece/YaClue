@@ -455,10 +455,13 @@ fn dispatch_expression_with_engine(
         || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head }
                 if processing::arithmetic::is_migrated_numeric_evaluation(head))
+        || matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head } if head == "Taylor")
         || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_numeric_descendant(&elaborated.root)
+        || processing::arithmetic::has_migrated_taylor_descendant(&elaborated.root)
         || processing::arithmetic::has_effect_descendant(&elaborated.root)
         || call
             .as_ref()
@@ -1854,7 +1857,11 @@ mod tests {
                 process_expression_with_engine(request("Taylor(Exp(x),0,6)", steps), &mut engine)
                     .unwrap();
             assert_eq!(result.kind, "composition");
-            assert!(result.expression.contains("x ^ 6"), "{}", result.expression);
+            assert!(
+                result.expression.contains("x ^ 6") || result.expression.contains("x^6"),
+                "{}",
+                result.expression
+            );
             assert_eq!(result.steps.is_empty(), !steps);
             assert!(result.semantic.bound_symbols.is_empty());
             assert_eq!(result.semantic.symbols, ["x"]);
@@ -1890,10 +1897,7 @@ mod tests {
             "{}",
             result.expression
         );
-        assert!(result
-            .steps
-            .iter()
-            .any(|step| step.rule == "compose_taylor"));
+        assert!(result.steps.iter().any(|step| step.rule == "taylor-expand"));
         assert!(result
             .steps
             .iter()

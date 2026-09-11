@@ -193,6 +193,124 @@ pub struct TaylorResult {
     pub unresolved: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaylorRequest {
+    pub variable: String,
+    pub point: String,
+    pub degree: u32,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TaylorOperation;
+
+impl SemanticOperation<TaylorRequest> for TaylorOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &TaylorRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::ExpandTaylor)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备 Taylor 展开能力".into(),
+            ));
+        }
+        let result = taylor(
+            engine,
+            &input.print_source(),
+            &request.variable,
+            &request.point,
+            request.degree,
+        )?;
+        let output_source = if result.unresolved {
+            format!(
+                "Taylor({},{},{})({})",
+                request.variable,
+                request.point,
+                request.degree,
+                input.print_source()
+            )
+        } else {
+            result.output.clone()
+        };
+        let semantics = SemanticState {
+            kind: if result.unresolved {
+                ValueKind::Unevaluated
+            } else {
+                crate::semantic::analyze_input(&output_source, "Taylor 展开结果")?
+                    .semantic
+                    .kind
+            },
+            interpretation: if result.unresolved {
+                SemanticInterpretation::HeldApplication {
+                    operator: "Taylor".into(),
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata: if result.unresolved {
+                ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+            } else {
+                ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+            },
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!result.unresolved).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::Taylor),
+            }),
+        });
+        let event = RuleEvent {
+            rule: if result.unresolved {
+                "hold-taylor"
+            } else {
+                "taylor-expand"
+            }
+            .into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: vec![
+                ("variable".into(), request.variable.clone()),
+                ("point".into(), request.point.clone()),
+                ("degree".into(), request.degree.to_string()),
+            ],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: (!result.unresolved).then(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "在指定点展开 Taylor 多项式。".into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: if result.unresolved {
+                ComputationOutput::Held(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
 pub fn approximate(
     engine: &mut dyn Engine,
     expression: &str,
@@ -501,5 +619,62 @@ mod tests {
             .compute(&mut engine, &object("Undefined"), &request)
             .unwrap();
         assert!(matches!(absent.output, ComputationOutput::NoValue(_)));
+    }
+
+    #[test]
+    fn object_taylor_preserves_identity_and_holds_uncovered_series() {
+        let object = |source: &str| {
+            object_from_source(
+                ObjectId(73),
+                source,
+                SemanticState {
+                    kind: ValueKind::Expression,
+                    interpretation: SemanticInterpretation::PlainExpression,
+                    metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                    capabilities: CapabilitySet::symbolic_expression(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let request = TaylorRequest {
+            variable: "x".into(),
+            point: "0".into(),
+            degree: 4,
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let value = TaylorOperation
+            .compute(&mut engine, &object("Exp(x)"), &request)
+            .unwrap();
+        assert_eq!(value.value().unwrap().id, ObjectId(73));
+        assert!(value.value().unwrap().revision.0 > 0);
+        assert!(value
+            .value()
+            .unwrap()
+            .meets_normalization(NormalizationLevel::Domain));
+        assert_eq!(value.trace.unwrap().events[0].rule, "taylor-expand");
+
+        struct HeldTaylorEngine;
+        impl Engine for HeldTaylorEngine {
+            fn eval(&mut self, _command: &str) -> Result<EvalResult, EngineError> {
+                Ok(EvalResult {
+                    expr: Expr::Call {
+                        head: "Taylor".into(),
+                        args: vec![],
+                    },
+                    tex: "Taylor".into(),
+                })
+            }
+        }
+        let held = TaylorOperation
+            .compute(&mut HeldTaylorEngine, &object("Sin(1/x)"), &request)
+            .unwrap();
+        assert!(matches!(held.output, ComputationOutput::Held(_)));
+        assert!(held
+            .subject()
+            .unwrap()
+            .print_source()
+            .starts_with("Taylor("));
+        assert!(held.subject().unwrap().print_source().contains("Sin(1/x)"));
     }
 }

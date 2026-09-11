@@ -55,6 +55,14 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
             matches!(expression.children.len(), 1 | 2)
                 && can_execute_elaborated_tree(&expression.children[0])
         }
+        crate::elaboration::MathematicalForm::Application { head } if head == "Taylor" => {
+            let operand_index = match expression.children.len() {
+                3 => 0,
+                4 => 3,
+                _ => return false,
+            };
+            can_execute_elaborated_tree(&expression.children[operand_index])
+        }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
                 && expression.children.iter().all(can_execute_elaborated_tree)
@@ -75,6 +83,13 @@ pub fn is_migrated_transform(head: &str) -> bool {
 
 pub fn is_migrated_numeric_evaluation(head: &str) -> bool {
     matches!(head, "N" | "Approximate")
+}
+
+pub fn has_migrated_taylor_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
+    expression.children.iter().any(|child| {
+        matches!(&child.form, crate::elaboration::MathematicalForm::Application { head } if head == "Taylor")
+            || has_migrated_taylor_descendant(child)
+    })
 }
 
 pub fn has_migrated_calculus_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
@@ -155,6 +170,9 @@ pub fn execute_elaborated_structure(
         }
         if is_migrated_numeric_evaluation(head) {
             return execute_numeric_application(engine, expression, head);
+        }
+        if head == "Taylor" {
+            return execute_taylor_application(engine, expression);
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
@@ -289,6 +307,50 @@ fn execute_numeric_application(
         &input,
         &crate::numeric::NumericEvaluationRequest {
             precision_digits: precision,
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
+}
+
+fn execute_taylor_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let (operand_index, variable, point, degree_source) = match expression.children.as_slice() {
+        [_operand, point, degree] => (
+            0,
+            "x".to_string(),
+            point.object.print_source(),
+            degree.object.print_source(),
+        ),
+        [variable, point, degree, _operand] => (
+            3,
+            variable.object.print_source(),
+            point.object.print_source(),
+            degree.object.print_source(),
+        ),
+        _ => {
+            return Err(EngineError::InvalidInput(
+                "Taylor 需要 expression、point、degree，或 variable、point、degree、operand".into(),
+            ))
+        }
+    };
+    let degree = degree_source
+        .parse::<u32>()
+        .map_err(|_| EngineError::InvalidInput("Taylor 阶数必须是非负整数".into()))?;
+    let mut operand = execute_elaborated_structure(engine, &expression.children[operand_index])?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, "Taylor", operand_index);
+    }
+    let input = operand.value().expect("checked Taylor operand").clone();
+    let mut current = crate::numeric::TaylorOperation.compute(
+        engine,
+        &input,
+        &crate::numeric::TaylorRequest {
+            variable,
+            point,
+            degree,
         },
     )?;
     merge_prior_computation(&mut current, &mut operand);

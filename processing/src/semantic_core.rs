@@ -528,6 +528,7 @@ pub enum ObjectCapability {
     Expand,
     NumericEvaluate,
     Plot,
+    ExpandTaylor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -553,7 +554,8 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::Factor as u8)
                 | (1 << ObjectCapability::Expand as u8)
                 | (1 << ObjectCapability::NumericEvaluate as u8)
-                | (1 << ObjectCapability::Plot as u8),
+                | (1 << ObjectCapability::Plot as u8)
+                | (1 << ObjectCapability::ExpandTaylor as u8),
         )
     }
     pub const fn contains(self, capability: ObjectCapability) -> bool {
