@@ -36,6 +36,12 @@ pub struct ElaboratedInput {
     pub analyzed: crate::semantic::AnalyzedInput,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PartialCandidates {
+    pub spelling: String,
+    pub candidates: Vec<crate::semantic_core::PartialApplication>,
+}
+
 /// Elaborate once, retaining the engine AST nodes instead of serializing and
 /// parsing each child. Every successful product parse has a typed root.
 pub fn elaborate(source: &str) -> Result<ElaboratedObject, EngineError> {
@@ -96,7 +102,9 @@ pub fn operand_partial(
         })?;
         crate::input::validate_symbol(&variable, "绑定变量")?;
     }
-    let state = crate::semantic_core::operand_partial_state(head, bound_count)?;
+    let Ok(state) = crate::semantic_core::operand_partial_state(head, bound_count) else {
+        return Ok(None);
+    };
     Ok(Some(MathematicalObject::new(
         expression.object.id,
         expression.object.raw_expression(),
@@ -111,6 +119,41 @@ pub fn operand_partial(
             requirements: state.missing,
         },
     )))
+}
+
+/// Return every registered signature compatible with the already supplied
+/// prefix. No candidate is selected merely because it has the smallest arity.
+pub fn partial_candidates(
+    expression: &ElaboratedObject,
+) -> Result<Option<PartialCandidates>, EngineError> {
+    let MathematicalForm::Application { head } = &expression.form else {
+        return Ok(None);
+    };
+    let Some(descriptor) = crate::semantic_core::operator_descriptor(head) else {
+        return Ok(None);
+    };
+    let bound_count = expression.children.len();
+    if descriptor.arities.contains(&bound_count) {
+        return Ok(None);
+    }
+    let mut candidates = descriptor
+        .arities
+        .iter()
+        .copied()
+        .filter(|arity| *arity > bound_count)
+        .filter_map(|arity| {
+            crate::semantic_core::partial_application_state(head, arity, bound_count).ok()
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|candidate| candidate.expected_arity);
+    if candidates.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(PartialCandidates {
+            spelling: head.clone(),
+            candidates,
+        }))
+    }
 }
 
 fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject {
@@ -282,6 +325,25 @@ mod tests {
         assert!(operand_partial(&complete).unwrap().is_none());
         let invalid = elaborate("D(x+1)").unwrap();
         assert!(operand_partial(&invalid).is_err());
+    }
+
+    #[test]
+    fn preserves_overloaded_partial_signature_candidates() {
+        let root = elaborate("Limit(t)").unwrap();
+        let candidates = partial_candidates(&root).unwrap().unwrap();
+        assert_eq!(
+            candidates
+                .candidates
+                .iter()
+                .map(|candidate| candidate.expected_arity)
+                .collect::<Vec<_>>(),
+            [2, 3, 4]
+        );
+        assert!(candidates.candidates[0].binder_scopes.is_empty());
+        assert_eq!(
+            candidates.candidates[1].display_template(&["t".into()]),
+            "Limit(t)(<approach_point>)(<operand>)"
+        );
     }
 
     #[test]

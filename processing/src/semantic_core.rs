@@ -250,6 +250,30 @@ pub struct PartialApplication {
     pub binder_scopes: Vec<BinderScope>,
 }
 
+impl PartialApplication {
+    pub fn display_template(&self, bound_sources: &[String]) -> String {
+        let mut display = format!("{}({})", self.spelling, bound_sources.join(","));
+        for requirement in &self.missing {
+            let label = match requirement {
+                Requirement::Operand => "operand",
+                Requirement::Variable => "variable",
+                Requirement::ApproachPoint => "approach_point",
+                Requirement::Direction => "direction",
+                Requirement::Interval => "interval",
+                Requirement::Order => "order",
+                Requirement::LowerBound => "lower_bound",
+                Requirement::UpperBound => "upper_bound",
+                Requirement::Replacement => "replacement",
+                Requirement::InitialCondition => "initial_condition",
+                Requirement::Precision => "precision",
+                Requirement::Assumption => "assumption",
+            };
+            display.push_str(&format!("(<{label}>)"));
+        }
+        display
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OperatorDescriptor {
     pub id: OperatorId,
@@ -601,6 +625,9 @@ pub fn partial_application_state(
         binder_scopes: descriptor
             .binders
             .iter()
+            .filter(|binder| {
+                requirements.get(binder.binder_argument) == Some(&Requirement::Variable)
+            })
             .map(|binder| BinderScope {
                 binder_slot: binder.binder_argument,
                 scope_slot: match binder.scope_argument {

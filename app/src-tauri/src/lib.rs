@@ -1465,6 +1465,40 @@ pub fn process_expression_with_engine(
             outcome,
         });
     }
+    if let Some(partials) =
+        processing::elaboration::partial_candidates(&elaborated.root).map_err(message)?
+    {
+        let mut semantic = analyzed.semantic.clone();
+        semantic.kind = ValueKind::Unevaluated;
+        let bound_sources = elaborated
+            .root
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect::<Vec<_>>();
+        let templates = partials
+            .candidates
+            .iter()
+            .map(|candidate| candidate.display_template(&bound_sources))
+            .collect::<Vec<_>>();
+        return Ok(ProcessExpressionResult {
+            kind: "partial_application".into(),
+            title: "部分应用".into(),
+            expression: request.expression,
+            tex: format!("\\operatorname{{{}}}", partials.spelling),
+            steps: Vec::new(),
+            data: serde_json::json!({
+                "status": "ambiguous_partial_application",
+                "candidates": partials.candidates,
+                "display_templates": templates,
+            }),
+            semantic,
+            outcome: ResultMetadata::unresolved(
+                analyzed.semantic.exactness,
+                OutcomeReason::AlgorithmUncovered,
+            ),
+        });
+    }
     let semantic_input = match analyzed.root_call.as_ref() {
         Some(call) if call.head == "Limit" && call.arguments.len() == 2 => {
             processing::semantic::analyze_input(
@@ -2100,6 +2134,17 @@ mod tests {
                 processing::protocol::ResolutionState::Unresolved
             );
         }
+
+        let overloaded =
+            process_expression_with_engine(request("Limit(t)", false), &mut engine).unwrap();
+        assert_eq!(overloaded.kind, "partial_application");
+        assert_eq!(overloaded.data["status"], "ambiguous_partial_application");
+        assert_eq!(overloaded.data["candidates"].as_array().unwrap().len(), 3);
+        assert!(overloaded.data["display_templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|template| template == "Limit(t)(<approach_point>)(<operand>)"));
 
         let completed = process_expression_with_engine(
             request("Limit(t,0)(D(x)(Integrate(x)(Sin(t)/t+x^2)))", false),
