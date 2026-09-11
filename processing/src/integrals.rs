@@ -7,10 +7,85 @@ use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
-    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
-    SemanticState,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, ObjectId, OperatorId, Requirement,
+    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
+
+/// Curried `Integrate(variable)`, waiting for its integrand.
+pub fn integral_partial(
+    id: ObjectId,
+    variable: &str,
+) -> Result<crate::semantic_core::MathematicalObject, EngineError> {
+    validate_symbol(variable, "积分变量")?;
+    object_from_source(
+        id,
+        &format!("Integrate({variable})"),
+        SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: SemanticInterpretation::HeldApplication {
+                operator: "Integrate".into(),
+            },
+            metadata: ResultMetadata::unresolved(
+                Exactness::Symbolic,
+                OutcomeReason::AlgorithmUncovered,
+            ),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: vec![Requirement::Operand],
+        },
+    )
+}
+
+/// Complete an integral partial using its AST parameters and an object operand.
+pub fn apply_integral_partial(
+    engine: &mut dyn Engine,
+    partial: &crate::semantic_core::MathematicalObject,
+    operand: &crate::semantic_core::MathematicalObject,
+) -> Result<Computation, EngineError> {
+    if !matches!(&partial.semantics.interpretation,
+        SemanticInterpretation::HeldApplication { operator } if operator == "Integrate")
+        || partial.semantics.requirements != [Requirement::Operand]
+    {
+        return Err(EngineError::InvalidInput(
+            "对象不是等待 operand 的 Integrate 部分应用".into(),
+        ));
+    }
+    let variable = crate::input::with_parse_env(|env| {
+        let view = partial.view(env);
+        let arguments = view.arguments();
+        let [variable] = arguments.as_slice() else {
+            return Err(EngineError::Parse("Integrate 部分应用参数数量异常".into()));
+        };
+        if view.head() != Some("Integrate") {
+            return Err(EngineError::Parse("Integrate 部分应用 AST 形态异常".into()));
+        }
+        Ok(variable.print_source())
+    })?;
+    IntegralOperation.compute(
+        engine,
+        operand,
+        &IntegralRequest {
+            variable,
+            arbitrary_constant: available_constant(operand),
+        },
+    )
+}
+
+pub(crate) fn available_constant(input: &crate::semantic_core::MathematicalObject) -> String {
+    let occupied = crate::input::with_parse_env(|env| {
+        let analyzed = crate::semantic::analyze_tree(env, &input.raw_expression());
+        analyzed
+            .semantic
+            .symbols
+            .into_iter()
+            .chain(analyzed.semantic.constants)
+            .collect::<Vec<_>>()
+    });
+    crate::semantic::display_arbitrary_constants(&occupied, 1)
+        .into_iter()
+        .next()
+        .expect("one arbitrary constant requested")
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntegralRequest {
@@ -164,6 +239,138 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefiniteIntegralRequest {
+    pub variable: String,
+    pub lower: String,
+    pub upper: String,
+}
+
+impl DefiniteIntegralRequest {
+    pub fn validate(&self) -> Result<(), EngineError> {
+        validate_symbol(&self.variable, "积分变量")?;
+        crate::input::validate_expression(&self.lower, "积分下限")?;
+        crate::input::validate_expression(&self.upper, "积分上限")
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DefiniteIntegralOperation;
+
+impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &DefiniteIntegralRequest,
+    ) -> Result<Computation, EngineError> {
+        request.validate()?;
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::Integrate)
+        {
+            return Err(EngineError::InvalidInput("该数学对象不具备积分能力".into()));
+        }
+        let source = input.print_source();
+        let representative = engine
+            .eval_expr(&format!(
+                "Integrate({},{},{}){source}",
+                request.variable, request.lower, request.upper
+            ))?
+            .to_string();
+        let unresolved = crate::input::with_parse_env(|env| {
+            let parsed = yacas_rs::parser::parse_expression(env, &format!("{representative};"))
+                .map_err(|error| EngineError::Parse(format!("定积分结果语法异常: {error:?}")))?
+                .ok_or_else(|| EngineError::Parse("定积分结果为空".into()))?;
+            Ok(crate::semantic_core::ExpressionView::new(env, &parsed).head() == Some("Integrate"))
+        })?;
+        let metadata = if unresolved {
+            ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+        } else {
+            ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+        };
+        let semantics = SemanticState {
+            kind: if unresolved {
+                ValueKind::Unevaluated
+            } else {
+                crate::input::with_parse_env(|env| {
+                    let parsed =
+                        yacas_rs::parser::parse_expression(env, &format!("{representative};"))
+                            .expect("engine result parses")
+                            .expect("engine result exists");
+                    crate::semantic::analyze_tree(env, &parsed).semantic.kind
+                })
+            },
+            interpretation: if unresolved {
+                SemanticInterpretation::HeldApplication {
+                    operator: "Integrate".into(),
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata,
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &representative, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!unresolved).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::Integral),
+            }),
+        });
+        let events = crate::steps::derive_definite_with_verbosity(
+            engine,
+            &source,
+            &request.variable,
+            &request.lower,
+            &request.upper,
+            crate::steps::StepVerbosity::Detailed,
+        )?
+        .into_iter()
+        .map(|step| RuleEvent {
+            rule: step.rule,
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: vec![
+                ("variable".into(), request.variable.clone()),
+                ("lower".into(), request.lower.clone()),
+                ("upper".into(), request.upper.clone()),
+            ],
+            conditions: Vec::new(),
+            payload: RulePayload::Structural,
+            importance: match step.importance {
+                crate::steps::StepImportance::Routine => RuleImportance::Routine,
+                crate::steps::StepImportance::Normal => RuleImportance::Normal,
+                crate::steps::StepImportance::Key => RuleImportance::Key,
+            },
+            presentation: Some(RulePresentation {
+                expression: step.expr,
+                explanation: step.why,
+                tex_override: Some(step.tex),
+            }),
+        })
+        .collect();
+        Ok(Computation {
+            output: if unresolved {
+                ComputationOutput::Held(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace { events }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,5 +445,65 @@ mod tests {
             .unwrap()
             .print_source()
             .contains("Integrate"));
+    }
+
+    #[test]
+    fn partial_integral_is_a_typed_callable_and_avoids_constant_collisions() {
+        let partial = integral_partial(ObjectId(8), "x").unwrap();
+        assert_eq!(partial.semantics.requirements, vec![Requirement::Operand]);
+        assert!(matches!(partial.semantics.interpretation,
+            SemanticInterpretation::HeldApplication { ref operator } if operator == "Integrate"));
+
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = apply_integral_partial(&mut engine, &partial, &input("C*x")).unwrap();
+        let output = result.value().unwrap();
+        assert_eq!(output.semantics.kind, ValueKind::FunctionFamily);
+        assert!(
+            output.print_source().contains("C1"),
+            "{}",
+            output.print_source()
+        );
+    }
+
+    #[test]
+    fn definite_integral_returns_a_scalar_without_an_arbitrary_constant() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = DefiniteIntegralOperation
+            .compute(
+                &mut engine,
+                &input("x^2"),
+                &DefiniteIntegralRequest {
+                    variable: "x".into(),
+                    lower: "0".into(),
+                    upper: "1".into(),
+                },
+            )
+            .unwrap();
+        let output = result.value().unwrap();
+        assert_eq!(output.print_source(), "1/3");
+        assert_eq!(output.semantics.kind, ValueKind::Scalar);
+        assert!(!output.print_source().contains('C'));
+    }
+
+    #[test]
+    fn unresolved_definite_integral_remains_held() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = DefiniteIntegralOperation
+            .compute(
+                &mut engine,
+                &input("f(x)"),
+                &DefiniteIntegralRequest {
+                    variable: "x".into(),
+                    lower: "0".into(),
+                    upper: "1".into(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        assert!(result
+            .subject()
+            .unwrap()
+            .print_source()
+            .starts_with("Integrate("));
     }
 }

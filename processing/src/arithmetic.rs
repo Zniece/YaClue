@@ -34,6 +34,7 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                 ("D" | "Deriv", 2) => 1,
                 ("D" | "Deriv", 3) => 2,
                 ("Integrate", 2) => 1,
+                ("Integrate", 4) => 3,
                 _ => return false,
             };
             can_execute_elaborated_tree(&expression.children[operand_index])
@@ -551,20 +552,29 @@ fn execute_calculus_application(
                 }),
             )
         }
-        "Integrate" => {
-            let [variable, _operand] = expression.children.as_slice() else {
-                return Err(EngineError::InvalidInput(
-                    "当前对象积分迁移仅支持不定积分 Integrate(variable)(operand)".into(),
-                ));
-            };
-            (
+        "Integrate" => match expression.children.as_slice() {
+            [variable, _operand] => (
                 1,
                 CalculusRequest::Integral(crate::integrals::IntegralRequest {
                     variable: variable.object.print_source(),
                     arbitrary_constant: "C".into(),
                 }),
-            )
-        }
+            ),
+            [variable, lower, upper, _operand] => (
+                3,
+                CalculusRequest::DefiniteIntegral(crate::integrals::DefiniteIntegralRequest {
+                    variable: variable.object.print_source(),
+                    lower: lower.object.print_source(),
+                    upper: upper.object.print_source(),
+                }),
+            ),
+            _ => {
+                return Err(EngineError::InvalidInput(format!(
+                    "Integrate 不支持 {} 个参数",
+                    expression.children.len()
+                )))
+            }
+        },
         _ => unreachable!(),
     };
     if let CalculusRequest::Derivative(derivative) = &request {
@@ -613,24 +623,13 @@ fn execute_calculus_application(
     }
     let input = operand.value().expect("checked value computation").clone();
     if let CalculusRequest::Integral(request) = &mut request {
-        let occupied = crate::input::with_parse_env(|env| {
-            let analyzed = crate::semantic::analyze_tree(env, &input.raw_expression());
-            analyzed
-                .semantic
-                .symbols
-                .into_iter()
-                .chain(analyzed.semantic.constants)
-                .collect::<Vec<_>>()
-        });
-        request.arbitrary_constant = crate::semantic::display_arbitrary_constants(&occupied, 1)
-            .into_iter()
-            .next()
-            .expect("one arbitrary constant requested");
+        request.arbitrary_constant = crate::integrals::available_constant(&input);
     }
     let required_capability = match &request {
         CalculusRequest::Limit(_) => ObjectCapability::EvaluateLimit,
         CalculusRequest::Derivative(_) => ObjectCapability::Differentiate,
         CalculusRequest::Integral(_) => ObjectCapability::Integrate,
+        CalculusRequest::DefiniteIntegral(_) => ObjectCapability::Integrate,
     };
     if !input.semantics.capabilities.contains(required_capability) {
         let mut blocked = input.clone();
@@ -668,6 +667,9 @@ fn execute_calculus_application(
         CalculusRequest::Integral(request) => {
             crate::integrals::IntegralOperation.compute(engine, &input, &request)?
         }
+        CalculusRequest::DefiniteIntegral(request) => {
+            crate::integrals::DefiniteIntegralOperation.compute(engine, &input, &request)?
+        }
     };
     merge_prior_computation(&mut computation, &mut operand);
     Ok(computation)
@@ -677,6 +679,7 @@ enum CalculusRequest {
     Limit(crate::limits::LimitRequest),
     Derivative(crate::derivatives::DerivativeRequest),
     Integral(crate::integrals::IntegralRequest),
+    DefiniteIntegral(crate::integrals::DefiniteIntegralRequest),
 }
 
 fn merge_prior_computation(current: &mut Computation, prior: &mut Computation) {
@@ -1366,6 +1369,21 @@ mod tests {
             .events
             .iter()
             .any(|event| event.rule == "derivative-of-indefinite-integral"));
+    }
+
+    #[test]
+    fn definite_integrals_compose_as_typed_values() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("Integrate(x,0,1)(x^2)", "1/3"),
+            ("2+Integrate(x,0,1)(x^2)", "7/3"),
+            ("Sin(Integrate(x,0,1)(x^2))", "Sin(1/3)"),
+        ] {
+            let elaborated = crate::elaboration::elaborate(source).unwrap();
+            assert!(can_execute_elaborated_tree(&elaborated), "{source}");
+            let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+            assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
+        }
     }
 
     #[test]
