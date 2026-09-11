@@ -804,8 +804,8 @@ fn parse_condition(expr: &Expr) -> Result<LimitCondition, EngineError> {
     }
 }
 
-fn classify(expr: &Expr, value: &str) -> LimitStatus {
-    if matches!(expr, Expr::Call { head, .. } if head == "Limit") || value.starts_with("Limit(") {
+fn classify(expr: &Expr, _value: &str) -> LimitStatus {
+    if matches!(expr, Expr::Call { head, .. } if head == "Limit") {
         LimitStatus::Unresolved
     } else if matches!(expr, Expr::Symbol(symbol) if symbol == "Infinity") {
         LimitStatus::PositiveInfinity
