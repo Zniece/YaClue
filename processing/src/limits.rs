@@ -280,6 +280,15 @@ pub fn limit_computation_for_object(
 ) -> Result<Computation, EngineError> {
     validate_symbol(variable, "极限变量")?;
     validate_expression(at, "趋近点")?;
+    if !operand
+        .semantics
+        .capabilities
+        .contains(crate::semantic_core::ObjectCapability::EvaluateLimit)
+    {
+        return Err(EngineError::InvalidInput(
+            "该数学对象不具备取极限能力".into(),
+        ));
+    }
     let expression = operand.print_source();
     let mut object = operand.clone();
     let input = object.reference(None);
@@ -1165,6 +1174,14 @@ mod tests {
             absent.subject().unwrap().semantics.metadata.resolution,
             crate::protocol::ResolutionState::NoResult
         );
+        assert!(limit_computation_for_object(
+            &mut engine,
+            absent.subject().unwrap(),
+            "x",
+            "0",
+            LimitDirection::Both,
+        )
+        .is_err());
     }
 
     #[test]
