@@ -144,6 +144,23 @@ impl<'a> ExpressionView<'a> {
             .collect()
     }
 
+    /// Resolve a semantic AST path without allocating or reparsing a mirror
+    /// expression. Path segments address application arguments (the head is
+    /// deliberately excluded).
+    pub fn at_path(&self, path: &ExpressionPath) -> Option<ExpressionView<'a>> {
+        let mut node = self.node;
+        for index in path.segments() {
+            let ObjectKind::Sublist(first) = &node.kind else {
+                return None;
+            };
+            node = spine_refs(first).skip(1).nth(*index)?;
+        }
+        Some(ExpressionView {
+            env: self.env,
+            node,
+        })
+    }
+
     /// Compatibility boundary for an engine consumer that still needs source
     /// text.  Semantic-core internals should pass views, not this string.
     pub fn print_source(&self) -> String {
