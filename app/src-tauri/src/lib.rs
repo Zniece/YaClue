@@ -371,6 +371,37 @@ fn dispatch_expression_with_engine(
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
     let call = &analyzed.root_call;
     let verbosity = parse_verbosity(&request.verbosity)?;
+    if let Some(call) = call
+        .as_ref()
+        .filter(|call| call.head == "Limit" && call.arguments.len() == 2)
+    {
+        let expression = &call.arguments[0];
+        let at = &call.arguments[1];
+        let result =
+            processing::limits::limit(&mut *engine, expression, "x", at, LimitDirection::Both)
+                .map_err(message)?;
+        let steps = if request.steps {
+            processing::limits::limit_steps_with_verbosity(
+                &mut *engine,
+                expression,
+                "x",
+                at,
+                LimitDirection::Both,
+                verbosity,
+            )
+            .map_err(message)?
+        } else {
+            Vec::new()
+        };
+        return unified_result(
+            "limit",
+            "极限",
+            result.value.clone(),
+            result.tex.clone(),
+            steps,
+            &result,
+        );
+    }
     let conventional_bodied = call.as_ref().is_some_and(|call| {
         (call.head == "Limit" && call.arguments.len() == 2)
             || (call.head == "Taylor" && call.arguments.len() == 3)
