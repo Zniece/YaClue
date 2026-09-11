@@ -223,6 +223,19 @@ pub struct BinderScope {
     pub scope_slot: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum ApplicationSlot {
+    Bound {
+        slot: usize,
+        path: ExpressionPath,
+    },
+    Missing {
+        slot: usize,
+        requirement: Requirement,
+    },
+}
+
 /// Semantic closure state for a bodied operator awaiting its value argument.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PartialApplication {
@@ -230,6 +243,9 @@ pub struct PartialApplication {
     pub spelling: String,
     pub expected_arity: usize,
     pub bound_arguments: Vec<BoundArgument>,
+    /// Authoritative slot state. The older bound/missing projections remain
+    /// serialized for protocol compatibility while consumers migrate.
+    pub slots: Vec<ApplicationSlot>,
     pub missing: Vec<Requirement>,
     pub binder_scopes: Vec<BinderScope>,
 }
@@ -548,6 +564,21 @@ pub fn operand_partial_state(
                 path: ExpressionPath::root().argument(slot),
             })
             .collect(),
+        slots: (0..expected_arity)
+            .map(|slot| {
+                if slot < bound_argument_count {
+                    ApplicationSlot::Bound {
+                        slot,
+                        path: ExpressionPath::root().argument(slot),
+                    }
+                } else {
+                    ApplicationSlot::Missing {
+                        slot,
+                        requirement: Requirement::Operand,
+                    }
+                }
+            })
+            .collect(),
         missing: vec![Requirement::Operand],
         binder_scopes: descriptor
             .binders
@@ -578,6 +609,13 @@ pub fn require_operand_partial<'a>(
             "部分应用的运算符或缺失槽位不匹配".into(),
         ));
     }
+    if !matches!(
+        partial.slots.as_slice(),
+        [.., ApplicationSlot::Missing { slot, requirement: Requirement::Operand }]
+            if *slot + 1 == partial.expected_arity
+    ) {
+        return Err(EngineError::InvalidInput("部分应用的参数槽状态无效".into()));
+    }
     crate::input::with_parse_env(|env| {
         let view = object.view(env);
         if view.head() != Some(partial.spelling.as_str())
@@ -605,7 +643,36 @@ pub fn complete_operand_partial(
         return Err(EngineError::InvalidInput("对象不是部分应用".into()));
     };
     require_operand_partial(partial_object, partial.operator)?;
-    let expression = partial_object.append_application_argument(operand)?;
+    fill_partial_argument(partial_object, operand, Requirement::Operand)
+}
+
+fn fill_partial_argument(
+    partial_object: &MathematicalObject,
+    argument: &MathematicalObject,
+    requirement: Requirement,
+) -> Result<MathematicalObject, EngineError> {
+    let SemanticInterpretation::PartialApplication(partial) =
+        &partial_object.semantics.interpretation
+    else {
+        return Err(EngineError::InvalidInput("对象不是部分应用".into()));
+    };
+    let missing_slot = partial
+        .slots
+        .iter()
+        .find_map(|slot| match slot {
+            ApplicationSlot::Missing {
+                slot,
+                requirement: expected,
+            } if *expected == requirement => Some(*slot),
+            _ => None,
+        })
+        .ok_or_else(|| EngineError::InvalidInput("部分应用没有匹配的缺失参数槽".into()))?;
+    if missing_slot + 1 != partial.expected_arity {
+        return Err(EngineError::InvalidInput(
+            "非末尾参数槽填充尚未迁移到通用 AST rebuild".into(),
+        ));
+    }
+    let expression = partial_object.append_application_argument(argument)?;
     let mut completed = partial_object.clone();
     completed.apply(ObjectDelta {
         expression: Some(expression),
@@ -1203,6 +1270,18 @@ mod tests {
         assert_eq!(partial.missing, vec![Requirement::Operand]);
         assert_eq!(partial.bound_arguments.len(), 3);
         assert_eq!(partial.bound_arguments[2].path.segments(), &[2]);
+        assert!(matches!(
+            partial.slots.as_slice(),
+            [
+                ApplicationSlot::Bound { slot: 0, .. },
+                ApplicationSlot::Bound { slot: 1, .. },
+                ApplicationSlot::Bound { slot: 2, .. },
+                ApplicationSlot::Missing {
+                    slot: 3,
+                    requirement: Requirement::Operand
+                }
+            ]
+        ));
         assert_eq!(
             partial.binder_scopes,
             vec![BinderScope {
