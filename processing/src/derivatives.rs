@@ -64,9 +64,12 @@ pub fn derivative_partial(
         &source,
         SemanticState {
             kind: ValueKind::Unevaluated,
-            interpretation: SemanticInterpretation::HeldApplication {
-                operator: "D".into(),
-            },
+            interpretation: SemanticInterpretation::PartialApplication(
+                crate::semantic_core::operand_partial_state(
+                    "D",
+                    if request.order == 1 { 1 } else { 2 },
+                )?,
+            ),
             metadata: ResultMetadata::unresolved(
                 Exactness::Symbolic,
                 OutcomeReason::AlgorithmUncovered,
@@ -82,14 +85,8 @@ pub fn apply_derivative_partial(
     partial: &crate::semantic_core::MathematicalObject,
     operand: &crate::semantic_core::MathematicalObject,
 ) -> Result<Computation, EngineError> {
-    if !matches!(&partial.semantics.interpretation,
-        SemanticInterpretation::HeldApplication { operator } if operator == "D")
-        || partial.semantics.requirements != [Requirement::Operand]
-    {
-        return Err(EngineError::InvalidInput(
-            "对象不是等待 operand 的 D 部分应用".into(),
-        ));
-    }
+    crate::semantic_core::require_operand_partial(partial, OperatorId::Derivative)?;
+    let _application = crate::semantic_core::complete_operand_partial(partial, operand)?;
     let request = crate::input::with_parse_env(|env| {
         let view = partial.view(env);
         if view.head() != Some("D") {

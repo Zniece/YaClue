@@ -200,6 +200,31 @@ pub struct BinderDescriptor {
     pub scope_argument: ValueArgument,
 }
 
+/// A bound argument is addressed in the retained application AST, rather
+/// than copied into semantic state as source text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundArgument {
+    pub slot: usize,
+    pub path: ExpressionPath,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinderScope {
+    pub binder_slot: usize,
+    pub scope_slot: usize,
+}
+
+/// Semantic closure state for a bodied operator awaiting its value argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartialApplication {
+    pub operator: OperatorId,
+    pub spelling: String,
+    pub expected_arity: usize,
+    pub bound_arguments: Vec<BoundArgument>,
+    pub missing: Vec<Requirement>,
+    pub binder_scopes: Vec<BinderScope>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OperatorDescriptor {
     pub id: OperatorId,
@@ -369,9 +394,118 @@ pub enum SemanticInterpretation {
     HeldApplication {
         operator: String,
     },
+    PartialApplication(PartialApplication),
     StructuredUnevaluated {
         reason: String,
     },
+}
+
+pub fn operand_partial_state(
+    spelling: &str,
+    bound_argument_count: usize,
+) -> Result<PartialApplication, EngineError> {
+    let descriptor = operator_descriptor(spelling)
+        .ok_or_else(|| EngineError::InvalidInput(format!("未登记的偏应用运算符: {spelling}")))?;
+    if descriptor.value_argument != ValueArgument::Last
+        || !descriptor.forms.contains(&ApplicationForm::Bodied)
+    {
+        return Err(EngineError::InvalidInput(format!(
+            "{spelling} 不是可等待 operand 的 bodied 运算符"
+        )));
+    }
+    let expected_arity = bound_argument_count + 1;
+    if !descriptor.arities.contains(&expected_arity) {
+        return Err(EngineError::InvalidInput(format!(
+            "{spelling} 不支持绑定 {bound_argument_count} 个参数后等待 operand"
+        )));
+    }
+    Ok(PartialApplication {
+        operator: descriptor.id,
+        spelling: spelling.into(),
+        expected_arity,
+        bound_arguments: (0..bound_argument_count)
+            .map(|slot| BoundArgument {
+                slot,
+                path: ExpressionPath::root().argument(slot),
+            })
+            .collect(),
+        missing: vec![Requirement::Operand],
+        binder_scopes: descriptor
+            .binders
+            .iter()
+            .map(|binder| BinderScope {
+                binder_slot: binder.binder_argument,
+                scope_slot: expected_arity - 1,
+            })
+            .collect(),
+    })
+}
+
+pub fn require_operand_partial<'a>(
+    object: &'a MathematicalObject,
+    expected: OperatorId,
+) -> Result<&'a PartialApplication, EngineError> {
+    let SemanticInterpretation::PartialApplication(partial) = &object.semantics.interpretation
+    else {
+        return Err(EngineError::InvalidInput(
+            "对象不是等待 operand 的部分应用".into(),
+        ));
+    };
+    if partial.operator != expected
+        || partial.missing != [Requirement::Operand]
+        || object.semantics.requirements != partial.missing
+    {
+        return Err(EngineError::InvalidInput(
+            "部分应用的运算符或缺失槽位不匹配".into(),
+        ));
+    }
+    crate::input::with_parse_env(|env| {
+        let view = object.view(env);
+        if view.head() != Some(partial.spelling.as_str())
+            || view.arguments().len() != partial.bound_arguments.len()
+        {
+            return Err(EngineError::Parse(
+                "部分应用语义状态与保留的 AST 不一致".into(),
+            ));
+        }
+        Ok(())
+    })?;
+    Ok(partial)
+}
+
+/// Fill the missing operand slot by linking the operand AST into the retained
+/// application. This constructs an application object; domain evaluation is a
+/// separate transition.
+pub fn complete_operand_partial(
+    partial_object: &MathematicalObject,
+    operand: &MathematicalObject,
+) -> Result<MathematicalObject, EngineError> {
+    let SemanticInterpretation::PartialApplication(partial) =
+        &partial_object.semantics.interpretation
+    else {
+        return Err(EngineError::InvalidInput("对象不是部分应用".into()));
+    };
+    require_operand_partial(partial_object, partial.operator)?;
+    let expression = partial_object.append_application_argument(operand)?;
+    let mut completed = partial_object.clone();
+    completed.apply(ObjectDelta {
+        expression: Some(expression),
+        semantics: Some(SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: SemanticInterpretation::Application {
+                operator: partial.spelling.clone(),
+            },
+            metadata: ResultMetadata::unresolved(
+                crate::semantic::Exactness::Symbolic,
+                crate::protocol::OutcomeReason::AlgorithmUncovered,
+            ),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        }),
+        overlay: None,
+        normalization: None,
+    });
+    Ok(completed)
 }
 
 /// Operations a mathematical object may participate in.  This is deliberately
@@ -530,6 +664,22 @@ impl MathematicalObject {
         );
         let chain = yacas_rs::value::build_list(kinds)
             .ok_or_else(|| EngineError::Parse("无法重建 application AST".into()))?;
+        Ok(LispObject::new(ObjectKind::Sublist(chain)))
+    }
+
+    fn append_application_argument(
+        &self,
+        argument: &MathematicalObject,
+    ) -> Result<Rc<LispObject>, EngineError> {
+        let ObjectKind::Sublist(first) = &self.expression.kind else {
+            return Err(EngineError::Parse("部分应用不是 application AST".into()));
+        };
+        let mut kinds = spine_refs(first)
+            .map(|node| yacas_rs::value::clone_kind(&node.kind))
+            .collect::<Vec<_>>();
+        kinds.push(yacas_rs::value::clone_kind(&argument.expression.kind));
+        let chain = yacas_rs::value::build_list(kinds)
+            .ok_or_else(|| EngineError::Parse("无法补全 application AST".into()))?;
         Ok(LispObject::new(ObjectKind::Sublist(chain)))
     }
 
@@ -889,5 +1039,71 @@ mod tests {
         assert_eq!(before.object, after.object);
         assert_eq!(before.revision, ObjectRevision(0));
         assert_eq!(after.revision, ObjectRevision(1));
+    }
+
+    #[test]
+    fn partial_state_records_slots_requirements_and_binder_scope() {
+        let partial = operand_partial_state("Limit", 3).unwrap();
+        assert_eq!(partial.operator, OperatorId::Limit);
+        assert_eq!(partial.expected_arity, 4);
+        assert_eq!(partial.missing, vec![Requirement::Operand]);
+        assert_eq!(partial.bound_arguments.len(), 3);
+        assert_eq!(partial.bound_arguments[2].path.segments(), &[2]);
+        assert_eq!(
+            partial.binder_scopes,
+            vec![BinderScope {
+                binder_slot: 0,
+                scope_slot: 3
+            }]
+        );
+    }
+
+    #[test]
+    fn partial_state_is_driven_by_the_shared_operator_descriptor() {
+        assert!(operand_partial_state("D", 1).is_ok());
+        assert!(operand_partial_state("Integrate", 1).is_ok());
+        assert!(operand_partial_state("Factor", 0).is_err());
+        assert!(operand_partial_state("D", 3).is_err());
+    }
+
+    #[test]
+    fn completing_a_partial_links_the_operand_ast_without_string_state() {
+        let partial = object_from_source(
+            ObjectId(11),
+            "D(x)",
+            SemanticState {
+                kind: ValueKind::Unevaluated,
+                interpretation: SemanticInterpretation::PartialApplication(
+                    operand_partial_state("D", 1).unwrap(),
+                ),
+                metadata: ResultMetadata::unresolved(
+                    crate::semantic::Exactness::Symbolic,
+                    crate::protocol::OutcomeReason::AlgorithmUncovered,
+                ),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: vec![Requirement::Operand],
+            },
+        )
+        .unwrap();
+        let operand = object_from_source(
+            ObjectId(12),
+            "x^2",
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(
+                    crate::semantic::Exactness::Symbolic,
+                    crate::protocol::ConditionSet::empty(),
+                ),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let completed = complete_operand_partial(&partial, &operand).unwrap();
+        assert_eq!(completed.print_source(), "D(x)x^2");
+        assert!(completed.semantics.requirements.is_empty());
+        assert!(matches!(completed.semantics.interpretation,
+            SemanticInterpretation::Application { ref operator } if operator == "D"));
     }
 }

@@ -23,9 +23,9 @@ pub fn integral_partial(
         &format!("Integrate({variable})"),
         SemanticState {
             kind: ValueKind::Unevaluated,
-            interpretation: SemanticInterpretation::HeldApplication {
-                operator: "Integrate".into(),
-            },
+            interpretation: SemanticInterpretation::PartialApplication(
+                crate::semantic_core::operand_partial_state("Integrate", 1)?,
+            ),
             metadata: ResultMetadata::unresolved(
                 Exactness::Symbolic,
                 OutcomeReason::AlgorithmUncovered,
@@ -42,14 +42,8 @@ pub fn apply_integral_partial(
     partial: &crate::semantic_core::MathematicalObject,
     operand: &crate::semantic_core::MathematicalObject,
 ) -> Result<Computation, EngineError> {
-    if !matches!(&partial.semantics.interpretation,
-        SemanticInterpretation::HeldApplication { operator } if operator == "Integrate")
-        || partial.semantics.requirements != [Requirement::Operand]
-    {
-        return Err(EngineError::InvalidInput(
-            "对象不是等待 operand 的 Integrate 部分应用".into(),
-        ));
-    }
+    crate::semantic_core::require_operand_partial(partial, OperatorId::Integral)?;
+    let _application = crate::semantic_core::complete_operand_partial(partial, operand)?;
     let variable = crate::input::with_parse_env(|env| {
         let view = partial.view(env);
         let arguments = view.arguments();
@@ -452,7 +446,8 @@ mod tests {
         let partial = integral_partial(ObjectId(8), "x").unwrap();
         assert_eq!(partial.semantics.requirements, vec![Requirement::Operand]);
         assert!(matches!(partial.semantics.interpretation,
-            SemanticInterpretation::HeldApplication { ref operator } if operator == "Integrate"));
+            SemanticInterpretation::PartialApplication(ref state)
+                if state.operator == OperatorId::Integral));
 
         let mut engine = RustEngine::spawn().unwrap();
         let result = apply_integral_partial(&mut engine, &partial, &input("C*x")).unwrap();
