@@ -11,7 +11,7 @@ use processing::plot::SampleOptions;
 use processing::protocol::{
     Condition, ConditionSet, OutcomeReason, ResultCompleteness, ResultMetadata,
 };
-use processing::semantic::{AnalyzedInput, SemanticSummary, ValueKind};
+use processing::semantic::{SemanticSummary, ValueKind};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -377,25 +377,27 @@ fn lower_composable_operand(
 fn dispatch_expression_with_engine(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
-    analyzed: &AnalyzedInput,
+    elaborated: &processing::elaboration::ElaboratedInput,
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
+    let analyzed = &elaborated.analyzed;
     let call = &analyzed.root_call;
     let verbosity = parse_verbosity(&request.verbosity)?;
-    if let Some(call) = call
-        .as_ref()
-        .filter(|call| call.head == "Limit" && call.arguments.len() == 2)
+    if matches!(&elaborated.root.form, processing::elaboration::MathematicalForm::Application { head } if head == "Limit")
+        && elaborated.root.children.len() == 2
     {
-        let expression = &call.arguments[0];
-        let at = &call.arguments[1];
+        // The route is selected from the elaborated AST. Source is obtained
+        // only at the legacy Limit engine adapter boundary.
+        let expression = elaborated.root.children[0].object.print_source();
+        let at = elaborated.root.children[1].object.print_source();
         let result =
-            processing::limits::limit(&mut *engine, expression, "x", at, LimitDirection::Both)
+            processing::limits::limit(&mut *engine, &expression, "x", &at, LimitDirection::Both)
                 .map_err(message)?;
         let steps = if request.steps {
             processing::limits::limit_steps_with_verbosity(
                 &mut *engine,
-                expression,
+                &expression,
                 "x",
-                at,
+                &at,
                 LimitDirection::Both,
                 verbosity,
             )
@@ -1289,7 +1291,7 @@ pub fn process_expression_with_engine(
 ) -> Result<ProcessExpressionResult, ErrorResponse> {
     let elaborated =
         processing::elaboration::elaborate_input(&request.expression).map_err(message)?;
-    let analyzed = elaborated.analyzed;
+    let analyzed = &elaborated.analyzed;
     let semantic_input = match analyzed.root_call.as_ref() {
         Some(call) if call.head == "Limit" && call.arguments.len() == 2 => {
             processing::semantic::analyze_input(
@@ -1312,7 +1314,7 @@ pub fn process_expression_with_engine(
         }
         _ => analyzed.semantic.clone(),
     };
-    let result = dispatch_expression_with_engine(request, engine, &analyzed)?;
+    let result = dispatch_expression_with_engine(request, engine, &elaborated)?;
     let projected_input = result
         .data
         .get("semantic_expression")
