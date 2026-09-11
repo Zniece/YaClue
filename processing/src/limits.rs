@@ -5,8 +5,9 @@ use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, ExpressionView, ObjectDelta,
-    ObjectId, ObjectReference, Requirement, RuleEvent, RuleImportance, RulePayload,
+    object_from_source, CapabilitySet, Computation, ComputationOutput, ExpressionView,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, ObjectId,
+    ObjectReference, OperatorId, Requirement, RuleEvent, RuleImportance, RulePayload,
     RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use crate::steps::{Step, StepVerbosity};
@@ -324,7 +325,7 @@ pub fn limit_computation_for_object(
             }
         }
     };
-    let output_ast = object_from_source(
+    let parsed_output = object_from_source(
         object.id,
         output_source,
         SemanticState {
@@ -338,22 +339,33 @@ pub fn limit_computation_for_object(
             capabilities: output_capabilities,
             requirements: Vec::new(),
         },
-    )?
-    .raw_expression();
+    )?;
+    let output_ast = parsed_output.raw_expression();
+    let output_kind = if produces_value {
+        crate::input::with_parse_env(|env| {
+            crate::semantic::analyze_tree(env, &output_ast)
+                .semantic
+                .kind
+        })
+    } else {
+        ValueKind::Unevaluated
+    };
+    let normalization_assumptions = metadata.conditions.conditions().to_vec();
     object.apply(ObjectDelta {
         expression: Some(output_ast),
         semantics: Some(SemanticState {
-            kind: if produces_value {
-                ValueKind::Scalar
-            } else {
-                ValueKind::Unevaluated
-            },
+            kind: output_kind,
             interpretation,
             metadata,
             capabilities: output_capabilities,
             requirements: Vec::new(),
         }),
         overlay: None,
+        normalization: produces_value.then_some(NormalizationMetadata {
+            level: NormalizationLevel::Domain,
+            assumptions: normalization_assumptions,
+            mode: NormalizationMode::Operation(OperatorId::Limit),
+        }),
     });
     let output = object.reference(None);
     Ok(Computation {
@@ -1158,6 +1170,12 @@ mod tests {
             ValueKind::Scalar
         );
         assert_eq!(computation.value().unwrap().revision.0, 1);
+        let normalization = computation.value().unwrap().normalization.as_ref().unwrap();
+        assert_eq!(
+            normalization.revision,
+            computation.value().unwrap().revision
+        );
+        assert_eq!(normalization.metadata.level, NormalizationLevel::Domain);
         let trace = computation.trace.as_ref().unwrap();
         assert!(trace.events.len() >= 2);
         assert_eq!(trace.events[0].rule, "limit-start");
@@ -1165,6 +1183,24 @@ mod tests {
         assert_eq!(trace.events.last().unwrap().rule, "limit-result");
         assert_eq!(trace.events[1].input.revision.0, 0);
         assert_eq!(trace.events.last().unwrap().output.revision.0, 1);
+    }
+
+    #[test]
+    fn limit_result_kind_is_derived_from_the_result_ast() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let expression =
+            limit_computation(&mut engine, "Sin(t)/t+x^2", "t", "0", LimitDirection::Both).unwrap();
+        let output = expression.value().unwrap();
+        assert_eq!(output.print_source(), "x^2+1");
+        assert_eq!(output.semantics.kind, ValueKind::Expression);
+        assert_eq!(
+            output.normalization.as_ref().unwrap().metadata.level,
+            NormalizationLevel::Domain
+        );
+
+        let scalar =
+            limit_computation(&mut engine, "Sin(t)/t", "t", "0", LimitDirection::Both).unwrap();
+        assert_eq!(scalar.value().unwrap().semantics.kind, ValueKind::Scalar);
     }
 
     #[test]

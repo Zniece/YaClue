@@ -30,6 +30,35 @@ pub struct ObjectId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ObjectRevision(pub u64);
 
+/// Cumulative normalization strength. A higher level includes the guarantees
+/// of every preceding level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NormalizationLevel {
+    Structural,
+    Domain,
+    Conditional,
+    Canonical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NormalizationMode {
+    Safe,
+    Operation(OperatorId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizationMetadata {
+    pub level: NormalizationLevel,
+    pub assumptions: Vec<Condition>,
+    pub mode: NormalizationMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizationState {
+    pub revision: ObjectRevision,
+    pub metadata: NormalizationMetadata,
+}
+
 /// A path into the current AST.  Paths are scoped to one computation and are
 /// invalidated by a rewrite that changes their ancestor.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -417,6 +446,7 @@ pub struct MathematicalObject {
     expression: Rc<LispObject>,
     pub semantics: SemanticState,
     pub overlay: SemanticOverlay,
+    pub normalization: Option<NormalizationState>,
 }
 
 impl MathematicalObject {
@@ -427,6 +457,7 @@ impl MathematicalObject {
             expression,
             semantics,
             overlay: SemanticOverlay::default(),
+            normalization: None,
         }
     }
 
@@ -457,8 +488,11 @@ impl MathematicalObject {
     /// delta completely before invoking this method, so no half-updated object
     /// can escape a transition.
     pub fn apply(&mut self, delta: ObjectDelta) {
-        let changed =
-            delta.expression.is_some() || delta.semantics.is_some() || delta.overlay.is_some();
+        let changed = delta.expression.is_some()
+            || delta.semantics.is_some()
+            || delta.overlay.is_some()
+            || delta.normalization.is_some();
+        let normalization = delta.normalization;
         if let Some(expression) = delta.expression {
             self.expression = expression;
         }
@@ -470,6 +504,12 @@ impl MathematicalObject {
         }
         if changed {
             self.revision.0 += 1;
+        }
+        if changed {
+            self.normalization = normalization.map(|metadata| NormalizationState {
+                revision: self.revision,
+                metadata,
+            });
         }
     }
 }
@@ -496,6 +536,7 @@ pub struct ObjectDelta {
     pub(crate) expression: Option<Rc<LispObject>>,
     pub(crate) semantics: Option<SemanticState>,
     pub(crate) overlay: Option<SemanticOverlay>,
+    pub(crate) normalization: Option<NormalizationMetadata>,
 }
 
 #[derive(Clone)]
@@ -720,6 +761,7 @@ mod tests {
                 requirements: Vec::new(),
             }),
             overlay: None,
+            normalization: None,
         });
         assert_eq!(object.view(&env).print_source(), "x+1");
         assert_eq!(object.semantics.kind, ValueKind::Unevaluated);
@@ -757,6 +799,7 @@ mod tests {
                 requirements: Vec::new(),
             }),
             overlay: None,
+            normalization: None,
         });
         let after = object.reference(Some(ExpressionPath::root()));
         assert_eq!(before.object, after.object);

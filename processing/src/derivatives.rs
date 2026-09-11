@@ -7,8 +7,9 @@ use crate::input::{validate_expression, validate_symbol};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, ExpressionView, ObjectDelta,
-    ObjectId, Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    object_from_source, CapabilitySet, Computation, ComputationOutput, ExpressionView,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, ObjectId,
+    OperatorId, Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use crate::steps::{Step, StepVerbosity};
@@ -264,12 +265,8 @@ pub fn derivative_computation_for_object(
     } else {
         final_expression.clone()
     };
-    let semantics = SemanticState {
-        kind: if unresolved {
-            ValueKind::Unevaluated
-        } else {
-            ValueKind::Expression
-        },
+    let mut semantics = SemanticState {
+        kind: ValueKind::Unevaluated,
         interpretation: if unresolved {
             SemanticInterpretation::HeldApplication {
                 operator: "D".into(),
@@ -283,11 +280,23 @@ pub fn derivative_computation_for_object(
     };
     let output_ast =
         object_from_source(output_object.id, &output_source, semantics.clone())?.raw_expression();
+    if !unresolved {
+        semantics.kind = crate::input::with_parse_env(|env| {
+            crate::semantic::analyze_tree(env, &output_ast)
+                .semantic
+                .kind
+        });
+    }
     let input_ref = output_object.reference(None);
     output_object.apply(ObjectDelta {
         expression: Some(output_ast),
         semantics: Some(semantics),
         overlay: None,
+        normalization: (!unresolved).then_some(NormalizationMetadata {
+            level: NormalizationLevel::Domain,
+            assumptions: Vec::new(),
+            mode: NormalizationMode::Operation(OperatorId::Derivative),
+        }),
     });
     let output_ref = output_object.reference(None);
     let last = facts.len() - 1;
@@ -391,6 +400,17 @@ mod tests {
             "2*Sin(x)*Cos(x)"
         );
         assert_eq!(computation.value().unwrap().revision.0, 1);
+        assert_eq!(
+            computation
+                .value()
+                .unwrap()
+                .normalization
+                .as_ref()
+                .unwrap()
+                .metadata
+                .level,
+            NormalizationLevel::Domain
+        );
         let steps = crate::steps::render_rule_trace(
             &mut engine,
             computation.trace.as_ref().unwrap(),
@@ -459,5 +479,29 @@ mod tests {
             limited.revision.0 + 1
         );
         assert_eq!(derivative.value().unwrap().print_source(), "2*x");
+        assert_eq!(
+            derivative
+                .value()
+                .unwrap()
+                .normalization
+                .as_ref()
+                .unwrap()
+                .revision,
+            derivative.value().unwrap().revision
+        );
+    }
+
+    #[test]
+    fn derivative_result_kind_is_derived_from_the_result_ast() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let constant = derivative_computation(&mut engine, "x", "x", 1).unwrap();
+        assert_eq!(constant.value().unwrap().print_source(), "1");
+        assert_eq!(constant.value().unwrap().semantics.kind, ValueKind::Scalar);
+
+        let expression = derivative_computation(&mut engine, "x^2", "x", 1).unwrap();
+        assert_eq!(
+            expression.value().unwrap().semantics.kind,
+            ValueKind::Expression
+        );
     }
 }
