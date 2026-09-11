@@ -114,7 +114,10 @@ pub fn project_result(
 ) -> Result<SemanticSummary, EngineError> {
     let generated: BTreeSet<_> = arbitrary_constants.iter().cloned().collect();
     let mut output = analyze_input(expression, "结果表达式")?.semantic;
-    let mut bound: BTreeSet<_> = input.bound_symbols.iter().cloned().collect();
+    let mut bound: BTreeSet<_> = output.bound_symbols.iter().cloned().collect();
+    if kind == Some(ValueKind::FunctionFamily) {
+        bound.extend(input.bound_symbols.iter().cloned());
+    }
     bound.extend(
         additional_bound_symbols
             .iter()
@@ -152,11 +155,9 @@ pub fn project_result(
                     role: crate::binding::SymbolRole::Bound,
                     binder,
                 }
-            } else if let Some(identity) = input
-                .symbol_identities
-                .iter()
-                .find(|identity| identity.name == name)
-            {
+            } else if let Some(identity) = input.symbol_identities.iter().find(|identity| {
+                identity.name == name && identity.role != crate::binding::SymbolRole::Bound
+            }) {
                 identity.clone()
             } else {
                 crate::binding::SymbolIdentity {
@@ -384,8 +385,14 @@ mod tests {
     #[test]
     fn result_projection_uses_explicit_generated_symbol_roles() {
         let input = analyze_input("D(x)OdeSolve(y'==y+C179*x)", "表达式").unwrap();
-        let result =
-            project_result(&input.semantic, "C*Exp(x)+C179*x", &["C".into()], &[], None).unwrap();
+        let result = project_result(
+            &input.semantic,
+            "C*Exp(x)+C179*x",
+            &["C".into()],
+            &["x"],
+            None,
+        )
+        .unwrap();
         assert_eq!(result.bound_symbols, ["x"]);
         assert_eq!(result.symbols, ["C179"]);
         assert!(result.symbol_identities.iter().any(|identity| {

@@ -2,6 +2,14 @@
 
 use crate::engine::{Engine, EngineError, EvalResult, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
+};
 use serde::Serialize;
 
 /// Product API limit. The core supports a larger technical ceiling, but an
@@ -25,6 +33,141 @@ pub struct NumericResult {
     pub tex: String,
     pub precision_digits: u32,
     pub kind: NumericKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NumericEvaluationRequest {
+    pub precision_digits: u32,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NumericEvaluationOperation;
+
+impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &NumericEvaluationRequest,
+    ) -> Result<Computation, EngineError> {
+        validate_precision(request.precision_digits)?;
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::NumericEvaluate)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备数值计算能力".into(),
+            ));
+        }
+        let result = approximate(engine, &input.print_source(), request.precision_digits)?;
+        let unresolved = result.kind == NumericKind::Unresolved;
+        let no_value = result.kind == NumericKind::NonFinite && result.output == "Undefined";
+        let output_source = if unresolved {
+            format!("N({},{})", input.print_source(), request.precision_digits)
+        } else {
+            result.output.clone()
+        };
+        let semantics = SemanticState {
+            kind: if unresolved || no_value {
+                ValueKind::Unevaluated
+            } else {
+                crate::semantic::analyze_input(&output_source, "数值计算结果")?
+                    .semantic
+                    .kind
+            },
+            interpretation: if unresolved {
+                SemanticInterpretation::HeldApplication {
+                    operator: "N".into(),
+                }
+            } else if no_value {
+                SemanticInterpretation::StructuredUnevaluated {
+                    reason: "numeric result is undefined".into(),
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata: if unresolved {
+                ResultMetadata::unresolved(
+                    Exactness::Approximate,
+                    OutcomeReason::AlgorithmUncovered,
+                )
+            } else if no_value {
+                ResultMetadata::no_result(
+                    Exactness::Approximate,
+                    OutcomeReason::MathematicalAbsence,
+                )
+            } else {
+                ResultMetadata::solved(
+                    if result.kind == NumericKind::ExactReal {
+                        Exactness::Exact
+                    } else {
+                        Exactness::Approximate
+                    },
+                    ConditionSet::empty(),
+                )
+            },
+            capabilities: if no_value {
+                CapabilitySet::empty()
+            } else {
+                CapabilitySet::symbolic_expression()
+            },
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!unresolved && !no_value).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::Approximate),
+            }),
+        });
+        let event = RuleEvent {
+            rule: if unresolved {
+                "hold-numeric-evaluation"
+            } else if no_value {
+                "numeric-evaluation-undefined"
+            } else {
+                "numeric-evaluation"
+            }
+            .into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: vec![("precision".into(), request.precision_digits.to_string())],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: (!unresolved).then(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: if no_value {
+                    "数值计算没有定义。"
+                } else {
+                    "按指定有效数字计算数值近似。"
+                }
+                .into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: if unresolved {
+                ComputationOutput::Held(output)
+            } else if no_value {
+                ComputationOutput::NoValue(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -240,6 +383,7 @@ fn flatten_number_list(expr: &Expr) -> Vec<f64> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::semantic_core::{ObjectId, SemanticState};
 
     #[test]
     fn batched_evaluation_matches_direct_values_and_preserves_gaps() {
@@ -312,5 +456,50 @@ mod tests {
         assert!(taylor(&mut engine, "Exp(x)", "x", "0", MAX_TAYLOR_DEGREE + 1).is_err());
         assert!(taylor(&mut engine, "x);Echo(1);(x", "x", "0", 2).is_err());
         assert_eq!(engine.eval("2+3").unwrap().expr.to_string(), "5");
+    }
+
+    #[test]
+    fn object_numeric_evaluation_separates_values_held_and_no_value() {
+        let object = |source: &str| {
+            object_from_source(
+                ObjectId(51),
+                source,
+                SemanticState {
+                    kind: ValueKind::Expression,
+                    interpretation: SemanticInterpretation::PlainExpression,
+                    metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                    capabilities: CapabilitySet::symbolic_expression(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let request = NumericEvaluationRequest {
+            precision_digits: 20,
+        };
+        let value = NumericEvaluationOperation
+            .compute(&mut engine, &object("Pi"), &request)
+            .unwrap();
+        assert_eq!(value.value().unwrap().id, ObjectId(51));
+        assert_eq!(
+            value.value().unwrap().semantics.metadata.exactness,
+            Exactness::Approximate
+        );
+        assert!(value
+            .value()
+            .unwrap()
+            .meets_normalization(NormalizationLevel::Domain));
+
+        let held = NumericEvaluationOperation
+            .compute(&mut engine, &object("x+1/2"), &request)
+            .unwrap();
+        assert!(matches!(held.output, ComputationOutput::Held(_)));
+        assert!(held.subject().unwrap().print_source().starts_with("N("));
+
+        let absent = NumericEvaluationOperation
+            .compute(&mut engine, &object("Undefined"), &request)
+            .unwrap();
+        assert!(matches!(absent.output, ComputationOutput::NoValue(_)));
     }
 }

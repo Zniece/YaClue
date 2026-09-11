@@ -8,7 +8,7 @@ use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     object_from_source, BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput,
     NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
-    ObjectId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    ObjectId, OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticOperation, SemanticState, UnarySemanticOperation,
 };
 
@@ -49,6 +49,12 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                 && can_execute_elaborated_tree(&expression.children[1])
                 && can_execute_elaborated_tree(&expression.children[2])
         }
+        crate::elaboration::MathematicalForm::Application { head }
+            if is_migrated_numeric_evaluation(head) =>
+        {
+            matches!(expression.children.len(), 1 | 2)
+                && can_execute_elaborated_tree(&expression.children[0])
+        }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
                 && expression.children.iter().all(can_execute_elaborated_tree)
@@ -65,6 +71,10 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
 
 pub fn is_migrated_transform(head: &str) -> bool {
     matches!(head, "Simplify" | "Tidy" | "Expand" | "Factor")
+}
+
+pub fn is_migrated_numeric_evaluation(head: &str) -> bool {
+    matches!(head, "N" | "Approximate")
 }
 
 pub fn has_migrated_calculus_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
@@ -97,6 +107,15 @@ pub fn has_migrated_substitution_descendant(
     })
 }
 
+pub fn has_migrated_numeric_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
+    expression.children.iter().any(|child| {
+        matches!(&child.form,
+            crate::elaboration::MathematicalForm::Application { head }
+                if is_migrated_numeric_evaluation(head))
+            || has_migrated_numeric_descendant(child)
+    })
+}
+
 pub fn has_effect_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
     expression.children.iter().any(|child| {
         matches!(
@@ -104,6 +123,20 @@ pub fn has_effect_descendant(expression: &crate::elaboration::ElaboratedObject) 
             crate::elaboration::MathematicalForm::EffectApplication { .. }
         ) || has_effect_descendant(child)
     })
+}
+
+pub fn contains_operator(
+    expression: &crate::elaboration::ElaboratedObject,
+    expected: OperatorId,
+) -> bool {
+    matches!(&expression.form,
+        crate::elaboration::MathematicalForm::Application { head }
+            if crate::semantic_core::operator_descriptor(head)
+                .is_some_and(|descriptor| descriptor.id == expected))
+        || expression
+            .children
+            .iter()
+            .any(|child| contains_operator(child, expected))
 }
 
 pub fn execute_elaborated_structure(
@@ -119,6 +152,9 @@ pub fn execute_elaborated_structure(
         }
         if head == "Subst" {
             return execute_substitution_application(engine, expression);
+        }
+        if is_migrated_numeric_evaluation(head) {
+            return execute_numeric_application(engine, expression, head);
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
@@ -220,6 +256,43 @@ pub fn execute_elaborated_structure(
         trace.events = child_traces;
     }
     Ok(computation)
+}
+
+fn execute_numeric_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    let (operand_node, precision) = match expression.children.as_slice() {
+        [operand] => (operand, 10),
+        [operand, precision] => (
+            operand,
+            precision
+                .object
+                .print_source()
+                .parse::<u32>()
+                .map_err(|_| EngineError::InvalidInput("数值精度必须是正整数".into()))?,
+        ),
+        _ => {
+            return Err(EngineError::InvalidInput(format!(
+                "{head} 需要 expression 和可选 precision"
+            )))
+        }
+    };
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, head, 0);
+    }
+    let input = operand.value().expect("checked numeric operand").clone();
+    let mut current = crate::numeric::NumericEvaluationOperation.compute(
+        engine,
+        &input,
+        &crate::numeric::NumericEvaluationRequest {
+            precision_digits: precision,
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
 }
 
 fn execute_substitution_application(
@@ -1663,6 +1736,42 @@ mod tests {
         let source = result.subject().unwrap().print_source();
         assert!(source.contains("Integrate"));
         assert!(source.contains("+2"), "{source}");
+    }
+
+    #[test]
+    fn numeric_evaluation_composes_and_retains_symbolic_functions() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for source in [
+            "N(Integrate(x,0,1)(x^2),20)",
+            "N(Subst(x,2)(Sqrt(x)),30)",
+            "Sin(N(Pi,20))",
+            "N(Pi,20)+1",
+        ] {
+            let elaborated = crate::elaboration::elaborate(source).unwrap();
+            assert!(can_execute_elaborated_tree(&elaborated), "{source}");
+            let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+            assert!(
+                matches!(result.output, ComputationOutput::Value(_)),
+                "{source}"
+            );
+            assert_eq!(
+                result.value().unwrap().semantics.metadata.resolution,
+                ResolutionState::Solved
+            );
+            assert!(result
+                .trace
+                .as_ref()
+                .unwrap()
+                .events
+                .iter()
+                .any(|event| event.rule == "numeric-evaluation"));
+        }
+
+        let symbolic = crate::elaboration::elaborate("N(D(x)(x^2),20)").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &symbolic).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        assert!(result.subject().unwrap().print_source().starts_with("N("));
+        assert!(result.subject().unwrap().print_source().contains("2*x"));
     }
 
     #[test]

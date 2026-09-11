@@ -240,7 +240,11 @@ fn project_domain_semantic(
         &projection_input,
         semantic_expression,
         &generated,
-        if result.kind == "ode" { &["x"] } else { &[] },
+        if result.kind == "ode" || projection_input.kind == ValueKind::SolutionSet {
+            &["x"]
+        } else {
+            &[]
+        },
         match result.kind.as_str() {
             "ode" => Some(ValueKind::SolutionSet),
             "integral" => Some(ValueKind::FunctionFamily),
@@ -448,9 +452,13 @@ fn dispatch_expression_with_engine(
         processing::elaboration::MathematicalForm::Structural { .. }
     ) || matches!(&elaborated.root.form,
         processing::elaboration::MathematicalForm::Application { head } if head == "Subst")
+        || matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head }
+                if processing::arithmetic::is_migrated_numeric_evaluation(head))
         || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
+        || processing::arithmetic::has_migrated_numeric_descendant(&elaborated.root)
         || processing::arithmetic::has_effect_descendant(&elaborated.root)
         || call
             .as_ref()
@@ -1472,6 +1480,10 @@ pub fn process_expression_with_engine(
         }
         _ => analyzed.semantic.clone(),
     };
+    let contains_ode = processing::arithmetic::contains_operator(
+        &elaborated.root,
+        processing::semantic_core::OperatorId::OdeSolve,
+    );
     let result = dispatch_expression_with_engine(request, engine, &elaborated)?;
     let projected_input = result
         .data
@@ -1480,13 +1492,14 @@ pub fn process_expression_with_engine(
         .map(|expression| processing::semantic::analyze_input(expression, "降低后的表达式"))
         .transpose()
         .map_err(message)?;
-    let semantic = project_domain_semantic(
-        projected_input
-            .as_ref()
-            .map(|input| &input.semantic)
-            .unwrap_or(&semantic_input),
-        &result,
-    )?;
+    let mut projection_base = projected_input
+        .as_ref()
+        .map(|input| input.semantic.clone())
+        .unwrap_or_else(|| semantic_input.clone());
+    if semantic_input.kind == ValueKind::SolutionSet || contains_ode {
+        projection_base.kind = ValueKind::SolutionSet;
+    }
+    let semantic = project_domain_semantic(&projection_base, &result)?;
     let outcome = result_metadata(&result, semantic.exactness)?;
     Ok(ProcessExpressionResult {
         kind: result.kind,
@@ -2131,6 +2144,40 @@ mod tests {
         assert_eq!(
             held.outcome.resolution,
             processing::protocol::ResolutionState::Unresolved
+        );
+    }
+
+    #[test]
+    fn unified_input_routes_object_native_numeric_evaluation() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let value = process_expression_with_engine(request("N(Pi,20)", true), &mut engine).unwrap();
+        assert_eq!(value.kind, "composition");
+        assert_eq!(value.semantic.kind, ValueKind::Scalar);
+        assert_eq!(
+            value.semantic.exactness,
+            processing::semantic::Exactness::Approximate
+        );
+        assert!(value
+            .steps
+            .iter()
+            .any(|step| step.rule == "numeric-evaluation"));
+
+        let held =
+            process_expression_with_engine(request("N(D(x)(x^2),20)", false), &mut engine).unwrap();
+        assert_eq!(held.expression, "N(2*x,20)");
+        assert_eq!(held.semantic.kind, ValueKind::Unevaluated);
+        assert_eq!(held.semantic.symbols, ["x"]);
+        assert!(held.semantic.bound_symbols.is_empty());
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+
+        let absent =
+            process_expression_with_engine(request("N(Undefined,20)", false), &mut engine).unwrap();
+        assert_eq!(
+            absent.outcome.resolution,
+            processing::protocol::ResolutionState::NoResult
         );
     }
 
