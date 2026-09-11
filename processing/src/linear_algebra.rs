@@ -5,10 +5,10 @@ use crate::input::{fresh_internal_symbols, strip_tex_delimiters, validate_expres
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
-    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    object_from_source, BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
+    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -191,6 +191,112 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             } else {
                 ComputationOutput::Value(output)
             },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BinaryMatrixRequest {
+    pub operation: MatrixOperation,
+    pub output_id: crate::semantic_core::ObjectId,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BinaryMatrixOperation;
+
+impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        left: &crate::semantic_core::MathematicalObject,
+        right: &crate::semantic_core::MathematicalObject,
+        request: &BinaryMatrixRequest,
+    ) -> Result<Computation, EngineError> {
+        let capability = match request.operation {
+            MatrixOperation::Add => ObjectCapability::MatrixAdd,
+            MatrixOperation::Multiply => ObjectCapability::MatrixMultiply,
+            _ => return Err(EngineError::InvalidInput("该操作不是二元矩阵运算".into())),
+        };
+        if !left.semantics.capabilities.contains(capability)
+            || !right.semantics.capabilities.contains(capability)
+        {
+            return Err(EngineError::InvalidInput(
+                "矩阵运算的两侧都必须是矩阵对象".into(),
+            ));
+        }
+        let shape = |object: &crate::semantic_core::MathematicalObject| match object
+            .semantics
+            .interpretation
+        {
+            SemanticInterpretation::Matrix { rows, columns } => Ok((rows, columns)),
+            _ => Err(EngineError::InvalidInput("矩阵对象缺少形状信息".into())),
+        };
+        let (left_rows, left_columns) = shape(left)?;
+        let (right_rows, right_columns) = shape(right)?;
+        let (rows, columns) = match request.operation {
+            MatrixOperation::Add if (left_rows, left_columns) == (right_rows, right_columns) => {
+                (left_rows, left_columns)
+            }
+            MatrixOperation::Add => return Err(EngineError::InvalidInput(format!(
+                "矩阵加法形状不兼容: {left_rows}x{left_columns} 与 {right_rows}x{right_columns}"
+            ))),
+            MatrixOperation::Multiply if left_columns == right_rows => (left_rows, right_columns),
+            MatrixOperation::Multiply => return Err(EngineError::InvalidInput(format!(
+                "矩阵乘法形状不兼容: {left_rows}x{left_columns} 与 {right_rows}x{right_columns}"
+            ))),
+            _ => unreachable!(),
+        };
+        let result = compute(
+            engine,
+            &left.print_source(),
+            request.operation,
+            Some(&right.print_source()),
+        )?;
+        let semantics = SemanticState {
+            kind: ValueKind::Matrix,
+            interpretation: SemanticInterpretation::Matrix { rows, columns },
+            metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+            capabilities: CapabilitySet::matrix(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(request.output_id, &result.output, semantics.clone())?;
+        let mut output = crate::semantic_core::MathematicalObject::new(
+            request.output_id,
+            parsed.raw_expression(),
+            semantics,
+        );
+        output.apply(ObjectDelta {
+            expression: None,
+            semantics: None,
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixTransform),
+            }),
+        });
+        let event = RuleEvent {
+            rule: format!("matrix-{}", request.operation.name()),
+            input: left.reference(None),
+            additional_inputs: vec![right.reference(None)],
+            output: output.reference(None),
+            bindings: vec![("shape".into(), format!("{rows}x{columns}"))],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: Some(RulePresentation {
+                expression: output.print_source(),
+                explanation: "按矩阵形状规则组合两个矩阵对象。".into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
             trace: Some(RuleTrace {
                 events: vec![event],
             }),
@@ -900,6 +1006,57 @@ mod tests {
             determinant.value().unwrap().semantics.kind,
             ValueKind::Scalar
         );
+    }
+
+    #[test]
+    fn binary_matrix_objects_check_shapes_before_execution() {
+        let object = |id, source: &str, rows, columns| {
+            object_from_source(
+                crate::semantic_core::ObjectId(id),
+                source,
+                SemanticState {
+                    kind: ValueKind::Matrix,
+                    interpretation: SemanticInterpretation::Matrix { rows, columns },
+                    metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                    capabilities: CapabilitySet::matrix(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let product = BinaryMatrixOperation
+            .compute(
+                &mut engine,
+                &object(1, "{{1,2,3},{4,5,6}}", 2, 3),
+                &object(2, "{{1,2},{3,4},{5,6}}", 3, 2),
+                &BinaryMatrixRequest {
+                    operation: MatrixOperation::Multiply,
+                    output_id: crate::semantic_core::ObjectId(3),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            product.value().unwrap().id,
+            crate::semantic_core::ObjectId(3)
+        );
+        assert!(matches!(
+            product.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::Matrix {
+                rows: 2,
+                columns: 2
+            }
+        ));
+        let bad = BinaryMatrixOperation.compute(
+            &mut engine,
+            &object(4, "{{1,2}}", 1, 2),
+            &object(5, "{{1,2}}", 1, 2),
+            &BinaryMatrixRequest {
+                operation: MatrixOperation::Multiply,
+                output_id: crate::semantic_core::ObjectId(6),
+            },
+        );
+        assert!(matches!(bad, Err(EngineError::InvalidInput(message)) if message.contains("1x2")));
     }
 
     #[test]

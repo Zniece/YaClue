@@ -277,7 +277,39 @@ pub fn execute_elaborated_structure(
         output_id: expression.object.id,
         operation,
     };
-    let mut computation = if operation == ArithmeticOperation::Negate {
+    let left_object = child_computations[0]
+        .subject()
+        .expect("mathematical child has an object");
+    let right_object = child_computations.get(1).and_then(Computation::subject);
+    let matrix_binary = matches!(
+        operation,
+        ArithmeticOperation::Add | ArithmeticOperation::Multiply
+    ) && matches!(
+        left_object.semantics.interpretation,
+        SemanticInterpretation::Matrix { .. }
+    ) && right_object.is_some_and(|right| {
+        matches!(
+            right.semantics.interpretation,
+            SemanticInterpretation::Matrix { .. }
+        )
+    });
+    let mut computation = if matrix_binary {
+        let matrix_operation = if operation == ArithmeticOperation::Add {
+            crate::linear_algebra::MatrixOperation::Add
+        } else {
+            crate::linear_algebra::MatrixOperation::Multiply
+        };
+        BinarySemanticOperation::compute(
+            &crate::linear_algebra::BinaryMatrixOperation,
+            engine,
+            left_object,
+            right_object.expect("matrix binary has right operand"),
+            &crate::linear_algebra::BinaryMatrixRequest {
+                operation: matrix_operation,
+                output_id: expression.object.id,
+            },
+        )?
+    } else if operation == ArithmeticOperation::Negate {
         UnarySemanticOperation::compute(
             &ArithmeticOperationExecutor,
             engine,
