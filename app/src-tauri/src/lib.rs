@@ -724,6 +724,14 @@ fn dispatch_expression_with_engine(
             }
             ("Limit", [variable, at, expression]) => {
                 if request.steps {
+                    let result = processing::limits::limit(
+                        &mut *engine,
+                        expression,
+                        variable,
+                        at,
+                        LimitDirection::Both,
+                    )
+                    .map_err(message)?;
                     let steps = processing::limits::limit_steps_with_verbosity(
                         &mut *engine,
                         expression,
@@ -733,8 +741,14 @@ fn dispatch_expression_with_engine(
                         verbosity,
                     )
                     .map_err(message)?;
-                    let (expression, tex) = final_step(&steps);
-                    return unified_result("limit", "极限", expression, tex, steps, &());
+                    return unified_result(
+                        "limit",
+                        "极限",
+                        result.value.clone(),
+                        result.tex.clone(),
+                        steps,
+                        &result,
+                    );
                 }
                 let result = processing::limits::limit(
                     &mut *engine,
@@ -760,6 +774,14 @@ fn dispatch_expression_with_engine(
                     _ => return Err(invalid_input("极限方向应为 Left 或 Right")),
                 };
                 if request.steps {
+                    let result = processing::limits::limit(
+                        &mut *engine,
+                        expression,
+                        variable,
+                        at,
+                        direction,
+                    )
+                    .map_err(message)?;
                     let steps = processing::limits::limit_steps_with_verbosity(
                         &mut *engine,
                         expression,
@@ -769,8 +791,14 @@ fn dispatch_expression_with_engine(
                         verbosity,
                     )
                     .map_err(message)?;
-                    let (expression, tex) = final_step(&steps);
-                    return unified_result("limit", "极限", expression, tex, steps, &());
+                    return unified_result(
+                        "limit",
+                        "极限",
+                        result.value.clone(),
+                        result.tex.clone(),
+                        steps,
+                        &result,
+                    );
                 }
                 let result =
                     processing::limits::limit(&mut *engine, expression, variable, at, direction)
@@ -1207,6 +1235,17 @@ pub fn process_expression_with_engine(
         Some(call) if call.head == "Limit" && call.arguments.len() == 2 => {
             processing::semantic::analyze_input(
                 &format!("Limit(x,{}){}", call.arguments[1], call.arguments[0]),
+                "极限表达式",
+            )
+            .map_err(message)?
+            .semantic
+        }
+        Some(call) if call.head == "Limit" && call.arguments.len() == 4 => {
+            processing::semantic::analyze_input(
+                &format!(
+                    "Limit({},{}){}",
+                    call.arguments[0], call.arguments[1], call.arguments[3]
+                ),
                 "极限表达式",
             )
             .map_err(message)?
