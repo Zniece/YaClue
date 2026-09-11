@@ -457,16 +457,21 @@ fn dispatch_expression_with_engine(
                 if processing::arithmetic::is_migrated_numeric_evaluation(head))
         || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head } if head == "Taylor")
+        || matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head } if head == "Solve")
         || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_numeric_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_taylor_descendant(&elaborated.root)
+        || processing::arithmetic::has_migrated_solve_descendant(&elaborated.root)
         || processing::arithmetic::has_effect_descendant(&elaborated.root)
         || call
             .as_ref()
             .is_some_and(processing::composition::is_candidate)
     {
+        let object_native_solve = matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head } if head == "Solve");
         if let Some(mut result) = processing::composition::execute_elaborated(
             &mut *engine,
             elaborated,
@@ -479,8 +484,16 @@ fn dispatch_expression_with_engine(
                 result.steps.clear();
             }
             return unified_result(
-                "composition",
-                "组合运算",
+                if object_native_solve {
+                    "equation"
+                } else {
+                    "composition"
+                },
+                if object_native_solve {
+                    "方程"
+                } else {
+                    "组合运算"
+                },
                 result.value.clone(),
                 result.tex.clone(),
                 result.steps.clone(),
@@ -2004,7 +2017,6 @@ mod tests {
     fn unified_input_preserves_unlowered_structured_compositions() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for expression in [
-            "D(x)Solve({x==1},{x})",
             "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
             "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
         ] {
@@ -2025,6 +2037,20 @@ mod tests {
             assert_eq!(result.steps[0].rule, "held-operator-application");
             assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
         }
+
+        let solved_set =
+            process_expression_with_engine(request("D(x)Solve({x==1},{x})", true), &mut engine)
+                .unwrap();
+        assert_eq!(solved_set.kind, "composition");
+        assert_eq!(solved_set.expression, "D(x){x==1}");
+        assert_eq!(
+            solved_set.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(solved_set
+            .steps
+            .iter()
+            .any(|step| step.rule == "solve-equations"));
     }
 
     #[test]

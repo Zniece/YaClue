@@ -63,6 +63,9 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
             };
             can_execute_elaborated_tree(&expression.children[operand_index])
         }
+        crate::elaboration::MathematicalForm::Application { head } if head == "Solve" => {
+            expression.children.len() == 2 && can_execute_elaborated_tree(&expression.children[0])
+        }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
                 && expression.children.iter().all(can_execute_elaborated_tree)
@@ -89,6 +92,13 @@ pub fn has_migrated_taylor_descendant(expression: &crate::elaboration::Elaborate
     expression.children.iter().any(|child| {
         matches!(&child.form, crate::elaboration::MathematicalForm::Application { head } if head == "Taylor")
             || has_migrated_taylor_descendant(child)
+    })
+}
+
+pub fn has_migrated_solve_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
+    expression.children.iter().any(|child| {
+        matches!(&child.form, crate::elaboration::MathematicalForm::Application { head } if head == "Solve")
+            || has_migrated_solve_descendant(child)
     })
 }
 
@@ -173,6 +183,9 @@ pub fn execute_elaborated_structure(
         }
         if head == "Taylor" {
             return execute_taylor_application(engine, expression);
+        }
+        if head == "Solve" {
+            return execute_solve_application(engine, expression);
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
@@ -354,6 +367,59 @@ fn execute_taylor_application(
         },
     )?;
     merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
+}
+
+fn execute_solve_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let [equations_node, variables_node] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(
+            "Solve 需要 equations 和 variables".into(),
+        ));
+    };
+    let mut equations = execute_elaborated_structure(engine, equations_node)?;
+    if !matches!(equations.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, equations, "Solve", 0);
+    }
+    let input = equations.value().expect("checked equation input").clone();
+    let equation_sources = if matches!(
+        equations_node.form,
+        crate::elaboration::MathematicalForm::Collection
+    ) {
+        crate::input::with_parse_env(|env| {
+            input
+                .view(env)
+                .arguments()
+                .into_iter()
+                .map(|view| view.print_source())
+                .collect()
+        })
+    } else {
+        vec![input.print_source()]
+    };
+    let variables = if matches!(
+        variables_node.form,
+        crate::elaboration::MathematicalForm::Collection
+    ) {
+        variables_node
+            .children
+            .iter()
+            .map(|node| node.object.print_source())
+            .collect()
+    } else {
+        vec![variables_node.object.print_source()]
+    };
+    let mut current = crate::equations::SolveOperation.compute(
+        engine,
+        &input,
+        &crate::equations::SolveRequest {
+            equations: equation_sources,
+            variables,
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut equations);
     Ok(current)
 }
 
@@ -886,30 +952,7 @@ fn execute_calculus_application(
         CalculusRequest::DefiniteIntegral(_) => ObjectCapability::Integrate,
     };
     if !input.semantics.capabilities.contains(required_capability) {
-        let mut blocked = input.clone();
-        let mut semantics = blocked.semantics.clone();
-        semantics.kind = ValueKind::Unevaluated;
-        semantics.interpretation = SemanticInterpretation::HeldApplication {
-            operator: head.into(),
-        };
-        semantics.metadata = ResultMetadata::unresolved(
-            semantics.metadata.exactness,
-            OutcomeReason::UnsupportedOperation,
-        );
-        blocked.apply(ObjectDelta {
-            expression: None,
-            semantics: Some(semantics),
-            overlay: None,
-            normalization: None,
-        });
-        let mut computation = Computation {
-            output: ComputationOutput::Held(blocked),
-            trace: None,
-            certificates: Vec::new(),
-            effects: Vec::new(),
-        };
-        merge_prior_computation(&mut computation, &mut operand);
-        return Ok(computation);
+        return retain_pending_application(expression, operand, head, operand_index);
     }
     let mut computation = match request {
         CalculusRequest::Limit(request) => {

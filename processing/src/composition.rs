@@ -117,7 +117,8 @@ pub fn execute_elaborated(
                 || crate::arithmetic::has_migrated_transform_descendant(&input.root)
                 || crate::arithmetic::has_migrated_substitution_descendant(&input.root)
                 || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
-                || crate::arithmetic::has_migrated_taylor_descendant(&input.root)))
+                || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
+                || crate::arithmetic::has_migrated_solve_descendant(&input.root)))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if crate::arithmetic::is_migrated_transform(head))
@@ -125,7 +126,8 @@ pub fn execute_elaborated(
                 || crate::arithmetic::has_migrated_transform_descendant(&input.root)
                 || crate::arithmetic::has_migrated_substitution_descendant(&input.root)
                 || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
-                || crate::arithmetic::has_migrated_taylor_descendant(&input.root)))
+                || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
+                || crate::arithmetic::has_migrated_solve_descendant(&input.root)))
         || matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head } if head == "Subst")
         || matches!(&input.root.form,
@@ -133,6 +135,8 @@ pub fn execute_elaborated(
                 if crate::arithmetic::is_migrated_numeric_evaluation(head))
         || matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head } if head == "Taylor")
+        || matches!(&input.root.form,
+            crate::elaboration::MathematicalForm::Application { head } if head == "Solve")
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if !is_known_operator(head))
@@ -141,6 +145,7 @@ pub fn execute_elaborated(
                 || crate::arithmetic::has_migrated_substitution_descendant(&input.root)
                 || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
                 || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
+                || crate::arithmetic::has_migrated_solve_descendant(&input.root)
                 || crate::arithmetic::has_effect_descendant(&input.root))))
         && crate::arithmetic::can_execute_elaborated_tree(&input.root)
     {
@@ -267,6 +272,7 @@ fn collect_migrated_operator_ids(
         ) || crate::arithmetic::is_migrated_transform(head)
             || crate::arithmetic::is_migrated_numeric_evaluation(head)
             || head == "Taylor"
+            || head == "Solve"
         {
             if let Some(descriptor) = operator_descriptor(head) {
                 output.push(descriptor.id);
@@ -926,6 +932,9 @@ fn apply(
                 arbitrary_constants: Vec::new(),
             })
         }
+        CompositionOperator::Solve => Err(EngineError::InvalidInput(
+            "Solve 必须通过类型化方程对象执行".into(),
+        )),
     }
 }
 
@@ -1271,11 +1280,11 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(result.status, CompositionStatus::Unresolved);
-        assert_eq!(result.value, "Infinity");
+        assert_eq!(result.value, "D(x)Infinity");
         assert!(result
             .reason
             .as_deref()
-            .is_some_and(|reason| reason.contains("扩展实数")));
+            .is_some_and(|reason| reason.contains("未解析")));
         assert!(result.steps.iter().all(|step| step.rule != "const-rule"));
     }
 
@@ -1375,7 +1384,6 @@ mod tests {
     fn structured_operands_remain_held_when_no_lowering_rule_applies() {
         let mut engine = RustEngine::spawn().unwrap();
         for expression in [
-            "D(x)Solve({x==1},{x})",
             "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
             "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
             "D(x)OdeSolveNumeric(y'==y,x,y,0,1,2)",
@@ -1397,5 +1405,20 @@ mod tests {
                 .as_deref()
                 .is_some_and(|reason| reason.contains("语义上有效")));
         }
+    }
+
+    #[test]
+    fn solved_sets_are_typed_values_but_not_differentiable_operands() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(&mut engine, "D(x)Solve({x==1},{x})", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert!(result.value.starts_with("D(x)"), "{}", result.value);
+        assert!(result.value.contains("x==1"), "{}", result.value);
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "solve-equations"));
     }
 }

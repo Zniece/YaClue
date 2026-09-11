@@ -5,6 +5,14 @@ use crate::input::{
     analyze_expression, direct_function_equation, fresh_internal_symbols, root_call,
     strip_tex_delimiters, validate_expression, validate_symbol,
 };
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
+};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
@@ -74,6 +82,142 @@ pub struct SolveResult {
     /// Complete structured families when the solution requires bound integer
     /// parameters. `solutions` remains the finite representative-root view.
     pub families: Vec<SolutionFamily>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SolveRequest {
+    pub equations: Vec<String>,
+    pub variables: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SolveOperation;
+
+impl SemanticOperation<SolveRequest> for SolveOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &SolveRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::SolveEquation)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备方程求解能力".into(),
+            ));
+        }
+        let equation_refs = request
+            .equations
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let variable_refs = request
+            .variables
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let result = solve(engine, &equation_refs, &variable_refs)?;
+        let output_source = match result.status {
+            SolveStatus::Solved | SolveStatus::NoSolution => result.raw.clone(),
+            SolveStatus::Infinite => format!("AllSolutions({{{}}})", result.variables.join(",")),
+            SolveStatus::Unresolved => format!(
+                "Solve({{{}}},{{{}}})",
+                request.equations.join(","),
+                result.variables.join(",")
+            ),
+        };
+        let unresolved = result.status == SolveStatus::Unresolved;
+        let no_value = result.status == SolveStatus::NoSolution;
+        let semantics = SemanticState {
+            kind: if unresolved || no_value {
+                ValueKind::Unevaluated
+            } else {
+                ValueKind::SolutionSet
+            },
+            interpretation: if unresolved {
+                SemanticInterpretation::HeldApplication {
+                    operator: "Solve".into(),
+                }
+            } else if no_value {
+                SemanticInterpretation::StructuredUnevaluated {
+                    reason: "equation system has no solution".into(),
+                }
+            } else {
+                SemanticInterpretation::SolutionSet {
+                    variables: result.variables.clone(),
+                    parameters: result.parameters.clone(),
+                }
+            },
+            metadata: if unresolved {
+                ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+            } else if no_value {
+                ResultMetadata::no_result(Exactness::Symbolic, OutcomeReason::MathematicalAbsence)
+            } else {
+                ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+            },
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!unresolved && !no_value).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::Solve),
+            }),
+        });
+        let event = RuleEvent {
+            rule: match result.status {
+                SolveStatus::Solved => "solve-equations",
+                SolveStatus::NoSolution => "solve-no-solution",
+                SolveStatus::Infinite => "solve-all-values",
+                SolveStatus::Unresolved => "hold-solve",
+            }
+            .into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: vec![(
+                "variables".into(),
+                format!("{{{}}}", result.variables.join(",")),
+            )],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: (!unresolved).then(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: match result.status {
+                    SolveStatus::Solved => "求得并验证方程解集。",
+                    SolveStatus::NoSolution => "方程组没有解。",
+                    SolveStatus::Infinite => "方程对指定变量恒成立。",
+                    SolveStatus::Unresolved => unreachable!(),
+                }
+                .into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: if unresolved {
+                ComputationOutput::Held(output)
+            } else if no_value {
+                ComputationOutput::NoValue(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1121,6 +1265,64 @@ mod tests {
             solve(&mut engine, &["x==1"], &["x"]).unwrap().status,
             SolveStatus::Solved
         );
+    }
+
+    #[test]
+    fn object_solve_distinguishes_solution_set_absence_infinite_and_held() {
+        let object = |source: &str| {
+            crate::semantic_core::object_from_source(
+                crate::semantic_core::ObjectId(81),
+                source,
+                SemanticState {
+                    kind: ValueKind::Equation,
+                    interpretation: SemanticInterpretation::Equation,
+                    metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                    capabilities: CapabilitySet::equation_input(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let compute = |engine: &mut RustEngine, equation: &str| {
+            SolveOperation
+                .compute(
+                    engine,
+                    &object(equation),
+                    &SolveRequest {
+                        equations: vec![equation.into()],
+                        variables: vec!["x".into()],
+                    },
+                )
+                .unwrap()
+        };
+
+        let solved = compute(&mut engine, "x^2==1");
+        assert!(matches!(solved.output, ComputationOutput::Value(_)));
+        assert_eq!(
+            solved.value().unwrap().id,
+            crate::semantic_core::ObjectId(81)
+        );
+        assert!(solved
+            .value()
+            .unwrap()
+            .meets_normalization(NormalizationLevel::Domain));
+        assert!(matches!(
+            solved.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::SolutionSet { .. }
+        ));
+
+        assert!(matches!(
+            compute(&mut engine, "Sqrt(x)==-1").output,
+            ComputationOutput::NoValue(_)
+        ));
+        assert!(matches!(
+            compute(&mut engine, "0==0").output,
+            ComputationOutput::Value(_)
+        ));
+        let held = compute(&mut engine, "x^x==1");
+        assert!(matches!(held.output, ComputationOutput::Held(_)));
+        assert!(held.subject().unwrap().print_source().starts_with("Solve("));
     }
 
     #[test]

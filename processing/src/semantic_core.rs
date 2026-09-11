@@ -165,6 +165,7 @@ pub enum OperatorId {
     OdeSolve,
     Limit,
     Taylor,
+    Solve,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,6 +179,7 @@ pub enum CapabilityId {
     SolveOde,
     EvaluateLimit,
     ExpandTaylor,
+    SolveEquation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,6 +248,10 @@ const NO_BINDERS: &[BinderDescriptor] = &[];
 const FIRST_ARGUMENT_BINDS_LAST: &[BinderDescriptor] = &[BinderDescriptor {
     binder_argument: 0,
     scope_argument: ValueArgument::Last,
+}];
+const SECOND_ARGUMENT_BINDS_FIRST: &[BinderDescriptor] = &[BinderDescriptor {
+    binder_argument: 1,
+    scope_argument: ValueArgument::First,
 }];
 
 pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
@@ -322,6 +328,15 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         capability: CapabilityId::ExpandTaylor,
     },
     OperatorDescriptor {
+        id: OperatorId::Solve,
+        names: &["Solve"],
+        arities: &[2],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: SECOND_ARGUMENT_BINDS_FIRST,
+        capability: CapabilityId::SolveEquation,
+    },
+    OperatorDescriptor {
         id: OperatorId::OdeSolve,
         names: &["OdeSolve"],
         arities: &[1],
@@ -368,7 +383,6 @@ pub fn is_known_operator(name: &str) -> bool {
                 | "Plot"
                 | "PolarIntegral"
                 | "PrincipalValueIntegral"
-                | "Solve"
                 | "SolveMatrix"
                 | "Transpose"
         )
@@ -388,6 +402,10 @@ pub enum SemanticInterpretation {
     Matrix {
         rows: usize,
         columns: usize,
+    },
+    SolutionSet {
+        variables: Vec<String>,
+        parameters: Vec<String>,
     },
     /// A valid mathematical application deliberately retained because no
     /// closed-form evaluation is available yet (for example `Integrate`).
@@ -529,10 +547,11 @@ pub enum ObjectCapability {
     NumericEvaluate,
     Plot,
     ExpandTaylor,
+    SolveEquation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CapabilitySet(u16);
+pub struct CapabilitySet(u32);
 
 impl CapabilitySet {
     pub const fn empty() -> Self {
@@ -555,8 +574,12 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::Expand as u8)
                 | (1 << ObjectCapability::NumericEvaluate as u8)
                 | (1 << ObjectCapability::Plot as u8)
-                | (1 << ObjectCapability::ExpandTaylor as u8),
+                | (1 << ObjectCapability::ExpandTaylor as u8)
+                | (1 << ObjectCapability::SolveEquation as u8),
         )
+    }
+    pub const fn equation_input() -> Self {
+        Self(1 << ObjectCapability::SolveEquation as u8)
     }
     pub const fn contains(self, capability: ObjectCapability) -> bool {
         self.0 & (1 << capability as u8) != 0

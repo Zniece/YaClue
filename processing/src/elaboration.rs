@@ -158,7 +158,7 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
                     children,
                     ValueKind::Expression,
                     SemanticInterpretation::List,
-                    CapabilitySet::empty(),
+                    CapabilitySet::equation_input(),
                 )
             } else if matches!(head.as_str(), "+" | "-" | "*" | "/" | "^") {
                 (
@@ -176,7 +176,7 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
                     children,
                     ValueKind::Equation,
                     SemanticInterpretation::Equation,
-                    CapabilitySet::empty(),
+                    CapabilitySet::equation_input(),
                 )
             } else if head == "Plot" {
                 (
