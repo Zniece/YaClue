@@ -14,8 +14,8 @@ use yacas_rs::env::Environment;
 use yacas_rs::value::{spine_refs, LispObject, ObjectKind};
 
 use crate::engine::EngineError;
-use crate::protocol::Condition;
 use crate::protocol::ResultMetadata;
+use crate::protocol::{Condition, ConditionSet};
 use crate::semantic::ValueKind;
 
 /// Stable only for the lifetime of one computation.  It is intentionally not
@@ -248,6 +248,32 @@ pub struct PartialApplication {
     pub slots: Vec<ApplicationSlot>,
     pub missing: Vec<Requirement>,
     pub binder_scopes: Vec<BinderScope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedArgument {
+    pub slot: usize,
+    pub path: ExpressionPath,
+    pub requirement: Requirement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultTypeConstraint {
+    Scalar,
+    Expression,
+    SameDomainAsOperand,
+    DomainDefined,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedApplication {
+    pub operator: OperatorId,
+    pub spelling: String,
+    pub arguments: Vec<TypedArgument>,
+    pub binder_scopes: Vec<BinderScope>,
+    pub free_parameters: Vec<String>,
+    pub conditions: ConditionSet,
+    pub result: ResultTypeConstraint,
 }
 
 impl PartialApplication {
@@ -497,6 +523,7 @@ pub enum SemanticInterpretation {
     Application {
         operator: String,
     },
+    TypedApplication(TypedApplication),
     Equation,
     List,
     Matrix {
@@ -639,6 +666,69 @@ pub fn partial_application_state(
     })
 }
 
+pub fn typed_application_state(
+    spelling: &str,
+    arity: usize,
+    expression: &Rc<LispObject>,
+    conditions: ConditionSet,
+) -> Result<TypedApplication, EngineError> {
+    let descriptor = operator_descriptor(spelling)
+        .ok_or_else(|| EngineError::InvalidInput(format!("未登记的运算符: {spelling}")))?;
+    if !descriptor.arities.contains(&arity) {
+        return Err(EngineError::InvalidInput(format!(
+            "{spelling} 不支持 {arity} 个参数"
+        )));
+    }
+    let requirements = signature_requirements(spelling, arity)
+        .map(<[Requirement]>::to_vec)
+        .unwrap_or_else(|| vec![Requirement::Operand; arity]);
+    let binding = crate::binding::analyze_tree(expression);
+    let result = match descriptor.id {
+        OperatorId::Limit | OperatorId::MatrixTransform | OperatorId::MatrixAnalyze => {
+            ResultTypeConstraint::DomainDefined
+        }
+        OperatorId::Derivative | OperatorId::Integral | OperatorId::Taylor => {
+            ResultTypeConstraint::Expression
+        }
+        OperatorId::Factor | OperatorId::AlgebraTransform | OperatorId::Substitute => {
+            ResultTypeConstraint::SameDomainAsOperand
+        }
+        _ => ResultTypeConstraint::DomainDefined,
+    };
+    Ok(TypedApplication {
+        operator: descriptor.id,
+        spelling: spelling.into(),
+        arguments: requirements
+            .into_iter()
+            .enumerate()
+            .map(|(slot, requirement)| TypedArgument {
+                slot,
+                path: ExpressionPath::root().argument(slot),
+                requirement,
+            })
+            .collect(),
+        binder_scopes: descriptor
+            .binders
+            .iter()
+            .filter(|binder| {
+                signature_requirements(spelling, arity).is_none_or(|items| {
+                    items.get(binder.binder_argument) == Some(&Requirement::Variable)
+                })
+            })
+            .map(|binder| BinderScope {
+                binder_slot: binder.binder_argument,
+                scope_slot: match binder.scope_argument {
+                    ValueArgument::First => 0,
+                    ValueArgument::Last => arity - 1,
+                },
+            })
+            .collect(),
+        free_parameters: binding.free_symbols.into_iter().collect(),
+        conditions,
+        result,
+    })
+}
+
 pub fn operand_partial_state(
     spelling: &str,
     bound_argument_count: usize,
@@ -756,9 +846,12 @@ pub fn fill_next_partial_argument(
     let mut completed = partial_object.clone();
     let remaining = partial.missing[1..].to_vec();
     let interpretation = if remaining.is_empty() {
-        SemanticInterpretation::Application {
-            operator: partial.spelling.clone(),
-        }
+        SemanticInterpretation::TypedApplication(typed_application_state(
+            &partial.spelling,
+            partial.expected_arity,
+            &expression,
+            partial_object.semantics.metadata.conditions.clone(),
+        )?)
     } else {
         let mut next = partial.clone();
         next.bound_arguments.push(BoundArgument {
@@ -1437,7 +1530,8 @@ mod tests {
         assert_eq!(completed.print_source(), "D(x)x^2");
         assert!(completed.semantics.requirements.is_empty());
         assert!(matches!(completed.semantics.interpretation,
-            SemanticInterpretation::Application { ref operator } if operator == "D"));
+            SemanticInterpretation::TypedApplication(ref application)
+                if application.spelling == "D" && application.free_parameters.is_empty()));
     }
 
     #[test]
@@ -1487,7 +1581,7 @@ mod tests {
         assert!(complete.semantics.requirements.is_empty());
         assert!(matches!(
             complete.semantics.interpretation,
-            SemanticInterpretation::Application { .. }
+            SemanticInterpretation::TypedApplication(_)
         ));
     }
 }

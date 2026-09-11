@@ -190,7 +190,7 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
                 .and_then(|item| item.atom_string())
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "Apply".into());
-            let children = nodes
+            let children: Vec<ElaboratedObject> = nodes
                 .iter()
                 .skip(1)
                 .map(|child| elaborate_node(child, next_id))
@@ -243,11 +243,26 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
                     CapabilitySet::empty(),
                 )
             } else {
+                let interpretation = crate::semantic_core::operator_descriptor(&head)
+                    .filter(|descriptor| descriptor.arities.contains(&children.len()))
+                    .map(|_| {
+                        crate::semantic_core::typed_application_state(
+                            &head,
+                            children.len(),
+                            node,
+                            ConditionSet::empty(),
+                        )
+                        .expect("descriptor and parsed arity were validated")
+                    })
+                    .map(SemanticInterpretation::TypedApplication)
+                    .unwrap_or_else(|| SemanticInterpretation::Application {
+                        operator: head.clone(),
+                    });
                 (
                     MathematicalForm::Application { head: head.clone() },
                     children,
                     ValueKind::Expression,
-                    SemanticInterpretation::Application { operator: head },
+                    interpretation,
                     CapabilitySet::symbolic_expression(),
                 )
             }
@@ -343,6 +358,29 @@ mod tests {
         assert_eq!(
             candidates.candidates[1].display_template(&["t".into()]),
             "Limit(t)(<approach_point>)(<operand>)"
+        );
+    }
+
+    #[test]
+    fn complete_registered_calls_retain_typed_application_state() {
+        let root = elaborate("Limit(t,0)(t+x)").unwrap();
+        let SemanticInterpretation::TypedApplication(application) =
+            &root.object.semantics.interpretation
+        else {
+            panic!("expected typed application")
+        };
+        assert_eq!(
+            application.operator,
+            crate::semantic_core::OperatorId::Limit
+        );
+        assert_eq!(application.arguments.len(), 3);
+        assert_eq!(application.free_parameters, ["x"]);
+        assert_eq!(
+            application.binder_scopes,
+            [crate::semantic_core::BinderScope {
+                binder_slot: 0,
+                scope_slot: 2,
+            }]
         );
     }
 
