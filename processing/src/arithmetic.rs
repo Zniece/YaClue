@@ -104,7 +104,16 @@ pub fn is_migrated_numeric_evaluation(head: &str) -> bool {
 pub fn is_migrated_matrix_unary(head: &str) -> bool {
     matches!(
         head,
-        "Transpose" | "Determinant" | "Inverse" | "Rank" | "RREF" | "RowReduce" | "EigenValues"
+        "Transpose"
+            | "Determinant"
+            | "Inverse"
+            | "Rank"
+            | "RREF"
+            | "RowReduce"
+            | "EigenValues"
+            | "NullSpace"
+            | "ColumnSpace"
+            | "EigenSpaces"
     )
 }
 
@@ -554,6 +563,9 @@ fn execute_matrix_unary_application(
                 "Rank" => crate::linear_algebra::MatrixAnalysisKind::Rank,
                 "RREF" | "RowReduce" => crate::linear_algebra::MatrixAnalysisKind::Rref,
                 "EigenValues" => crate::linear_algebra::MatrixAnalysisKind::Eigenvalues,
+                "NullSpace" => crate::linear_algebra::MatrixAnalysisKind::NullSpace,
+                "ColumnSpace" => crate::linear_algebra::MatrixAnalysisKind::ColumnSpace,
+                "EigenSpaces" => crate::linear_algebra::MatrixAnalysisKind::EigenSpaces,
                 _ => unreachable!(),
             };
             let mut current =

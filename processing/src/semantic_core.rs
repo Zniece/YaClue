@@ -361,7 +361,15 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
     },
     OperatorDescriptor {
         id: OperatorId::MatrixAnalyze,
-        names: &["Rank", "RREF", "RowReduce", "EigenValues"],
+        names: &[
+            "Rank",
+            "RREF",
+            "RowReduce",
+            "EigenValues",
+            "NullSpace",
+            "ColumnSpace",
+            "EigenSpaces",
+        ],
         arities: &[1],
         forms: CALL,
         value_argument: ValueArgument::First,
@@ -432,6 +440,15 @@ pub enum SemanticInterpretation {
     Vector {
         length: usize,
     },
+    LinearSubspace {
+        ambient_dimension: usize,
+        basis_dimension: usize,
+        kind: LinearSubspaceKind,
+    },
+    SpectralSubspaces {
+        ambient_dimension: usize,
+        space_count: usize,
+    },
     SolutionSet {
         variables: Vec<String>,
         parameters: Vec<String>,
@@ -449,6 +466,12 @@ pub enum SemanticInterpretation {
     StructuredUnevaluated {
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinearSubspaceKind {
+    NullSpace,
+    ColumnSpace,
 }
 
 pub fn operand_partial_state(

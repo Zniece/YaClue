@@ -428,6 +428,9 @@ pub enum MatrixAnalysisKind {
     Rank,
     Rref,
     Eigenvalues,
+    NullSpace,
+    ColumnSpace,
+    EigenSpaces,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -499,6 +502,69 @@ impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
                     "matrix-eigenvalues",
                 )
             }
+            MatrixAnalysisKind::NullSpace | MatrixAnalysisKind::ColumnSpace => {
+                let result = linear_structure(engine, &input.print_source())?;
+                let (basis, ambient_dimension, basis_dimension, kind, rule) = match kind {
+                    MatrixAnalysisKind::NullSpace => (
+                        &result.null_space_basis,
+                        result.columns,
+                        result.nullity,
+                        crate::semantic_core::LinearSubspaceKind::NullSpace,
+                        "matrix-null-space",
+                    ),
+                    MatrixAnalysisKind::ColumnSpace => (
+                        &result.column_space_basis,
+                        result.rows,
+                        result.rank,
+                        crate::semantic_core::LinearSubspaceKind::ColumnSpace,
+                        "matrix-column-space",
+                    ),
+                    _ => unreachable!(),
+                };
+                (
+                    matrix_expression(basis),
+                    result.tex,
+                    SemanticInterpretation::LinearSubspace {
+                        ambient_dimension,
+                        basis_dimension,
+                        kind,
+                    },
+                    ValueKind::Expression,
+                    CapabilitySet::empty(),
+                    rule,
+                )
+            }
+            MatrixAnalysisKind::EigenSpaces => {
+                let result = eigen_spaces(engine, &input.print_source(), &[])?;
+                let spaces = result
+                    .spaces
+                    .iter()
+                    .filter(|space| space.is_eigenvalue)
+                    .collect::<Vec<_>>();
+                let source = format!(
+                    "{{{}}}",
+                    spaces
+                        .iter()
+                        .map(|space| format!(
+                            "{{{},{}}}",
+                            space.eigenvalue,
+                            matrix_expression(&space.basis)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                (
+                    source,
+                    result.tex,
+                    SemanticInterpretation::SpectralSubspaces {
+                        ambient_dimension: result.dimension,
+                        space_count: spaces.len(),
+                    },
+                    ValueKind::Expression,
+                    CapabilitySet::empty(),
+                    "matrix-eigenspaces",
+                )
+            }
         };
         let semantics = SemanticState {
             kind: value_kind,
@@ -553,6 +619,9 @@ fn held_matrix_analysis(
         MatrixAnalysisKind::Rank => "Rank",
         MatrixAnalysisKind::Rref => "RREF",
         MatrixAnalysisKind::Eigenvalues => "EigenValues",
+        MatrixAnalysisKind::NullSpace => "NullSpace",
+        MatrixAnalysisKind::ColumnSpace => "ColumnSpace",
+        MatrixAnalysisKind::EigenSpaces => "EigenSpaces",
     };
     let semantics = SemanticState {
         kind: ValueKind::Unevaluated,
@@ -1426,6 +1495,53 @@ mod tests {
             eigenvalues.value().unwrap().semantics.interpretation,
             SemanticInterpretation::Vector { .. }
         ));
+        let null_space = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::NullSpace)
+            .unwrap();
+        assert_eq!(null_space.value().unwrap().id, input.id);
+        assert_eq!(
+            null_space.value().unwrap().revision,
+            crate::semantic_core::ObjectRevision(input.revision.0 + 1)
+        );
+        assert!(matches!(
+            null_space.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::LinearSubspace {
+                ambient_dimension: 2,
+                basis_dimension: 1,
+                kind: crate::semantic_core::LinearSubspaceKind::NullSpace,
+            }
+        ));
+        let column_space = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::ColumnSpace)
+            .unwrap();
+        assert!(matches!(
+            column_space.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::LinearSubspace {
+                ambient_dimension: 2,
+                basis_dimension: 1,
+                kind: crate::semantic_core::LinearSubspaceKind::ColumnSpace,
+            }
+        ));
+        let diagonal = object_from_source(
+            crate::semantic_core::ObjectId(21),
+            "{{2,0},{0,3}}",
+            input.semantics.clone(),
+        )
+        .unwrap();
+        let eigenspaces = MatrixAnalysisOperation
+            .compute(&mut engine, &diagonal, &MatrixAnalysisKind::EigenSpaces)
+            .unwrap();
+        assert!(matches!(
+            eigenspaces.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::SpectralSubspaces {
+                ambient_dimension: 2,
+                space_count: 2,
+            }
+        ));
+        assert_eq!(
+            eigenspaces.value().unwrap().semantics.capabilities,
+            CapabilitySet::empty()
+        );
     }
 
     #[test]
