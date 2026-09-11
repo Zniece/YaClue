@@ -1,0 +1,617 @@
+//! The semantic-core boundary between the Yacas AST and product domains.
+//!
+//! This module deliberately starts small.  It does not introduce a second
+//! expression tree and it does not move any domain algorithm yet.  A
+//! `MathematicalObject` owns the current Yacas expression and carries a sparse
+//! semantic overlay.  Domains will gradually return `Transition`s and
+//! `RuleEvent`s through this boundary.
+
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use serde::Serialize;
+use yacas_rs::env::Environment;
+use yacas_rs::value::{spine_refs, LispObject, ObjectKind};
+
+use crate::engine::EngineError;
+use crate::protocol::Condition;
+use crate::protocol::ResultMetadata;
+use crate::semantic::ValueKind;
+
+/// Stable only for the lifetime of one computation.  It is intentionally not
+/// a pointer or a symbol spelling so future AST rewrites can preserve object
+/// identity without exposing engine storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ObjectId(pub u64);
+
+/// Monotonically increasing version of one mathematical object.  A path is
+/// meaningful only together with this revision; a later rewrite must never
+/// reinterpret an old event's focus against the new AST.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ObjectRevision(pub u64);
+
+/// A path into the current AST.  Paths are scoped to one computation and are
+/// invalidated by a rewrite that changes their ancestor.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExpressionPath(Vec<usize>);
+
+impl ExpressionPath {
+    pub fn root() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn argument(&self, index: usize) -> Self {
+        let mut path = self.0.clone();
+        path.push(index);
+        Self(path)
+    }
+
+    pub fn segments(&self) -> &[usize] {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeKind {
+    Atom,
+    Number,
+    Application,
+    List,
+    Generic,
+}
+
+/// Storage-independent, read-only AST view.  Creating a view only borrows the
+/// existing engine node; it never allocates a mirror tree or reparses text.
+pub struct ExpressionView<'a> {
+    env: &'a Environment,
+    node: &'a Rc<LispObject>,
+}
+
+impl<'a> ExpressionView<'a> {
+    pub fn new(env: &'a Environment, node: &'a Rc<LispObject>) -> Self {
+        Self { env, node }
+    }
+
+    pub fn kind(&self) -> NodeKind {
+        match &self.node.kind {
+            ObjectKind::Atom(_) => NodeKind::Atom,
+            ObjectKind::Number(_) => NodeKind::Number,
+            ObjectKind::Generic(_) => NodeKind::Generic,
+            ObjectKind::Sublist(first) => {
+                if first.atom_string().is_some() {
+                    NodeKind::Application
+                } else {
+                    NodeKind::List
+                }
+            }
+        }
+    }
+
+    pub fn head(&self) -> Option<&str> {
+        match &self.node.kind {
+            ObjectKind::Sublist(first) => first.atom_string().map(|head| head.as_ref()),
+            _ => None,
+        }
+    }
+
+    pub fn atom(&self) -> Option<&str> {
+        self.node.atom_string().map(|atom| atom.as_ref())
+    }
+
+    pub fn number(&self) -> Option<String> {
+        self.node.number_string()
+    }
+
+    pub fn arguments(&self) -> Vec<ExpressionView<'a>> {
+        let ObjectKind::Sublist(first) = &self.node.kind else {
+            return Vec::new();
+        };
+        spine_refs(first)
+            .skip(1)
+            .map(|node| ExpressionView {
+                env: self.env,
+                node,
+            })
+            .collect()
+    }
+
+    /// Compatibility boundary for an engine consumer that still needs source
+    /// text.  Semantic-core internals should pass views, not this string.
+    pub fn print_source(&self) -> String {
+        yacas_rs::printer::infix_print(self.env, self.node)
+    }
+}
+
+/// Stable identity of a product-level operation.  Spelling aliases and Yacas
+/// surface forms belong to its descriptor rather than to dispatch callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorId {
+    Derivative,
+    Factor,
+    AlgebraTransform,
+    Integral,
+    Substitute,
+    Approximate,
+    OdeSolve,
+    Limit,
+    Taylor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityId {
+    Differentiate,
+    Factor,
+    TransformAlgebra,
+    Integrate,
+    Substitute,
+    Approximate,
+    SolveOde,
+    EvaluateLimit,
+    ExpandTaylor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplicationForm {
+    Call,
+    Bodied,
+    ConventionalValueFirst,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueArgument {
+    First,
+    Last,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BinderDescriptor {
+    pub binder_argument: usize,
+    pub scope_argument: ValueArgument,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperatorDescriptor {
+    pub id: OperatorId,
+    pub names: &'static [&'static str],
+    pub arities: &'static [usize],
+    pub forms: &'static [ApplicationForm],
+    pub value_argument: ValueArgument,
+    pub binders: &'static [BinderDescriptor],
+    pub capability: CapabilityId,
+}
+
+const CALL: &[ApplicationForm] = &[ApplicationForm::Call];
+const BODIED: &[ApplicationForm] = &[ApplicationForm::Bodied];
+const BODIED_AND_CONVENTIONAL: &[ApplicationForm] = &[
+    ApplicationForm::Bodied,
+    ApplicationForm::ConventionalValueFirst,
+];
+const NO_BINDERS: &[BinderDescriptor] = &[];
+const FIRST_ARGUMENT_BINDS_LAST: &[BinderDescriptor] = &[BinderDescriptor {
+    binder_argument: 0,
+    scope_argument: ValueArgument::Last,
+}];
+
+pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
+    OperatorDescriptor {
+        id: OperatorId::Derivative,
+        names: &["D", "Deriv"],
+        arities: &[2, 3],
+        forms: BODIED,
+        value_argument: ValueArgument::Last,
+        binders: FIRST_ARGUMENT_BINDS_LAST,
+        capability: CapabilityId::Differentiate,
+    },
+    OperatorDescriptor {
+        id: OperatorId::Factor,
+        names: &["Factor"],
+        arities: &[1],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::Factor,
+    },
+    OperatorDescriptor {
+        id: OperatorId::AlgebraTransform,
+        names: &["Expand", "Simplify", "Tidy"],
+        arities: &[1],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::TransformAlgebra,
+    },
+    OperatorDescriptor {
+        id: OperatorId::AlgebraTransform,
+        names: &["Apart"],
+        arities: &[2],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::TransformAlgebra,
+    },
+    OperatorDescriptor {
+        id: OperatorId::Integral,
+        names: &["Integrate"],
+        arities: &[2, 4],
+        forms: BODIED,
+        value_argument: ValueArgument::Last,
+        binders: FIRST_ARGUMENT_BINDS_LAST,
+        capability: CapabilityId::Integrate,
+    },
+    OperatorDescriptor {
+        id: OperatorId::Substitute,
+        names: &["Subst"],
+        arities: &[3],
+        forms: BODIED,
+        value_argument: ValueArgument::Last,
+        binders: NO_BINDERS,
+        capability: CapabilityId::Substitute,
+    },
+    OperatorDescriptor {
+        id: OperatorId::Limit,
+        names: &["Limit"],
+        arities: &[2, 3, 4],
+        forms: BODIED_AND_CONVENTIONAL,
+        value_argument: ValueArgument::Last,
+        binders: FIRST_ARGUMENT_BINDS_LAST,
+        capability: CapabilityId::EvaluateLimit,
+    },
+    OperatorDescriptor {
+        id: OperatorId::Taylor,
+        names: &["Taylor"],
+        arities: &[3, 4],
+        forms: BODIED_AND_CONVENTIONAL,
+        value_argument: ValueArgument::Last,
+        binders: FIRST_ARGUMENT_BINDS_LAST,
+        capability: CapabilityId::ExpandTaylor,
+    },
+    OperatorDescriptor {
+        id: OperatorId::OdeSolve,
+        names: &["OdeSolve"],
+        arities: &[1],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::SolveOde,
+    },
+    OperatorDescriptor {
+        id: OperatorId::Approximate,
+        names: &["N", "Approximate"],
+        arities: &[1, 2],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::Approximate,
+    },
+];
+
+pub fn operator_descriptor(name: &str) -> Option<&'static OperatorDescriptor> {
+    OPERATOR_DESCRIPTORS
+        .iter()
+        .find(|descriptor| descriptor.names.contains(&name))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticInterpretation {
+    PlainExpression,
+    Operator { id: String },
+    Application { operator: String },
+    Equation,
+    List,
+    Matrix { rows: usize, columns: usize },
+    StructuredUnevaluated { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticState {
+    pub kind: ValueKind,
+    pub interpretation: SemanticInterpretation,
+    pub metadata: ResultMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticAnnotation {
+    Operator { id: String },
+    Equation { relation: String },
+    Binding { name: String },
+    GeneratedSymbol { id: String, display_name: String },
+    DomainFact { name: String, value: String },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SemanticOverlay {
+    annotations: BTreeMap<ExpressionPath, SemanticAnnotation>,
+}
+
+impl SemanticOverlay {
+    pub fn insert(&mut self, path: ExpressionPath, annotation: SemanticAnnotation) {
+        self.annotations.insert(path, annotation);
+    }
+
+    pub fn get(&self, path: &ExpressionPath) -> Option<&SemanticAnnotation> {
+        self.annotations.get(path)
+    }
+
+    pub fn annotations(&self) -> &BTreeMap<ExpressionPath, SemanticAnnotation> {
+        &self.annotations
+    }
+}
+
+#[derive(Clone)]
+pub struct MathematicalObject {
+    pub id: ObjectId,
+    pub revision: ObjectRevision,
+    expression: Rc<LispObject>,
+    pub semantics: SemanticState,
+    pub overlay: SemanticOverlay,
+}
+
+impl MathematicalObject {
+    pub fn new(id: ObjectId, expression: Rc<LispObject>, semantics: SemanticState) -> Self {
+        Self {
+            id,
+            revision: ObjectRevision(0),
+            expression,
+            semantics,
+            overlay: SemanticOverlay::default(),
+        }
+    }
+
+    pub fn view<'a>(&'a self, env: &'a Environment) -> ExpressionView<'a> {
+        ExpressionView::new(env, &self.expression)
+    }
+
+    pub(crate) fn raw_expression(&self) -> Rc<LispObject> {
+        self.expression.clone()
+    }
+
+    pub fn reference(&self, focus: Option<ExpressionPath>) -> ObjectReference {
+        ObjectReference {
+            object: self.id,
+            revision: self.revision,
+            focus,
+        }
+    }
+
+    /// Apply syntax and semantic changes together.  Callers construct the
+    /// delta completely before invoking this method, so no half-updated object
+    /// can escape a transition.
+    pub fn apply(&mut self, delta: ObjectDelta) {
+        let changed =
+            delta.expression.is_some() || delta.semantics.is_some() || delta.overlay.is_some();
+        if let Some(expression) = delta.expression {
+            self.expression = expression;
+        }
+        if let Some(semantics) = delta.semantics {
+            self.semantics = semantics;
+        }
+        if let Some(overlay) = delta.overlay {
+            self.overlay = overlay;
+        }
+        if changed {
+            self.revision.0 += 1;
+        }
+    }
+}
+
+/// Transitional construction boundary for legacy string-based domains.  The
+/// resulting object owns the parsed Yacas tree; migrated callers pass the
+/// object onward instead of parsing its source again.
+pub fn object_from_source(
+    id: ObjectId,
+    source: &str,
+    semantics: SemanticState,
+) -> Result<MathematicalObject, EngineError> {
+    crate::input::validate_safe_text(source, "语义表达式")?;
+    crate::input::with_parse_env(|env| {
+        let expression = yacas_rs::parser::parse_expression(env, &format!("{source};"))
+            .map_err(|error| EngineError::InvalidInput(format!("语义表达式语法错误: {error:?}")))?
+            .ok_or_else(|| EngineError::InvalidInput("语义表达式为空".into()))?;
+        Ok(MathematicalObject::new(id, expression, semantics))
+    })
+}
+
+#[derive(Clone, Default)]
+pub struct ObjectDelta {
+    pub(crate) expression: Option<Rc<LispObject>>,
+    pub(crate) semantics: Option<SemanticState>,
+    pub(crate) overlay: Option<SemanticOverlay>,
+}
+
+#[derive(Clone)]
+pub struct Transition {
+    pub input: ObjectReference,
+    pub output: MathematicalObject,
+    pub event: Option<RuleEvent>,
+}
+
+/// A versioned reference to an AST object at the instant a rule ran.  It is
+/// intentionally light-weight: traces refer to computation-owned objects
+/// rather than serializing another complete expression tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectReference {
+    pub object: ObjectId,
+    pub revision: ObjectRevision,
+    pub focus: Option<ExpressionPath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RulePayload {
+    Rewrite,
+    Decompose,
+    Decision,
+    Inference,
+    Verification,
+    Convergence,
+    Numeric,
+    Structural,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleImportance {
+    Routine,
+    Normal,
+    Key,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleEvent {
+    pub rule: String,
+    pub input: ObjectReference,
+    pub output: ObjectReference,
+    pub bindings: Vec<(String, String)>,
+    pub conditions: Vec<Condition>,
+    pub payload: RulePayload,
+    pub importance: RuleImportance,
+    /// Optional product hint.  It never determines mathematical state; it is
+    /// only consumed when projecting a trace into a teaching step.
+    pub presentation: Option<RulePresentation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RulePresentation {
+    pub expression: String,
+    pub explanation: String,
+    /// Product TeX may be intentionally more expressive than the engine's
+    /// generic rendering of `expression` (for example a limit's subscript).
+    /// It remains a projection hint and never carries mathematical state.
+    pub tex_override: Option<String>,
+}
+
+pub trait EventSink {
+    fn record(&mut self, event: RuleEvent);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraceMode {
+    Off,
+    Compact,
+    Detailed,
+}
+
+#[derive(Debug, Default)]
+pub struct VecEventSink {
+    pub events: Vec<RuleEvent>,
+}
+
+impl EventSink for VecEventSink {
+    fn record(&mut self, event: RuleEvent) {
+        self.events.push(event);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Certificate {
+    pub kind: String,
+    pub payload: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    Ui(String),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RuleTrace {
+    pub events: Vec<RuleEvent>,
+}
+
+#[derive(Clone)]
+pub struct Computation {
+    pub object: MathematicalObject,
+    pub trace: Option<RuleTrace>,
+    pub certificates: Vec<Certificate>,
+    pub effects: Vec<Effect>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yacas_rs::parser::parse_expression;
+
+    #[test]
+    fn view_borrows_one_ast_without_reparsing_children() {
+        let mut env = Environment::new();
+        let tree = parse_expression(&mut env, "Taylor(Exp(x),0,2);")
+            .unwrap()
+            .unwrap();
+        let view = ExpressionView::new(&env, &tree);
+        assert_eq!(view.kind(), NodeKind::Application);
+        assert_eq!(view.head(), Some("Taylor"));
+        let args = view.arguments();
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].head(), Some("Exp"));
+        assert_eq!(args[0].arguments()[0].atom(), Some("x"));
+        assert_eq!(args[1].number(), Some("0".into()));
+    }
+
+    #[test]
+    fn transition_updates_ast_and_semantics_as_one_delta() {
+        let mut env = Environment::new();
+        let old = parse_expression(&mut env, "x;").unwrap().unwrap();
+        let new = parse_expression(&mut env, "x+1;").unwrap().unwrap();
+        let metadata = ResultMetadata::unresolved(
+            crate::semantic::Exactness::Symbolic,
+            crate::protocol::OutcomeReason::AlgorithmUncovered,
+        );
+        let mut object = MathematicalObject::new(
+            ObjectId(1),
+            old,
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: metadata.clone(),
+            },
+        );
+        object.apply(ObjectDelta {
+            expression: Some(new),
+            semantics: Some(SemanticState {
+                kind: ValueKind::Unevaluated,
+                interpretation: SemanticInterpretation::StructuredUnevaluated {
+                    reason: "test".into(),
+                },
+                metadata,
+            }),
+            overlay: None,
+        });
+        assert_eq!(object.view(&env).print_source(), "x+1");
+        assert_eq!(object.semantics.kind, ValueKind::Unevaluated);
+        assert_eq!(object.revision, ObjectRevision(1));
+    }
+
+    #[test]
+    fn rule_references_keep_the_ast_revision_that_was_observed() {
+        let mut env = Environment::new();
+        let initial = parse_expression(&mut env, "x;").unwrap().unwrap();
+        let replacement = parse_expression(&mut env, "1;").unwrap().unwrap();
+        let metadata = ResultMetadata::solved(
+            crate::semantic::Exactness::Exact,
+            crate::protocol::ConditionSet::empty(),
+        );
+        let mut object = MathematicalObject::new(
+            ObjectId(7),
+            initial,
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: metadata.clone(),
+            },
+        );
+        let before = object.reference(Some(ExpressionPath::root()));
+        object.apply(ObjectDelta {
+            expression: Some(replacement),
+            semantics: Some(SemanticState {
+                kind: ValueKind::Scalar,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata,
+            }),
+            overlay: None,
+        });
+        let after = object.reference(Some(ExpressionPath::root()));
+        assert_eq!(before.object, after.object);
+        assert_eq!(before.revision, ObjectRevision(0));
+        assert_eq!(after.revision, ObjectRevision(1));
+    }
+}

@@ -28,6 +28,7 @@ pub mod plot;
 pub mod protocol;
 pub mod quadrature;
 pub mod semantic;
+pub mod semantic_core;
 pub mod series;
 pub mod steps;
 pub mod surface_integrals;

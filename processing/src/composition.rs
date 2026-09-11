@@ -5,11 +5,11 @@ use serde::Serialize;
 
 use crate::algebra::{self, TransformKind};
 use crate::engine::{Engine, EngineError};
-use crate::input::{
-    analyze_expression, root_call, strip_tex_delimiters, validate_expression, RootCall,
-};
+use crate::input::{analyze_expression, strip_tex_delimiters, validate_safe_text, RootCall};
 use crate::numeric;
 use crate::ode::{self, OdeStatus};
+use crate::semantic_core::{operator_descriptor, ExpressionView, OperatorDescriptor};
+pub use crate::semantic_core::{OperatorId as CompositionOperator, ValueArgument};
 use crate::steps::{
     derive_antiderivative_family_with_verbosity, derive_steps_order_with_verbosity, Step,
     StepImportance, StepVerbosity,
@@ -41,133 +41,7 @@ const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
     "Transpose",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CompositionOperator {
-    Derivative,
-    Factor,
-    AlgebraTransform,
-    Integral,
-    Substitute,
-    Approximate,
-    OdeSolve,
-    Limit,
-    Taylor,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct OperatorSignature {
-    pub name: &'static str,
-    pub operator: CompositionOperator,
-    pub arities: &'static [usize],
-    /// Argument occupied by the value produced by the inner operation.
-    pub value_argument: ValueArgument,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ValueArgument {
-    First,
-    Last,
-}
-
-const D_ARITIES: &[usize] = &[2, 3];
-const UNARY_ARITY: &[usize] = &[1];
-const INTEGRATE_ARITIES: &[usize] = &[2, 4];
-const SUBST_ARITIES: &[usize] = &[3];
-const APPROXIMATE_ARITIES: &[usize] = &[1, 2];
-// Product input accepts both the conventional two-argument form
-// `Limit(expression, at)` (with x as the default variable) and Yacas's
-// bodied form `Limit(variable, at[, direction]) expression`.
-const LIMIT_ARITIES: &[usize] = &[2, 3, 4];
-const TAYLOR_ARITIES: &[usize] = &[3, 4];
-
-pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
-    OperatorSignature {
-        name: "D",
-        operator: CompositionOperator::Derivative,
-        arities: D_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Deriv",
-        operator: CompositionOperator::Derivative,
-        arities: D_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Factor",
-        operator: CompositionOperator::Factor,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Expand",
-        operator: CompositionOperator::AlgebraTransform,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Simplify",
-        operator: CompositionOperator::AlgebraTransform,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Tidy",
-        operator: CompositionOperator::AlgebraTransform,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Apart",
-        operator: CompositionOperator::AlgebraTransform,
-        arities: &[2],
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Integrate",
-        operator: CompositionOperator::Integral,
-        arities: INTEGRATE_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Subst",
-        operator: CompositionOperator::Substitute,
-        arities: SUBST_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Limit",
-        operator: CompositionOperator::Limit,
-        arities: LIMIT_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Taylor",
-        operator: CompositionOperator::Taylor,
-        arities: TAYLOR_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "OdeSolve",
-        operator: CompositionOperator::OdeSolve,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "N",
-        operator: CompositionOperator::Approximate,
-        arities: APPROXIMATE_ARITIES,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Approximate",
-        operator: CompositionOperator::Approximate,
-        arities: APPROXIMATE_ARITIES,
-        value_argument: ValueArgument::First,
-    },
-];
+pub use crate::semantic_core::OPERATOR_DESCRIPTORS as OPERATOR_SIGNATURES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -197,7 +71,8 @@ pub struct HeldApplication {
 }
 
 struct Operation {
-    signature: &'static OperatorSignature,
+    name: String,
+    signature: &'static OperatorDescriptor,
     arguments: Vec<String>,
 }
 
@@ -205,10 +80,7 @@ struct Operation {
 /// path. Ordinary single-operation requests do not enter the composition
 /// parser or pay another traversal.
 pub fn is_candidate(call: &RootCall) -> bool {
-    let Some(signature) = OPERATOR_SIGNATURES
-        .iter()
-        .find(|signature| signature.name == call.head)
-    else {
+    let Some(signature) = operator_descriptor(&call.head) else {
         return false;
     };
     if !signature.arities.contains(&call.arguments.len()) {
@@ -222,8 +94,7 @@ pub fn is_candidate(call: &RootCall) -> bool {
         .get(value_index)
         .and_then(|head| head.as_deref())
         .is_some_and(|head| {
-            OPERATOR_SIGNATURES.iter().any(|item| item.name == head)
-                || STRUCTURED_OPERATOR_NAMES.contains(&head)
+            operator_descriptor(head).is_some() || STRUCTURED_OPERATOR_NAMES.contains(&head)
         })
 }
 
@@ -235,9 +106,18 @@ pub fn execute_steps(
     expression: &str,
     verbosity: StepVerbosity,
 ) -> Result<Option<CompositionResult>, EngineError> {
-    validate_expression(expression, "组合表达式")?;
-    let mut operations = Vec::new();
-    let leaf = match collect_operations(expression, &mut operations, 0)? {
+    validate_safe_text(expression, "组合表达式")?;
+    let (operations, collected) = crate::input::with_parse_env(|env| {
+        let tree = yacas_rs::parser::parse_expression(env, &format!("{expression};"))
+            .map_err(|error| EngineError::InvalidInput(format!("组合表达式语法错误: {error:?}")))?
+            .ok_or_else(|| EngineError::InvalidInput("组合表达式为空".into()))?;
+        let mut operations = Vec::new();
+        let collected =
+            collect_operations_view(&ExpressionView::new(env, &tree), &mut operations, 0)?;
+        Ok::<_, EngineError>((operations, collected))
+    })?;
+    let (leaf, leaf_head) = collected;
+    let leaf = match leaf {
         Ok(leaf) => leaf,
         Err(reason) => {
             return Ok(Some(CompositionResult {
@@ -247,7 +127,7 @@ pub fn execute_steps(
                 steps: Vec::new(),
                 operators: operations
                     .iter()
-                    .map(|operation: &Operation| operation.signature.operator)
+                    .map(|operation: &Operation| operation.signature.id)
                     .collect(),
                 reason: Some(reason),
                 arbitrary_constants: Vec::new(),
@@ -258,16 +138,13 @@ pub fn execute_steps(
     let executable_single = operations.len() == 1
         && is_conventional_value_form(operations[0].signature, operations[0].arguments.len());
     if operations.len() < 2 && !executable_single {
-        let structured_operand = (!operations.is_empty())
-            .then(|| root_call(&leaf, "组合内层表达式"))
-            .transpose()?
-            .flatten()
-            .filter(|call| STRUCTURED_OPERATOR_NAMES.contains(&call.head.as_str()));
-        if let Some(operand) = structured_operand {
+        if let Some(operand_head) =
+            leaf_head.filter(|head| STRUCTURED_OPERATOR_NAMES.contains(&head.as_str()))
+        {
             let pending_operators = operations
                 .iter()
                 .rev()
-                .map(|operation| operation.signature.operator)
+                .map(|operation| operation.signature.id)
                 .collect();
             let step = operation_step(
                 "held-operator-application",
@@ -282,13 +159,13 @@ pub fn execute_steps(
                 steps: vec![step],
                 operators: operations
                     .iter()
-                    .map(|operation| operation.signature.operator)
+                    .map(|operation| operation.signature.id)
                     .collect(),
                 reason: Some("组合在语义上有效，但当前没有适用的降低规则".into()),
                 arbitrary_constants: Vec::new(),
                 held: Some(HeldApplication {
                     source: expression.into(),
-                    operand_head: operand.head,
+                    operand_head,
                     pending_operators,
                 }),
             }));
@@ -306,7 +183,7 @@ pub fn execute_steps(
         occupied_symbols.extend(arbitrary_constants.iter().cloned());
         occupied_symbols.sort();
         occupied_symbols.dedup();
-        let new_constant = (operation.signature.operator == CompositionOperator::Integral
+        let new_constant = (operation.signature.id == CompositionOperator::Integral
             && operation.arguments.len() == 2)
             .then(|| {
                 crate::semantic::display_arbitrary_constants(&occupied_symbols, 1)
@@ -346,7 +223,7 @@ pub fn execute_steps(
         operators: operations
             .iter()
             .rev()
-            .map(|operation| operation.signature.operator)
+            .map(|operation| operation.signature.id)
             .collect(),
         reason: unresolved.then(|| "至少一个运算保持未求值".into()),
         arbitrary_constants,
@@ -369,17 +246,17 @@ fn wrap_expression(operation: &Operation, inner: &str) -> String {
     if is_conventional_value_form(operation.signature, operation.arguments.len()) {
         let mut arguments = operation.arguments.clone();
         arguments[0] = inner.into();
-        return format!("{}({})", operation.signature.name, arguments.join(","));
+        return format!("{}({})", operation.name, arguments.join(","));
     }
     match operation.signature.value_argument {
         ValueArgument::First => {
             let mut arguments = operation.arguments.clone();
             arguments[value_index] = inner.into();
-            format!("{}({})", operation.signature.name, arguments.join(","))
+            format!("{}({})", operation.name, arguments.join(","))
         }
         ValueArgument::Last => format!(
             "{}({})({inner})",
-            operation.signature.name,
+            operation.name,
             operation.arguments[..value_index].join(",")
         ),
     }
@@ -395,7 +272,7 @@ fn wrap_tex(operation: &Operation, inner: &str) -> String {
         .map(|(_, argument)| tex_code(argument))
         .collect::<Vec<_>>()
         .join(",");
-    let head = operation.signature.name;
+    let head = &operation.name;
     if fixed.is_empty() {
         format!(r"\operatorname{{{head}}}\!\left[{inner}\right]")
     } else {
@@ -423,42 +300,43 @@ fn tex_code(value: &str) -> String {
     format!(r"\mathtt{{{escaped}}}")
 }
 
-fn collect_operations(
-    expression: &str,
+fn collect_operations_view(
+    expression: &ExpressionView<'_>,
     operations: &mut Vec<Operation>,
     depth: usize,
-) -> Result<Result<String, String>, EngineError> {
+) -> Result<(Result<String, String>, Option<String>), EngineError> {
     if depth >= MAX_COMPOSITION_DEPTH {
-        return Ok(Err(format!("组合深度超过上限 {MAX_COMPOSITION_DEPTH}")));
+        return Ok((
+            Err(format!("组合深度超过上限 {MAX_COMPOSITION_DEPTH}")),
+            None,
+        ));
     }
-    let Some(call) = root_call(expression, "组合表达式")? else {
-        return Ok(Ok(expression.into()));
+    let Some(name) = expression.head() else {
+        return Ok((Ok(expression.print_source()), None));
     };
-    let Some(signature) = OPERATOR_SIGNATURES
-        .iter()
-        .find(|signature| signature.name == call.head)
-    else {
-        return Ok(Ok(expression.into()));
+    let Some(signature) = operator_descriptor(name) else {
+        return Ok((Ok(expression.print_source()), Some(name.into())));
     };
-    if !signature.arities.contains(&call.arguments.len()) {
-        return Ok(Err(format!(
-            "{} 不支持 {} 个参数",
-            call.head,
-            call.arguments.len()
-        )));
+    let arguments = expression.arguments();
+    if !signature.arities.contains(&arguments.len()) {
+        return Ok((
+            Err(format!("{name} 不支持 {} 个参数", arguments.len())),
+            None,
+        ));
     }
-    let value_index = value_index(signature, call.arguments.len());
-    let Some(inner) = call.arguments.get(value_index).cloned() else {
-        return Ok(Err(format!("{} 缺少值参数", call.head)));
+    let value_index = value_index(signature, arguments.len());
+    let Some(inner) = arguments.get(value_index) else {
+        return Ok((Err(format!("{name} 缺少值参数")), None));
     };
     operations.push(Operation {
+        name: name.into(),
         signature,
-        arguments: call.arguments,
+        arguments: arguments.iter().map(ExpressionView::print_source).collect(),
     });
-    collect_operations(&inner, operations, depth + 1)
+    collect_operations_view(inner, operations, depth + 1)
 }
 
-fn value_index(signature: &OperatorSignature, argument_count: usize) -> usize {
+fn value_index(signature: &OperatorDescriptor, argument_count: usize) -> usize {
     if is_conventional_value_form(signature, argument_count) {
         return 0;
     }
@@ -468,9 +346,9 @@ fn value_index(signature: &OperatorSignature, argument_count: usize) -> usize {
     }
 }
 
-fn is_conventional_value_form(signature: &OperatorSignature, argument_count: usize) -> bool {
+fn is_conventional_value_form(signature: &OperatorDescriptor, argument_count: usize) -> bool {
     matches!(
-        (signature.operator, argument_count),
+        (signature.id, argument_count),
         (CompositionOperator::Limit, 2) | (CompositionOperator::Taylor, 3)
     )
 }
@@ -490,7 +368,7 @@ fn apply(
     verbosity: StepVerbosity,
 ) -> Result<ApplyOutcome, EngineError> {
     let arguments = &operation.arguments;
-    match operation.signature.operator {
+    match operation.signature.id {
         CompositionOperator::Derivative => {
             let order = if arguments.len() == 3 {
                 arguments[1]
@@ -555,7 +433,7 @@ fn apply(
             })
         }
         CompositionOperator::AlgebraTransform => {
-            let (kind, variable) = match operation.signature.name {
+            let (kind, variable) = match operation.name.as_str() {
                 "Expand" => (TransformKind::Expand, None),
                 "Simplify" => (TransformKind::Simplify, None),
                 "Tidy" => (TransformKind::Tidy, None),
@@ -707,12 +585,18 @@ mod tests {
 
     #[test]
     fn declares_a_small_stable_signature_table() {
-        assert!(OPERATOR_SIGNATURES.iter().any(|item| item.name == "D"));
         assert!(OPERATOR_SIGNATURES
             .iter()
-            .any(|item| item.name == "Integrate"));
-        assert!(OPERATOR_SIGNATURES.iter().any(|item| item.name == "Subst"));
-        assert!(OPERATOR_SIGNATURES.iter().any(|item| item.name == "N"));
+            .any(|item| item.names.contains(&"D")));
+        assert!(OPERATOR_SIGNATURES
+            .iter()
+            .any(|item| item.names.contains(&"Integrate")));
+        assert!(OPERATOR_SIGNATURES
+            .iter()
+            .any(|item| item.names.contains(&"Subst")));
+        assert!(OPERATOR_SIGNATURES
+            .iter()
+            .any(|item| item.names.contains(&"N")));
     }
 
     #[test]

@@ -7,6 +7,7 @@
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::quadrature::{adaptive_simpson, QuadratureOptions};
+use crate::semantic_core::{RuleImportance, RuleTrace};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -120,6 +121,58 @@ pub(crate) fn render_events(
             why: event.why,
             tex: strip_tex_delimiters(&tex),
             importance: event.importance,
+        })
+        .collect())
+}
+
+/// Product projection for semantic-core traces.  This deliberately has no
+/// access to domain result state: events are the only input.
+pub fn render_rule_trace(
+    engine: &mut dyn Engine,
+    trace: &RuleTrace,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    let events = trace
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(verbosity, StepVerbosity::Detailed)
+                || matches!(verbosity, StepVerbosity::Standard)
+                    && event.importance != RuleImportance::Routine
+                || matches!(verbosity, StepVerbosity::Concise)
+                    && event.importance == RuleImportance::Key
+        })
+        .filter_map(|event| {
+            event
+                .presentation
+                .as_ref()
+                .map(|presentation| (event, presentation))
+        })
+        .collect::<Vec<_>>();
+    let expressions = events
+        .iter()
+        .filter_map(|(_, presentation)| {
+            presentation
+                .tex_override
+                .is_none()
+                .then(|| presentation.expression.clone())
+        })
+        .collect::<Vec<_>>();
+    let mut rendered = engine.render_tex_batch(&expressions)?.into_iter();
+    Ok(events
+        .into_iter()
+        .map(|(event, presentation)| Step {
+            rule: event.rule.clone(),
+            expr: presentation.expression.clone(),
+            why: presentation.explanation.clone(),
+            tex: presentation.tex_override.clone().unwrap_or_else(|| {
+                strip_tex_delimiters(&rendered.next().expect("one TeX result per expression"))
+            }),
+            importance: match event.importance {
+                RuleImportance::Routine => StepImportance::Routine,
+                RuleImportance::Normal => StepImportance::Normal,
+                RuleImportance::Key => StepImportance::Key,
+            },
         })
         .collect())
 }

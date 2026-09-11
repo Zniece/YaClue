@@ -2,7 +2,14 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
-use crate::steps::{Step, StepImportance, StepVerbosity};
+use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, Computation, ObjectDelta, ObjectId, ObjectReference, RuleEvent,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticState,
+};
+use crate::steps::{Step, StepVerbosity};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -63,6 +70,408 @@ pub struct LimitResult {
     pub conditions: Vec<LimitCondition>,
 }
 
+/// Domain-owned result of the structured limit decision program.  Both the
+/// eventual computation facade and the legacy Step projection consume this
+/// representation; neither reparses the `StepsL'Data` response independently.
+struct LimitTraceData {
+    args: Vec<Expr>,
+    final_node: Expr,
+    final_value: String,
+    conditions: Vec<LimitCondition>,
+}
+
+/// Domain facts emitted by the limit decision program.  This is deliberately
+/// presentation-free: RuleTrace and the legacy teaching projection consume it
+/// instead of independently inferring a branch from strings.
+#[derive(Debug, Clone)]
+struct LimitEventData {
+    rule: &'static str,
+    expression: String,
+    explanation: String,
+    payload: RulePayload,
+    importance: RuleImportance,
+    tex_override: Option<String>,
+}
+
+fn trace_data(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    at: &str,
+    direction: LimitDirection,
+) -> Result<LimitTraceData, EngineError> {
+    let direction_symbol = match direction {
+        LimitDirection::Both => "Both",
+        LimitDirection::Left => "Left",
+        LimitDirection::Right => "Right",
+    };
+    let data = engine.eval_expr(&format!(
+        "StepsL'Data({expression},{variable},{at},{direction_symbol})"
+    ))?;
+    let Expr::Call { head, args } = data else {
+        return Err(EngineError::Parse("极限步骤事件不是列表".into()));
+    };
+    if head != "List" || args.is_empty() {
+        return Err(EngineError::Parse("极限步骤事件形态异常".into()));
+    }
+    let final_node = match args[0].to_string().as_str() {
+        "Direct" | "LHopital" if args.len() == 3 => &args[2],
+        "OneSided" if args.len() == 2 => &args[1],
+        "Cancel" if args.len() == 8 => &args[7],
+        "Transform" if args.len() == 6 => &args[5],
+        _ => &args[0],
+    };
+    let (value, conditions) = unpack_conditional(final_node.clone())?;
+    Ok(LimitTraceData {
+        args,
+        final_node: value.clone(),
+        final_value: value.to_string(),
+        conditions,
+    })
+}
+
+/// First semantic-core adapter.  The limit algorithm remains the existing
+/// tested implementation; this function makes its result and its terminal
+/// mathematical fact available without constructing `Step` values.
+pub fn limit_computation(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    at: &str,
+    direction: LimitDirection,
+) -> Result<Computation, EngineError> {
+    let source = format!("Limit({variable},{at})({expression})");
+    let initial_metadata =
+        ResultMetadata::unresolved(Exactness::Unknown, OutcomeReason::AlgorithmUncovered);
+    let mut object = object_from_source(
+        ObjectId(1),
+        &source,
+        SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: SemanticInterpretation::Application {
+                operator: "Limit".into(),
+            },
+            metadata: initial_metadata,
+        },
+    )?;
+    let input = object.reference(None);
+    let data = trace_data(engine, expression, variable, at, direction)?;
+    let result = limit_from_trace_data(engine, expression, variable, at, direction, &data)?;
+    let metadata = limit_metadata(&result)?;
+    let output_ast = object_from_source(
+        object.id,
+        &result.value,
+        SemanticState {
+            kind: if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
+                ValueKind::Unevaluated
+            } else {
+                ValueKind::Scalar
+            },
+            interpretation: if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
+                SemanticInterpretation::StructuredUnevaluated {
+                    reason: "limit algorithm uncovered".into(),
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata: metadata.clone(),
+        },
+    )?
+    .raw_expression();
+    object.apply(ObjectDelta {
+        expression: Some(output_ast),
+        semantics: Some(SemanticState {
+            kind: if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
+                ValueKind::Unevaluated
+            } else {
+                ValueKind::Scalar
+            },
+            interpretation: if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
+                SemanticInterpretation::StructuredUnevaluated {
+                    reason: "limit algorithm uncovered".into(),
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata,
+        }),
+        overlay: None,
+    });
+    let output = object.reference(None);
+    Ok(Computation {
+        object,
+        trace: Some(RuleTrace {
+            events: limit_rule_events(engine, &data, &result, input, output)?,
+        }),
+        certificates: Vec::new(),
+        effects: Vec::new(),
+    })
+}
+
+fn limit_rule_events(
+    engine: &mut dyn Engine,
+    data: &LimitTraceData,
+    result: &LimitResult,
+    input: ObjectReference,
+    output: ObjectReference,
+) -> Result<Vec<RuleEvent>, EngineError> {
+    let conditions = result
+        .conditions
+        .iter()
+        .flat_map(limit_condition_delta)
+        .collect::<Vec<_>>();
+    let make =
+        |rule: &'static str, payload, importance, expression: String, explanation: String| {
+            let event = LimitEventData {
+                rule,
+                expression,
+                explanation,
+                payload,
+                importance,
+                tex_override: None,
+            };
+            RuleEvent {
+                rule: event.rule.into(),
+                input: input.clone(),
+                output: output.clone(),
+                bindings: vec![
+                    ("variable".into(), result.variable.clone()),
+                    ("at".into(), result.at.clone()),
+                ],
+                conditions: conditions.clone(),
+                payload: event.payload,
+                importance: event.importance,
+                presentation: Some(RulePresentation {
+                    expression: event.expression,
+                    explanation: event.explanation,
+                    tex_override: event.tex_override,
+                }),
+            }
+        };
+    let method = data.args.first().map(ToString::to_string);
+    let mut events = vec![make(
+        "limit-start",
+        RulePayload::Structural,
+        RuleImportance::Routine,
+        format!(
+            "Limit({},{})({})",
+            result.variable, result.at, result.expression
+        ),
+        "建立极限问题".into(),
+    )];
+    let method_events = match method.as_deref() {
+        Some("Direct") => vec![make(
+            "limit-direct-substitution",
+            RulePayload::Rewrite,
+            RuleImportance::Key,
+            data.args[1].to_string(),
+            format!("直接代入 {} = {}", result.variable, result.at),
+        )],
+        Some("OneSided") => vec![make(
+            "limit-one-sided-approach",
+            RulePayload::Decision,
+            RuleImportance::Key,
+            result.value.clone(),
+            "判断单侧趋近的符号与大小".into(),
+        )],
+        Some("Cancel") => vec![
+            make(
+                "limit-indeterminate-form",
+                RulePayload::Inference,
+                RuleImportance::Normal,
+                format!("{}/{}", data.args[1], data.args[2]),
+                "直接代入后得到 0/0 型不定式".into(),
+            ),
+            make(
+                "limit-factor",
+                RulePayload::Rewrite,
+                RuleImportance::Normal,
+                format!(
+                    "(({})*({}))/(({})*({}))",
+                    data.args[3], data.args[5], data.args[4], data.args[5]
+                ),
+                "因式分解并显露公共因子".into(),
+            ),
+            make(
+                "limit-cancel-common-factor",
+                RulePayload::Rewrite,
+                RuleImportance::Key,
+                data.args[6].to_string(),
+                "在趋近点之外约去公共因子".into(),
+            ),
+        ],
+        Some("LHopital") => {
+            let mut events = vec![make(
+                "limit-indeterminate-form",
+                RulePayload::Inference,
+                RuleImportance::Normal,
+                "0/0".into(),
+                "识别可应用洛必达法则的不定式".into(),
+            )];
+            if let Expr::Call { head, args } = &data.args[1] {
+                if head == "List" {
+                    for (index, event) in args.iter().enumerate() {
+                        if let Expr::Call { head, args } = event {
+                            if head == "List" && args.len() == 3 {
+                                events.push(make(
+                                    "limit-lhopital",
+                                    RulePayload::Rewrite,
+                                    RuleImportance::Key,
+                                    args[2].to_string(),
+                                    format!("第 {} 次应用洛必达法则", index + 1),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            events
+        }
+        Some("Transform") => vec![
+            make(
+                "limit-indeterminate-form",
+                RulePayload::Inference,
+                RuleImportance::Normal,
+                match data.args[1].to_string().as_str() {
+                    "Product" => format!("{}*{}", data.args[2], data.args[3]),
+                    "Difference" => format!("{}-{}", data.args[2], data.args[3]),
+                    "Power" => format!("({})^({})", data.args[2], data.args[3]),
+                    _ => format!("{} {} {}", data.args[2], data.args[1], data.args[3]),
+                },
+                "识别需要变换的不定式".into(),
+            ),
+            make(
+                match data.args[1].to_string().as_str() {
+                    "Product" => "limit-transform-product",
+                    "Difference" => "limit-transform-difference",
+                    "Power" => "limit-transform-power",
+                    _ => "limit-transform",
+                },
+                RulePayload::Rewrite,
+                RuleImportance::Key,
+                data.args[4].to_string(),
+                "改写为可计算的极限形式".into(),
+            ),
+        ],
+        _ => Vec::new(),
+    };
+    events.extend(method_events);
+    let payload = match result.status {
+        LimitStatus::Converged | LimitStatus::PositiveInfinity | LimitStatus::NegativeInfinity => {
+            RulePayload::Convergence
+        }
+        LimitStatus::DoesNotExist => RulePayload::Decision,
+        LimitStatus::Unresolved => RulePayload::Structural,
+    };
+    if let Some(condition) = result.conditions.first() {
+        events.push(make(
+            "limit-condition",
+            RulePayload::Inference,
+            RuleImportance::Normal,
+            format_condition_expression(condition),
+            "在此参数条件下采用对应的极限分支".into(),
+        ));
+    }
+    let direct_is_terminal = matches!(method.as_deref(), Some("Direct"))
+        && data
+            .args
+            .get(1)
+            .is_some_and(|value| value.to_string() == result.value)
+        && result.conditions.is_empty();
+    if !direct_is_terminal && !matches!(method.as_deref(), Some("OneSided")) {
+        events.push(make(
+            "limit-result",
+            payload,
+            RuleImportance::Key,
+            result.value.clone(),
+            "得到极限结论".into(),
+        ));
+    }
+    let direction_suffix = match result.direction {
+        LimitDirection::Both => "",
+        LimitDirection::Left => "^{-}",
+        LimitDirection::Right => "^{+}",
+    };
+    let rendered = engine
+        .render_tex_batch(&[result.expression.clone(), result.at.clone()])?
+        .into_iter()
+        .map(|tex| strip_tex_delimiters(&tex))
+        .collect::<Vec<_>>();
+    if let Some(presentation) = events
+        .first_mut()
+        .and_then(|event| event.presentation.as_mut())
+    {
+        presentation.tex_override = Some(format!(
+            "\\\\lim_{{{} \\to {}{}}} {}",
+            result.variable, rendered[1], direction_suffix, rendered[0]
+        ));
+    }
+    Ok(events)
+}
+
+fn limit_condition_delta(condition: &LimitCondition) -> Vec<Condition> {
+    match condition {
+        LimitCondition::Property { expression, fact } => vec![match fact.as_str() {
+            "Positive" | "positive" => Condition::Positive {
+                expression: expression.clone(),
+            },
+            "Negative" | "negative" => Condition::Negative {
+                expression: expression.clone(),
+            },
+            "NonZero" | "non_zero" => Condition::NonZero {
+                expression: expression.clone(),
+            },
+            "Real" | "real" => Condition::Real {
+                expression: expression.clone(),
+            },
+            "Integer" | "integer" => Condition::Integer {
+                expression: expression.clone(),
+            },
+            _ => Condition::Unknown {
+                description: format_condition_expression(condition),
+            },
+        }],
+        LimitCondition::Relation {
+            left,
+            relation: Relation::GreaterThan,
+            right,
+        } if right == "0" => {
+            vec![Condition::Positive {
+                expression: left.clone(),
+            }]
+        }
+        LimitCondition::All { conditions } => {
+            conditions.iter().flat_map(limit_condition_delta).collect()
+        }
+        _ => vec![Condition::Unknown {
+            description: format_condition_expression(condition),
+        }],
+    }
+}
+
+fn limit_metadata(result: &LimitResult) -> Result<ResultMetadata, EngineError> {
+    let conditions =
+        ConditionSet::new(
+            result
+                .conditions
+                .iter()
+                .map(|condition| Condition::Unknown {
+                    description: format!("{condition:?}"),
+                }),
+        )?;
+    Ok(match result.status {
+        LimitStatus::Converged | LimitStatus::PositiveInfinity | LimitStatus::NegativeInfinity => {
+            ResultMetadata::solved(Exactness::Symbolic, conditions)
+        }
+        LimitStatus::DoesNotExist => {
+            ResultMetadata::no_result(Exactness::Unknown, OutcomeReason::MathematicalAbsence)
+        }
+        LimitStatus::Unresolved => {
+            ResultMetadata::unresolved(Exactness::Unknown, OutcomeReason::AlgorithmUncovered)
+        }
+    })
+}
+
 pub fn limit_steps(
     engine: &mut dyn Engine,
     expression: &str,
@@ -91,337 +500,15 @@ pub fn limit_steps_with_verbosity(
     validate_expression(expression, "极限表达式")?;
     validate_expression(at, "趋近点")?;
     validate_symbol(variable, "极限变量")?;
-
-    let direction_symbol = match direction {
-        LimitDirection::Both => "Both",
-        LimitDirection::Left => "Left",
-        LimitDirection::Right => "Right",
-    };
-    let data = engine.eval_expr(&format!(
-        "StepsL'Data({expression},{variable},{at},{direction_symbol})"
-    ))?;
-    let Expr::Call { head, args } = data else {
-        return Err(EngineError::Parse("极限步骤事件不是列表".into()));
-    };
-    if head != "List" || args.is_empty() {
-        return Err(EngineError::Parse("极限步骤事件形态异常".into()));
-    }
-    let final_node = match args[0].to_string().as_str() {
-        "Direct" | "LHopital" if args.len() == 3 => &args[2],
-        "OneSided" if args.len() == 2 => &args[1],
-        "Cancel" if args.len() == 8 => &args[7],
-        "Transform" if args.len() == 6 => &args[5],
-        _ => &args[0],
-    };
-    let (final_value_node, final_conditions) = unpack_conditional(final_node.clone())?;
-    let final_value_override = final_value_node.to_string();
-
-    let direction_suffix = match direction {
-        LimitDirection::Both => "",
-        LimitDirection::Left => "^{-}",
-        LimitDirection::Right => "^{+}",
-    };
-    let mut steps = Vec::new();
-    if verbosity == StepVerbosity::Detailed {
-        let rendered = engine
-            .render_tex_batch(&[expression.trim().into(), at.trim().into()])?
-            .into_iter()
-            .map(|tex| strip_tex_delimiters(&tex))
-            .collect::<Vec<_>>();
-        steps.push(Step {
-            rule: "limit-start".into(),
-            expr: format!("Limit({variable},{at})({})", expression.trim()),
-            why: "建立极限问题".into(),
-            tex: format!(
-                "\\lim_{{{} \\to {}{}}} {}",
-                variable, rendered[1], direction_suffix, rendered[0]
-            ),
-            importance: StepImportance::Routine,
-        });
-    }
-
-    match args[0].to_string().as_str() {
-        "Direct" if args.len() == 3 => {
-            let substituted = args[1].to_string();
-            let final_value = final_value_override.clone();
-            let tex = engine
-                .render_tex_batch(&[substituted.clone(), final_value.clone()])?
-                .into_iter()
-                .map(|tex| strip_tex_delimiters(&tex))
-                .collect::<Vec<_>>();
-            steps.push(Step {
-                rule: "limit-direct-substitution".into(),
-                expr: substituted.clone(),
-                why: format!("直接代入 {variable} = {}", at.trim()),
-                tex: tex[0].clone(),
-                importance: StepImportance::Key,
-            });
-            if final_value != substituted {
-                steps.push(Step {
-                    rule: "limit-result".into(),
-                    expr: final_value,
-                    why: "得到极限值".into(),
-                    tex: tex[1].clone(),
-                    importance: StepImportance::Key,
-                });
-            }
-        }
-        "OneSided" if args.len() == 2 => {
-            let final_value = final_value_override.clone();
-            let tex = strip_tex_delimiters(
-                &engine
-                    .render_tex_batch(std::slice::from_ref(&final_value))?
-                    .remove(0),
-            );
-            let side = match direction {
-                LimitDirection::Left => "左侧",
-                LimitDirection::Right => "右侧",
-                LimitDirection::Both => unreachable!("OneSided requires a directed limit"),
-            };
-            steps.push(Step {
-                rule: "limit-one-sided-approach".into(),
-                expr: final_value,
-                why: format!(
-                    "从{side}趋近 {variable} = {}，判断表达式的符号与大小",
-                    at.trim()
-                ),
-                tex,
-                importance: StepImportance::Key,
-            });
-        }
-        "Cancel" if args.len() == 8 => {
-            let numerator_limit = args[1].to_string();
-            let denominator_limit = args[2].to_string();
-            let reduced_numerator = args[3].to_string();
-            let reduced_denominator = args[4].to_string();
-            let common = args[5].to_string();
-            let factored =
-                format!("(({reduced_numerator})*({common}))/(({reduced_denominator})*({common}))");
-            let cancelled = args[6].to_string();
-            let final_value = final_value_override.clone();
-            let show_detail = verbosity != StepVerbosity::Concise;
-            let mut expressions = if show_detail {
-                vec![
-                    numerator_limit.clone(),
-                    denominator_limit.clone(),
-                    factored.clone(),
-                ]
-            } else {
-                vec![]
-            };
-            expressions.push(cancelled.clone());
-            expressions.push(final_value.clone());
-            let tex = engine
-                .render_tex_batch(&expressions)?
-                .into_iter()
-                .map(|tex| strip_tex_delimiters(&tex))
-                .collect::<Vec<_>>();
-            let offset = if show_detail {
-                steps.push(Step {
-                    rule: "limit-indeterminate-form".into(),
-                    expr: format!("{numerator_limit}/{denominator_limit}"),
-                    why: "直接代入后分子和分母同时为 0".into(),
-                    tex: format!("\\frac{{{}}}{{{}}}", tex[0], tex[1]),
-                    importance: StepImportance::Normal,
-                });
-                steps.push(Step {
-                    rule: "limit-factor".into(),
-                    expr: factored,
-                    why: "因式分解分子和分母，显露公共因子".into(),
-                    tex: tex[2].clone(),
-                    importance: StepImportance::Normal,
-                });
-                3
-            } else {
-                0
-            };
-            steps.push(Step {
-                rule: "limit-cancel-common-factor".into(),
-                expr: cancelled,
-                why: "在趋近点之外约去公共因子；这不改变极限".into(),
-                tex: tex[offset].clone(),
-                importance: StepImportance::Key,
-            });
-            steps.push(Step {
-                rule: "limit-result".into(),
-                expr: final_value,
-                why: format!("对约分后的表达式代入 {variable} = {}", at.trim()),
-                tex: tex[offset + 1].clone(),
-                importance: StepImportance::Key,
-            });
-        }
-        "LHopital" if args.len() == 3 => {
-            let Expr::Call {
-                head: event_head,
-                args: event_args,
-            } = &args[1]
-            else {
-                return Err(EngineError::Parse("洛必达事件链不是列表".into()));
-            };
-            if event_head != "List" || event_args.is_empty() {
-                return Err(EngineError::Parse("洛必达事件链为空".into()));
-            }
-            let mut events = Vec::with_capacity(event_args.len());
-            for event in event_args {
-                let Expr::Call { head, args: values } = event else {
-                    return Err(EngineError::Parse("洛必达事件不是列表".into()));
-                };
-                if head != "List" || values.len() != 3 {
-                    return Err(EngineError::Parse("洛必达事件形态异常".into()));
-                }
-                events.push((
-                    values[0].to_string(),
-                    values[1].to_string(),
-                    values[2].to_string(),
-                ));
-            }
-            let final_value = final_value_override.clone();
-            let show_indeterminate = verbosity != StepVerbosity::Concise;
-            let mut expressions =
-                Vec::with_capacity(events.len() * if show_indeterminate { 3 } else { 1 } + 1);
-            for (numerator, denominator, derivative) in &events {
-                if show_indeterminate {
-                    expressions.push(numerator.clone());
-                    expressions.push(denominator.clone());
-                }
-                expressions.push(derivative.clone());
-            }
-            expressions.push(final_value.clone());
-            let tex = engine
-                .render_tex_batch(&expressions)?
-                .into_iter()
-                .map(|tex| strip_tex_delimiters(&tex))
-                .collect::<Vec<_>>();
-            let mut tex_index = 0;
-            let event_count = events.len();
-            for (index, (numerator, denominator, derivative)) in events.into_iter().enumerate() {
-                if show_indeterminate {
-                    steps.push(Step {
-                        rule: "limit-indeterminate-form".into(),
-                        expr: format!("{numerator}/{denominator}"),
-                        why: format!("代入后分子与分母分别趋于 {numerator} 和 {denominator}"),
-                        tex: format!("\\frac{{{}}}{{{}}}", tex[tex_index], tex[tex_index + 1]),
-                        importance: StepImportance::Normal,
-                    });
-                    tex_index += 2;
-                }
-                steps.push(Step {
-                    rule: "limit-lhopital".into(),
-                    expr: derivative,
-                    why: if event_count == 1 {
-                        "应用洛必达法则，分别对分子和分母求导".into()
-                    } else {
-                        format!("第 {} 次应用洛必达法则", index + 1)
-                    },
-                    tex: tex[tex_index].clone(),
-                    importance: StepImportance::Key,
-                });
-                tex_index += 1;
-            }
-            steps.push(Step {
-                rule: "limit-result".into(),
-                expr: final_value,
-                why: "计算变换后的极限".into(),
-                tex: tex[tex_index].clone(),
-                importance: StepImportance::Key,
-            });
-        }
-        "Transform" if args.len() == 6 => {
-            let kind = args[1].to_string();
-            let left_limit = args[2].to_string();
-            let right_limit = args[3].to_string();
-            let transformed = args[4].to_string();
-            let final_value = final_value_override.clone();
-            let show_indeterminate = verbosity != StepVerbosity::Concise;
-            let mut expressions = if show_indeterminate {
-                vec![left_limit.clone(), right_limit.clone()]
-            } else {
-                vec![]
-            };
-            expressions.push(transformed.clone());
-            expressions.push(final_value.clone());
-            let tex = engine
-                .render_tex_batch(&expressions)?
-                .into_iter()
-                .map(|tex| strip_tex_delimiters(&tex))
-                .collect::<Vec<_>>();
-            let offset = if show_indeterminate {
-                let (operator, symbol) = match kind.as_str() {
-                    "Product" => ("*", "\\cdot"),
-                    "Difference" => ("-", "-"),
-                    "Power" => ("^", "^"),
-                    _ => return Err(EngineError::Parse(format!("未知极限变换类型: {kind}"))),
-                };
-                let form_tex = if kind == "Power" {
-                    format!("{{{}}}^{{{}}}", tex[0], tex[1])
-                } else {
-                    format!("{} {} {}", tex[0], symbol, tex[1])
-                };
-                steps.push(Step {
-                    rule: "limit-indeterminate-form".into(),
-                    expr: format!("{left_limit}{operator}{right_limit}"),
-                    why: format!("代入后得到 {left_limit} 与 {right_limit} 构成的不定式"),
-                    tex: form_tex,
-                    importance: StepImportance::Normal,
-                });
-                2
-            } else {
-                0
-            };
-            let (rule, why) = match kind.as_str() {
-                "Product" => (
-                    "limit-transform-product",
-                    "将乘积型不定式改写为商式，再计算其极限",
-                ),
-                "Difference" => (
-                    "limit-transform-difference",
-                    "提取一个发散因子，将无穷差改写为可计算的形式",
-                ),
-                "Power" => (
-                    "limit-transform-power",
-                    "取对数，将幂型不定式化为指数中的乘积极限",
-                ),
-                _ => return Err(EngineError::Parse(format!("未知极限变换类型: {kind}"))),
-            };
-            steps.push(Step {
-                rule: rule.into(),
-                expr: transformed,
-                why: why.into(),
-                tex: tex[offset].clone(),
-                importance: StepImportance::Key,
-            });
-            steps.push(Step {
-                rule: "limit-result".into(),
-                expr: final_value,
-                why: "计算变换后的极限".into(),
-                tex: tex[offset + 1].clone(),
-                importance: StepImportance::Key,
-            });
-        }
-        method => return Err(EngineError::Parse(format!("未知极限步骤方法: {method}"))),
-    }
-
-    if let Some(condition) = final_conditions.first() {
-        let condition_expr = format_condition_expression(condition);
-        let condition_tex = strip_tex_delimiters(
-            &engine
-                .render_tex_batch(std::slice::from_ref(&condition_expr))?
-                .remove(0),
-        );
-        let insert_at = steps.len().saturating_sub(1);
-        steps.insert(
-            insert_at,
-            Step {
-                rule: "limit-condition".into(),
-                expr: condition_expr,
-                why: "在此参数条件下采用对应的极限分支".into(),
-                tex: condition_tex,
-                importance: StepImportance::Normal,
-            },
-        );
-    }
-
-    Ok(steps)
+    let computation = limit_computation(engine, expression, variable, at, direction)?;
+    return crate::steps::render_rule_trace(
+        engine,
+        computation
+            .trace
+            .as_ref()
+            .expect("limit computation always records its rule trace"),
+        verbosity,
+    );
 }
 
 fn format_condition_expression(condition: &LimitCondition) -> String {
@@ -471,29 +558,29 @@ pub fn limit(
     validate_expression(at, "趋近点")?;
     validate_symbol(variable, "极限变量")?;
 
-    let args = match direction {
-        LimitDirection::Both => format!("{variable},{at}"),
-        LimitDirection::Left => format!("{variable},{at},Left"),
-        LimitDirection::Right => format!("{variable},{at},Right"),
-    };
-    let result = engine.eval(&format!("Limit({args})({expression})"))?;
-    let (value_expr, conditions) = unpack_conditional(result.expr)?;
-    let value = value_expr.to_string();
-    let status = classify(&value_expr, &value);
-    let tex = if conditions.is_empty() {
-        strip_tex_delimiters(&result.tex)
-    } else {
-        strip_tex_delimiters(&engine.eval(&value)?.tex)
-    };
+    let data = trace_data(engine, expression, variable, at, direction)?;
+    limit_from_trace_data(engine, expression, variable, at, direction, &data)
+}
+
+fn limit_from_trace_data(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    at: &str,
+    direction: LimitDirection,
+    data: &LimitTraceData,
+) -> Result<LimitResult, EngineError> {
+    let status = classify(&data.final_node, &data.final_value);
+    let tex = strip_tex_delimiters(&engine.eval(&data.final_value)?.tex);
     Ok(LimitResult {
         status,
         expression: expression.trim().into(),
         variable: variable.into(),
         at: at.trim().into(),
-        value,
+        value: data.final_value.clone(),
         tex,
         direction,
-        conditions,
+        conditions: data.conditions.clone(),
     })
 }
 
@@ -894,5 +981,37 @@ mod tests {
                 .value,
             "2"
         );
+    }
+
+    #[test]
+    fn semantic_core_adapter_returns_result_without_steps() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let computation =
+            limit_computation(&mut engine, "Sin(x)/x", "x", "0", LimitDirection::Both).unwrap();
+        assert_eq!(computation.object.semantics.kind, ValueKind::Scalar);
+        assert_eq!(computation.object.revision.0, 1);
+        let trace = computation.trace.unwrap();
+        assert!(trace.events.len() >= 2);
+        assert_eq!(trace.events[0].rule, "limit-start");
+        assert_eq!(trace.events[1].rule, "limit-indeterminate-form");
+        assert_eq!(trace.events.last().unwrap().rule, "limit-result");
+        assert_eq!(trace.events[1].input.revision.0, 0);
+        assert_eq!(trace.events.last().unwrap().output.revision.0, 1);
+    }
+
+    #[test]
+    fn semantic_core_trace_projects_concise_steps_without_domain_result_access() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let computation =
+            limit_computation(&mut engine, "Sin(x)/x", "x", "0", LimitDirection::Both).unwrap();
+        let steps = crate::steps::render_rule_trace(
+            &mut engine,
+            computation.trace.as_ref().unwrap(),
+            StepVerbosity::Concise,
+        )
+        .unwrap();
+        assert!(!steps.is_empty());
+        assert_eq!(steps.last().unwrap().rule, "limit-result");
+        assert_eq!(steps.last().unwrap().expr, "1");
     }
 }
