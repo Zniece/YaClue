@@ -543,6 +543,12 @@ pub struct RuleTrace {
 pub enum ComputationOutput {
     /// A mathematical value that may be passed to a later semantic operation.
     Value(MathematicalObject),
+    /// A valid mathematical application whose evaluation is deferred. It
+    /// remains an operand for operations that declare compatible capability.
+    Held(MathematicalObject),
+    /// The computation has a mathematical conclusion but no value that may
+    /// participate in a later operation (for example a two-sided DNE limit).
+    NoValue(MathematicalObject),
     /// The computation intentionally produced no mathematical value.  Its
     /// effects are terminal and must not enter the composition data plane.
     EffectsOnly,
@@ -560,6 +566,17 @@ impl Computation {
     pub fn value(&self) -> Option<&MathematicalObject> {
         match &self.output {
             ComputationOutput::Value(object) => Some(object),
+            ComputationOutput::Held(_)
+            | ComputationOutput::NoValue(_)
+            | ComputationOutput::EffectsOnly => None,
+        }
+    }
+
+    pub fn subject(&self) -> Option<&MathematicalObject> {
+        match &self.output {
+            ComputationOutput::Value(object)
+            | ComputationOutput::Held(object)
+            | ComputationOutput::NoValue(object) => Some(object),
             ComputationOutput::EffectsOnly => None,
         }
     }

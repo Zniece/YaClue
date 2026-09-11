@@ -201,22 +201,34 @@ pub fn limit_computation_for_object(
     let data = trace_data(engine, &expression, variable, at, direction)?;
     let result = limit_from_trace_data(engine, &expression, variable, at, direction, &data)?;
     let metadata = limit_metadata(&result)?;
+    let application_source = format!("Limit({variable},{at})({expression})");
+    let produces_value = metadata.resolution == crate::protocol::ResolutionState::Solved;
+    let output_source = if produces_value {
+        result.value.as_str()
+    } else {
+        application_source.as_str()
+    };
+    let interpretation = match metadata.resolution {
+        crate::protocol::ResolutionState::Solved => SemanticInterpretation::PlainExpression,
+        crate::protocol::ResolutionState::Unresolved => SemanticInterpretation::HeldApplication {
+            operator: "Limit".into(),
+        },
+        crate::protocol::ResolutionState::NoResult => {
+            SemanticInterpretation::StructuredUnevaluated {
+                reason: "limit does not exist".into(),
+            }
+        }
+    };
     let output_ast = object_from_source(
         object.id,
-        &result.value,
+        output_source,
         SemanticState {
-            kind: if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
-                ValueKind::Unevaluated
-            } else {
+            kind: if produces_value {
                 ValueKind::Scalar
-            },
-            interpretation: if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
-                SemanticInterpretation::StructuredUnevaluated {
-                    reason: "limit algorithm uncovered".into(),
-                }
             } else {
-                SemanticInterpretation::PlainExpression
+                ValueKind::Unevaluated
             },
+            interpretation: interpretation.clone(),
             metadata: metadata.clone(),
         },
     )?
@@ -224,25 +236,25 @@ pub fn limit_computation_for_object(
     object.apply(ObjectDelta {
         expression: Some(output_ast),
         semantics: Some(SemanticState {
-            kind: if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
-                ValueKind::Unevaluated
-            } else {
+            kind: if produces_value {
                 ValueKind::Scalar
-            },
-            interpretation: if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
-                SemanticInterpretation::StructuredUnevaluated {
-                    reason: "limit algorithm uncovered".into(),
-                }
             } else {
-                SemanticInterpretation::PlainExpression
+                ValueKind::Unevaluated
             },
+            interpretation,
             metadata,
         }),
         overlay: None,
     });
     let output = object.reference(None);
     Ok(Computation {
-        output: ComputationOutput::Value(object),
+        output: match result.status {
+            LimitStatus::Converged
+            | LimitStatus::PositiveInfinity
+            | LimitStatus::NegativeInfinity => ComputationOutput::Value(object),
+            LimitStatus::Unresolved => ComputationOutput::Held(object),
+            LimitStatus::DoesNotExist => ComputationOutput::NoValue(object),
+        },
         trace: Some(RuleTrace {
             events: limit_rule_events(engine, &data, &result, input, output)?,
         }),
@@ -1043,6 +1055,21 @@ mod tests {
         assert_eq!(trace.events.last().unwrap().rule, "limit-result");
         assert_eq!(trace.events[1].input.revision.0, 0);
         assert_eq!(trace.events.last().unwrap().output.revision.0, 1);
+    }
+
+    #[test]
+    fn limit_output_distinguishes_value_from_mathematical_absence() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let solved =
+            limit_computation(&mut engine, "Sin(x)/x", "x", "0", LimitDirection::Both).unwrap();
+        assert!(matches!(&solved.output, ComputationOutput::Value(_)));
+        let absent = limit_computation(&mut engine, "1/x", "x", "0", LimitDirection::Both).unwrap();
+        assert!(matches!(&absent.output, ComputationOutput::NoValue(_)));
+        assert!(absent.value().is_none());
+        assert_eq!(
+            absent.subject().unwrap().semantics.metadata.resolution,
+            crate::protocol::ResolutionState::NoResult
+        );
     }
 
     #[test]
