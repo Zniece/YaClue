@@ -35,9 +35,10 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
         }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
+                && expression.children.iter().all(can_execute_elaborated_tree)
         }
-        crate::elaboration::MathematicalForm::EffectApplication { .. }
-        | crate::elaboration::MathematicalForm::OpaqueEngineValue { .. } => false,
+        crate::elaboration::MathematicalForm::EffectApplication { .. } => true,
+        crate::elaboration::MathematicalForm::OpaqueEngineValue { .. } => false,
         crate::elaboration::MathematicalForm::Relation { .. }
         | crate::elaboration::MathematicalForm::Collection => false,
         _ => true,
@@ -53,6 +54,15 @@ pub fn has_migrated_calculus_descendant(expression: &crate::elaboration::Elabora
     })
 }
 
+pub fn has_effect_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
+    expression.children.iter().any(|child| {
+        matches!(
+            child.form,
+            crate::elaboration::MathematicalForm::EffectApplication { .. }
+        ) || has_effect_descendant(child)
+    })
+}
+
 pub fn execute_elaborated_structure(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
@@ -60,6 +70,9 @@ pub fn execute_elaborated_structure(
     if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
         if matches!(head.as_str(), "Limit" | "D" | "Deriv") {
             return execute_calculus_application(engine, expression, head);
+        }
+        if !crate::semantic_core::is_known_operator(head) {
+            return execute_function_application(engine, expression, head);
         }
     }
     if matches!(
@@ -151,6 +164,164 @@ pub fn execute_elaborated_structure(
         trace.events = child_traces;
     }
     Ok(computation)
+}
+
+fn execute_function_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    let mut children = expression
+        .children
+        .iter()
+        .map(|child| execute_elaborated_structure(engine, child))
+        .collect::<Result<Vec<_>, _>>()?;
+    if children
+        .iter()
+        .any(|child| matches!(child.output, ComputationOutput::EffectsOnly))
+    {
+        return Err(EngineError::InvalidInput(format!(
+            "带副作用的动作不能作为 {head} 的参数"
+        )));
+    }
+    let arguments: Vec<_> = children
+        .iter()
+        .map(|child| {
+            child
+                .subject()
+                .expect("mathematical function argument owns an object")
+                .clone()
+        })
+        .collect();
+    let rebuilt = expression.object.rebuild_application_with(&arguments)?;
+    let conditions = conditions_from_objects(&arguments)?;
+    let exactness = exactness_from_objects(&arguments);
+    let no_value = children
+        .iter()
+        .any(|child| matches!(child.output, ComputationOutput::NoValue(_)));
+    let held = children
+        .iter()
+        .any(|child| matches!(child.output, ComputationOutput::Held(_)));
+    let mut output = expression.object.clone();
+    let semantics = if no_value {
+        SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: SemanticInterpretation::StructuredUnevaluated {
+                reason: "argument has no mathematical value".into(),
+            },
+            metadata: metadata_with_conditions(
+                ResultMetadata::no_result(exactness, OutcomeReason::MathematicalAbsence),
+                &conditions,
+            ),
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        }
+    } else if held {
+        SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: SemanticInterpretation::HeldApplication {
+                operator: head.into(),
+            },
+            metadata: metadata_with_conditions(
+                ResultMetadata::unresolved(exactness, OutcomeReason::AlgorithmUncovered),
+                &conditions,
+            ),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        }
+    } else {
+        let rebuilt_object = crate::semantic_core::MathematicalObject::new(
+            expression.object.id,
+            rebuilt.clone(),
+            expression.object.semantics.clone(),
+        );
+        let evaluated = engine
+            .eval_expr(&rebuilt_object.print_source())?
+            .to_string();
+        let evaluated_object = object_from_source(
+            expression.object.id,
+            &evaluated,
+            expression.object.semantics.clone(),
+        )?;
+        let kind = crate::input::with_parse_env(|env| {
+            crate::semantic::analyze_tree(env, &evaluated_object.raw_expression())
+                .semantic
+                .kind
+        });
+        output = evaluated_object;
+        SemanticState {
+            kind,
+            interpretation: SemanticInterpretation::PlainExpression,
+            metadata: ResultMetadata::solved(exactness, conditions.clone()),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        }
+    };
+    output.apply(ObjectDelta {
+        expression: (!matches!(semantics.metadata.resolution, ResolutionState::Solved))
+            .then_some(rebuilt),
+        semantics: Some(semantics),
+        overlay: None,
+        normalization: (!held && !no_value).then_some(NormalizationMetadata {
+            level: NormalizationLevel::Structural,
+            assumptions: conditions.conditions().to_vec(),
+            mode: NormalizationMode::Safe,
+        }),
+    });
+    let rule = if no_value {
+        "propagate-no-value"
+    } else if held {
+        "hold-function-application"
+    } else {
+        "apply-function"
+    };
+    let event = RuleEvent {
+        rule: rule.into(),
+        input: arguments
+            .first()
+            .map(|argument| argument.reference(None))
+            .unwrap_or_else(|| expression.object.reference(None)),
+        additional_inputs: arguments
+            .iter()
+            .skip(1)
+            .map(|argument| argument.reference(None))
+            .collect(),
+        output: output.reference(None),
+        bindings: vec![("function".into(), head.into())],
+        conditions: conditions.conditions().to_vec(),
+        payload: RulePayload::Rewrite,
+        importance: RuleImportance::Key,
+        presentation: Some(RulePresentation {
+            expression: output.print_source(),
+            explanation: "将已类型化的参数应用到数学函数。".into(),
+            tex_override: None,
+        }),
+    };
+    let mut events = Vec::new();
+    for child in &mut children {
+        if let Some(trace) = child.trace.take() {
+            events.extend(trace.events);
+        }
+    }
+    events.push(event);
+    Ok(Computation {
+        output: if no_value {
+            ComputationOutput::NoValue(output)
+        } else if held {
+            ComputationOutput::Held(output)
+        } else {
+            ComputationOutput::Value(output)
+        },
+        trace: Some(RuleTrace { events }),
+        certificates: children
+            .iter_mut()
+            .flat_map(|child| std::mem::take(&mut child.certificates))
+            .collect(),
+        effects: children
+            .iter_mut()
+            .flat_map(|child| std::mem::take(&mut child.effects))
+            .collect(),
+    })
 }
 
 fn execute_calculus_application(
@@ -596,6 +767,20 @@ fn combined_conditions(
     ConditionSet::new(conditions)
 }
 
+fn conditions_from_objects(
+    objects: &[crate::semantic_core::MathematicalObject],
+) -> Result<ConditionSet, EngineError> {
+    ConditionSet::new(objects.iter().flat_map(|object| {
+        object
+            .semantics
+            .metadata
+            .conditions
+            .conditions()
+            .iter()
+            .cloned()
+    }))
+}
+
 fn combined_exactness(
     left: &crate::semantic_core::MathematicalObject,
     right: Option<&crate::semantic_core::MathematicalObject>,
@@ -610,6 +795,28 @@ fn combined_exactness(
         };
     }
     exactness
+}
+
+fn exactness_from_objects(objects: &[crate::semantic_core::MathematicalObject]) -> Exactness {
+    objects.iter().fold(Exactness::Exact, |combined, object| {
+        match (combined, object.semantics.metadata.exactness) {
+            (Exactness::Approximate, _) | (_, Exactness::Approximate) => Exactness::Approximate,
+            (Exactness::Unknown, _) | (_, Exactness::Unknown) => Exactness::Unknown,
+            (Exactness::Symbolic, _) | (_, Exactness::Symbolic) => Exactness::Symbolic,
+            (Exactness::Exact, Exactness::Exact) => Exactness::Exact,
+        }
+    })
+}
+
+fn metadata_with_conditions(
+    mut metadata: ResultMetadata,
+    conditions: &ConditionSet,
+) -> ResultMetadata {
+    if !conditions.is_empty() {
+        metadata.conditionality = Conditionality::Conditional;
+        metadata.conditions = conditions.clone();
+    }
+    metadata
 }
 
 fn arithmetic_metadata(
@@ -863,5 +1070,46 @@ mod tests {
             .events
             .iter()
             .any(|event| event.rule == "propagate-no-value"));
+    }
+
+    #[test]
+    fn generic_functions_consume_nested_semantic_objects() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let elaborated = crate::elaboration::elaborate("Sin(Limit(t,0)(Sin(t)/t))").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+        assert_eq!(result.value().unwrap().print_source(), "Sin(1)");
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| event.rule == "apply-function"));
+
+        let chain = crate::elaboration::elaborate("D(x)(Sin(Limit(t,0)(Sin(t)/t+x)))").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &chain).unwrap();
+        assert_eq!(result.value().unwrap().print_source(), "Cos(x+1)");
+    }
+
+    #[test]
+    fn generic_functions_propagate_no_value_without_evaluation() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let elaborated = crate::elaboration::elaborate("Sin(Limit(x,0)(1/x))").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+        assert!(matches!(result.output, ComputationOutput::NoValue(_)));
+        assert!(result.subject().unwrap().print_source().contains("Limit"));
+    }
+
+    #[test]
+    fn effects_are_rejected_as_function_or_structural_operands() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for source in ["Sin(Plot(x,x,0,1))", "(Plot(x,x,0,1))+1"] {
+            let elaborated = crate::elaboration::elaborate(source).unwrap();
+            let error = match execute_elaborated_structure(&mut engine, &elaborated) {
+                Ok(_) => panic!("{source} should reject an effect operand"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("副作用"), "{source}: {error}");
+        }
     }
 }

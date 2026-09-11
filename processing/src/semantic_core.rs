@@ -511,6 +511,28 @@ impl MathematicalObject {
         self.expression.clone()
     }
 
+    pub(crate) fn rebuild_application_with(
+        &self,
+        arguments: &[MathematicalObject],
+    ) -> Result<Rc<LispObject>, EngineError> {
+        let ObjectKind::Sublist(first) = &self.expression.kind else {
+            return Err(EngineError::Parse("对象不是 application AST".into()));
+        };
+        let head = spine_refs(first)
+            .next()
+            .ok_or_else(|| EngineError::Parse("application AST 缺少 head".into()))?;
+        let mut kinds = Vec::with_capacity(arguments.len() + 1);
+        kinds.push(yacas_rs::value::clone_kind(&head.kind));
+        kinds.extend(
+            arguments
+                .iter()
+                .map(|argument| yacas_rs::value::clone_kind(&argument.expression.kind)),
+        );
+        let chain = yacas_rs::value::build_list(kinds)
+            .ok_or_else(|| EngineError::Parse("无法重建 application AST".into()))?;
+        Ok(LispObject::new(ObjectKind::Sublist(chain)))
+    }
+
     pub fn reference(&self, focus: Option<ExpressionPath>) -> ObjectReference {
         ObjectReference {
             object: self.id,

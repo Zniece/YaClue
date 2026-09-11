@@ -104,7 +104,12 @@ pub fn execute_elaborated(
     ) || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "Limit" | "D" | "Deriv"))
-        && crate::arithmetic::has_migrated_calculus_descendant(&input.root)))
+        && crate::arithmetic::has_migrated_calculus_descendant(&input.root))
+        || (matches!(&input.root.form,
+            crate::elaboration::MathematicalForm::Application { head }
+                if !is_known_operator(head))
+            && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
+                || crate::arithmetic::has_effect_descendant(&input.root))))
         && crate::arithmetic::can_execute_elaborated_tree(&input.root)
     {
         let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;

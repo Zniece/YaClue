@@ -417,9 +417,11 @@ fn dispatch_expression_with_engine(
     if matches!(
         elaborated.root.form,
         processing::elaboration::MathematicalForm::Structural { .. }
-    ) || call
-        .as_ref()
-        .is_some_and(processing::composition::is_candidate)
+    ) || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
+        || processing::arithmetic::has_effect_descendant(&elaborated.root)
+        || call
+            .as_ref()
+            .is_some_and(processing::composition::is_candidate)
     {
         if let Some(mut result) = processing::composition::execute_elaborated(
             &mut *engine,
@@ -1912,6 +1914,19 @@ mod tests {
             assert_eq!(result.steps[0].rule, "held-operator-application");
             assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
         }
+    }
+
+    #[test]
+    fn unified_input_composes_functions_with_semantic_calculus_results() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let result = process_expression_with_engine(
+            request("Sin(Limit(t,0)(Sin(t)/t))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(result.kind, "composition");
+        assert_eq!(result.expression, "Sin(1)");
+        assert_eq!(result.semantic.kind, ValueKind::Scalar);
     }
 
     #[test]
