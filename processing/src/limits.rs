@@ -297,12 +297,17 @@ pub fn limit_computation_for_object(
     let metadata = limit_metadata(&result)?;
     let application_source = format!("Limit({variable},{at})({expression})");
     let produces_value = metadata.resolution == crate::protocol::ResolutionState::Solved;
-    let output_capabilities =
-        if produces_value || metadata.resolution == crate::protocol::ResolutionState::Unresolved {
-            CapabilitySet::symbolic_expression()
-        } else {
-            CapabilitySet::empty()
-        };
+    // Infinity is an extended-real Limit conclusion, not an ordinary
+    // differentiable expression.  Its capability boundary must prevent a
+    // later operation from silently treating it as a constant.
+    let output_capabilities = if matches!(
+        result.status,
+        LimitStatus::Converged | LimitStatus::Unresolved
+    ) {
+        CapabilitySet::symbolic_expression()
+    } else {
+        CapabilitySet::empty()
+    };
     let output_source = if produces_value {
         result.value.as_str()
     } else {

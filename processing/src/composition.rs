@@ -12,8 +12,8 @@ use crate::protocol::{OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     object_from_source, operator_descriptor, CapabilitySet, ComputationOutput, ExpressionView,
-    MathematicalObject, ObjectId, OperatorDescriptor, SemanticInterpretation, SemanticOperation,
-    SemanticState,
+    MathematicalObject, ObjectCapability, ObjectId, OperatorDescriptor, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 pub use crate::semantic_core::{OperatorId as CompositionOperator, ValueArgument};
 use crate::steps::{
@@ -54,6 +54,7 @@ pub use crate::semantic_core::OPERATOR_DESCRIPTORS as OPERATOR_SIGNATURES;
 pub enum CompositionStatus {
     Completed,
     Unresolved,
+    NoValue,
     Unsupported,
 }
 
@@ -263,12 +264,23 @@ fn execute_limit_then_derivative(
     let limited = crate::limits::LimitOperation.compute(engine, &operand, &limit)?;
     let limit_object = match &limited.output {
         ComputationOutput::Value(object) | ComputationOutput::Held(object) => object,
-        ComputationOutput::NoValue(object) => {
+        ComputationOutput::NoValue(_object) => {
+            let steps = crate::steps::render_rule_trace(
+                engine,
+                limited.trace.as_ref().expect("Limit records a trace"),
+                verbosity,
+            )?;
             return Ok(Some(CompositionResult {
-                status: CompositionStatus::Unresolved,
-                value: object.print_source(),
-                tex: String::new(),
-                steps: Vec::new(),
+                status: CompositionStatus::NoValue,
+                // A NoValue must not masquerade as the held Limit AST or as
+                // an operand for a later operation.  The trace still gives
+                // the product its explanatory conclusion.
+                value: "Undefined".into(),
+                tex: steps
+                    .last()
+                    .map(|step| step.tex.clone())
+                    .unwrap_or_default(),
+                steps,
                 operators: vec![CompositionOperator::Limit, CompositionOperator::Derivative],
                 reason: Some("内层极限不存在，不能作为求导操作数".into()),
                 arbitrary_constants: Vec::new(),
@@ -277,6 +289,30 @@ fn execute_limit_then_derivative(
         }
         ComputationOutput::EffectsOnly => unreachable!("Limit always returns an object"),
     };
+    if !limit_object
+        .semantics
+        .capabilities
+        .contains(ObjectCapability::Differentiate)
+    {
+        let steps = crate::steps::render_rule_trace(
+            engine,
+            limited.trace.as_ref().expect("Limit records a trace"),
+            verbosity,
+        )?;
+        return Ok(Some(CompositionResult {
+            status: CompositionStatus::Unresolved,
+            value: limit_object.print_source(),
+            tex: steps
+                .last()
+                .map(|step| step.tex.clone())
+                .unwrap_or_default(),
+            steps,
+            operators: vec![CompositionOperator::Limit, CompositionOperator::Derivative],
+            reason: Some("内层极限产生扩展实数，不能作为求导操作数".into()),
+            arbitrary_constants: Vec::new(),
+            held: None,
+        }));
+    }
     let differentiated =
         crate::derivatives::DerivativeOperation.compute(engine, limit_object, &derivative)?;
     let value = differentiated
@@ -1003,6 +1039,40 @@ mod tests {
             .position(|step| step.rule == "sum-rule")
             .unwrap();
         assert!(limit_result < derivative);
+    }
+
+    #[test]
+    fn refuses_to_differentiate_an_extended_real_limit_value() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(
+            &mut engine,
+            "D(x)Limit(t,0,Right)(1/t+x^2)",
+            StepVerbosity::Standard,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert_eq!(result.value, "Infinity");
+        assert!(result
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("扩展实数")));
+        assert!(result.steps.iter().all(|step| step.rule != "const-rule"));
+    }
+
+    #[test]
+    fn preserves_a_nonexistent_limit_conclusion_without_applying_derivative() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(&mut engine, "D(x)Limit(t,0)(1/t)", StepVerbosity::Standard)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::NoValue);
+        assert!(result
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("不存在")));
+        assert!(result.steps.iter().any(|step| step.rule == "limit-result"));
+        assert!(result.steps.iter().all(|step| step.rule != "const-rule"));
     }
 
     #[test]

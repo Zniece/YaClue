@@ -155,7 +155,7 @@ fn result_metadata(
         ResultMetadata::no_result(exactness, OutcomeReason::Divergent)
     } else if matches!(
         status,
-        "does_not_exist" | "no_solution" | "no_points" | "no_critical_points"
+        "does_not_exist" | "no_solution" | "no_points" | "no_critical_points" | "no_value"
     ) {
         ResultMetadata::no_result(exactness, OutcomeReason::MathematicalAbsence)
     } else if held_operation
@@ -193,6 +193,16 @@ fn project_domain_semantic(
     input: &SemanticSummary,
     result: &DispatchExpressionResult,
 ) -> Result<SemanticSummary, ErrorResponse> {
+    if result
+        .data
+        .get("status")
+        .is_some_and(|status| status == "no_value")
+    {
+        let mut semantic = input.clone();
+        semantic.kind = ValueKind::Unevaluated;
+        semantic.completeness = None;
+        return Ok(semantic);
+    }
     if result.data.get("held").is_some_and(|held| !held.is_null()) {
         let mut semantic = input.clone();
         semantic.kind = ValueKind::Unevaluated;
