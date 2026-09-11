@@ -318,11 +318,64 @@ pub enum SemanticInterpretation {
     },
 }
 
+/// Operations a mathematical object may participate in.  This is deliberately
+/// independent from its syntax and exactness: capabilities can be added as
+/// domains migrate without creating a closed hierarchy of value types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectCapability {
+    Differentiate,
+    Integrate,
+    Substitute,
+    EvaluateLimit,
+    Simplify,
+    NumericEvaluate,
+    Plot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CapabilitySet(u16);
+
+impl CapabilitySet {
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+    pub const fn symbolic_expression() -> Self {
+        Self(
+            (1 << ObjectCapability::Differentiate as u8)
+                | (1 << ObjectCapability::Integrate as u8)
+                | (1 << ObjectCapability::Substitute as u8)
+                | (1 << ObjectCapability::EvaluateLimit as u8)
+                | (1 << ObjectCapability::Simplify as u8)
+                | (1 << ObjectCapability::NumericEvaluate as u8)
+                | (1 << ObjectCapability::Plot as u8),
+        )
+    }
+    pub const fn contains(self, capability: ObjectCapability) -> bool {
+        self.0 & (1 << capability as u8) != 0
+    }
+}
+
+/// Missing context is data, not an error or an invitation to stringify an
+/// object. It lets partial applications remain composable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Requirement {
+    Operand,
+    Variable,
+    ApproachPoint,
+    Direction,
+    Interval,
+    InitialCondition,
+    Precision,
+    Assumption,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticState {
     pub kind: ValueKind,
     pub interpretation: SemanticInterpretation,
     pub metadata: ResultMetadata,
+    pub capabilities: CapabilitySet,
+    pub requirements: Vec<Requirement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -631,6 +684,8 @@ mod tests {
                 kind: ValueKind::Expression,
                 interpretation: SemanticInterpretation::PlainExpression,
                 metadata: metadata.clone(),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
             },
         );
         object.apply(ObjectDelta {
@@ -641,6 +696,8 @@ mod tests {
                     reason: "test".into(),
                 },
                 metadata,
+                capabilities: CapabilitySet::empty(),
+                requirements: Vec::new(),
             }),
             overlay: None,
         });
@@ -665,6 +722,8 @@ mod tests {
                 kind: ValueKind::Expression,
                 interpretation: SemanticInterpretation::PlainExpression,
                 metadata: metadata.clone(),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
             },
         );
         let before = object.reference(Some(ExpressionPath::root()));
@@ -674,6 +733,8 @@ mod tests {
                 kind: ValueKind::Scalar,
                 interpretation: SemanticInterpretation::PlainExpression,
                 metadata,
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
             }),
             overlay: None,
         });

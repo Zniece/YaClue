@@ -5,9 +5,9 @@ use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, Computation, ComputationOutput, ObjectDelta, ObjectId, ObjectReference,
-    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    object_from_source, CapabilitySet, Computation, ComputationOutput, ObjectDelta, ObjectId,
+    ObjectReference, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use crate::steps::{Step, StepVerbosity};
 use serde::Serialize;
@@ -180,6 +180,8 @@ pub fn limit_computation(
             kind: ValueKind::Unevaluated,
             interpretation: SemanticInterpretation::PlainExpression,
             metadata: initial_metadata,
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
         },
     )?;
     limit_computation_for_object(engine, &object, variable, at, direction)
@@ -203,6 +205,12 @@ pub fn limit_computation_for_object(
     let metadata = limit_metadata(&result)?;
     let application_source = format!("Limit({variable},{at})({expression})");
     let produces_value = metadata.resolution == crate::protocol::ResolutionState::Solved;
+    let output_capabilities =
+        if produces_value || metadata.resolution == crate::protocol::ResolutionState::Unresolved {
+            CapabilitySet::symbolic_expression()
+        } else {
+            CapabilitySet::empty()
+        };
     let output_source = if produces_value {
         result.value.as_str()
     } else {
@@ -230,6 +238,8 @@ pub fn limit_computation_for_object(
             },
             interpretation: interpretation.clone(),
             metadata: metadata.clone(),
+            capabilities: output_capabilities,
+            requirements: Vec::new(),
         },
     )?
     .raw_expression();
@@ -243,6 +253,8 @@ pub fn limit_computation_for_object(
             },
             interpretation,
             metadata,
+            capabilities: output_capabilities,
+            requirements: Vec::new(),
         }),
         overlay: None,
     });
@@ -1085,6 +1097,8 @@ mod tests {
                     Exactness::Unknown,
                     OutcomeReason::AlgorithmUncovered,
                 ),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
             },
         )
         .unwrap();
