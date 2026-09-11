@@ -8,7 +8,13 @@ use crate::engine::{Engine, EngineError};
 use crate::input::{analyze_expression, strip_tex_delimiters, validate_safe_text, RootCall};
 use crate::numeric;
 use crate::ode::{self, OdeStatus};
-use crate::semantic_core::{operator_descriptor, ExpressionView, OperatorDescriptor};
+use crate::protocol::{OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, operator_descriptor, CapabilitySet, ComputationOutput, ExpressionView,
+    MathematicalObject, ObjectId, OperatorDescriptor, SemanticInterpretation, SemanticOperation,
+    SemanticState,
+};
 pub use crate::semantic_core::{OperatorId as CompositionOperator, ValueArgument};
 use crate::steps::{
     derive_antiderivative_family_with_verbosity, derive_steps_order_with_verbosity, Step,
@@ -173,6 +179,14 @@ pub fn execute_steps(
         return Ok(None);
     }
 
+    // The first object-native composition slice.  This deliberately precedes
+    // the legacy string protocol below: a solved Limit object is handed to
+    // DerivativeOperation as an object with its identity/revision/capability,
+    // never printed and reparsed by composition.
+    if let Some(result) = execute_limit_then_derivative(engine, &operations, &leaf, verbosity)? {
+        return Ok(Some(result));
+    }
+
     let mut current = leaf;
     let mut steps = Vec::new();
     let mut unresolved = false;
@@ -229,6 +243,137 @@ pub fn execute_steps(
         arbitrary_constants,
         held: None,
     }))
+}
+
+fn execute_limit_then_derivative(
+    engine: &mut dyn Engine,
+    operations: &[Operation],
+    leaf: &str,
+    verbosity: StepVerbosity,
+) -> Result<Option<CompositionResult>, EngineError> {
+    if operations.len() != 2
+        || operations[0].signature.id != CompositionOperator::Derivative
+        || operations[1].signature.id != CompositionOperator::Limit
+    {
+        return Ok(None);
+    }
+    let derivative = derivative_request(&operations[0])?;
+    let limit = limit_request(&operations[1])?;
+    let operand = composition_operand(leaf)?;
+    let limited = crate::limits::LimitOperation.compute(engine, &operand, &limit)?;
+    let limit_object = match &limited.output {
+        ComputationOutput::Value(object) | ComputationOutput::Held(object) => object,
+        ComputationOutput::NoValue(object) => {
+            return Ok(Some(CompositionResult {
+                status: CompositionStatus::Unresolved,
+                value: object.print_source(),
+                tex: String::new(),
+                steps: Vec::new(),
+                operators: vec![CompositionOperator::Limit, CompositionOperator::Derivative],
+                reason: Some("内层极限不存在，不能作为求导操作数".into()),
+                arbitrary_constants: Vec::new(),
+                held: None,
+            }));
+        }
+        ComputationOutput::EffectsOnly => unreachable!("Limit always returns an object"),
+    };
+    let differentiated =
+        crate::derivatives::DerivativeOperation.compute(engine, limit_object, &derivative)?;
+    let value = differentiated
+        .subject()
+        .expect("derivative always returns an object")
+        .print_source();
+    let completed = matches!(&differentiated.output, ComputationOutput::Value(_));
+    let mut events = limited.trace.expect("Limit records a trace").events;
+    events.extend(
+        differentiated
+            .trace
+            .expect("Derivative records a trace")
+            .events,
+    );
+    let trace = crate::semantic_core::RuleTrace { events };
+    let steps = crate::steps::render_rule_trace(engine, &trace, verbosity)?;
+    let tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(Some(CompositionResult {
+        status: if completed {
+            CompositionStatus::Completed
+        } else {
+            CompositionStatus::Unresolved
+        },
+        value,
+        tex,
+        steps,
+        operators: vec![CompositionOperator::Limit, CompositionOperator::Derivative],
+        reason: (!completed).then(|| "至少一个运算保持未求值".into()),
+        arbitrary_constants: Vec::new(),
+        held: None,
+    }))
+}
+
+fn composition_operand(source: &str) -> Result<MathematicalObject, EngineError> {
+    object_from_source(
+        ObjectId(1),
+        source,
+        SemanticState {
+            kind: ValueKind::Expression,
+            interpretation: SemanticInterpretation::PlainExpression,
+            metadata: ResultMetadata::unresolved(
+                Exactness::Unknown,
+                OutcomeReason::AlgorithmUncovered,
+            ),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        },
+    )
+}
+
+fn derivative_request(
+    operation: &Operation,
+) -> Result<crate::derivatives::DerivativeRequest, EngineError> {
+    let order = match operation.arguments.as_slice() {
+        [_, _] => 1,
+        [_, order, _] => order
+            .parse()
+            .map_err(|_| EngineError::InvalidInput("组合求导阶数必须是正整数".into()))?,
+        _ => unreachable!("validated derivative arity"),
+    };
+    Ok(crate::derivatives::DerivativeRequest {
+        variable: operation.arguments[0].clone(),
+        order,
+    })
+}
+
+fn limit_request(operation: &Operation) -> Result<crate::limits::LimitRequest, EngineError> {
+    let (variable, at, direction) = match operation.arguments.as_slice() {
+        [_, at] => ("x", at.as_str(), crate::limits::LimitDirection::Both),
+        [variable, at, _] => (
+            variable.as_str(),
+            at.as_str(),
+            crate::limits::LimitDirection::Both,
+        ),
+        [variable, at, direction, _] => (
+            variable.as_str(),
+            at.as_str(),
+            match direction.as_str() {
+                "Left" => crate::limits::LimitDirection::Left,
+                "Right" => crate::limits::LimitDirection::Right,
+                _ => {
+                    return Err(EngineError::InvalidInput(
+                        "组合极限方向应为 Left 或 Right".into(),
+                    ))
+                }
+            },
+        ),
+        _ => unreachable!("validated limit arity"),
+    };
+    Ok(crate::limits::LimitRequest {
+        variable: variable.into(),
+        at: at.into(),
+        direction,
+    })
 }
 
 fn wrap_pending_steps(mut steps: Vec<Step>, pending: &[Operation]) -> Vec<Step> {
@@ -855,7 +1000,7 @@ mod tests {
         let derivative = result
             .steps
             .iter()
-            .position(|step| step.why.contains("外层求导"))
+            .position(|step| step.rule == "sum-rule")
             .unwrap();
         assert!(limit_result < derivative);
     }

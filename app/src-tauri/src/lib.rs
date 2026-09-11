@@ -200,7 +200,7 @@ fn project_domain_semantic(
         return Ok(semantic);
     }
     let generated = arbitrary_constants(result);
-    if result.kind != "ode" && generated.is_empty() {
+    if result.kind != "ode" && result.kind != "composition" && generated.is_empty() {
         return Ok(input.clone());
     }
     let semantic_expression = result
@@ -1794,11 +1794,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(limited.kind, "composition");
-        assert!(
-            limited.expression.contains("2 * x"),
-            "{}",
-            limited.expression
-        );
+        assert_eq!(limited.expression, "2*x");
+        assert_eq!(limited.semantic.bound_symbols, ["x"]);
     }
 
     #[test]
