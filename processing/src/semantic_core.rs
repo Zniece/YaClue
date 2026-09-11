@@ -524,6 +524,8 @@ pub enum ObjectCapability {
     Substitute,
     EvaluateLimit,
     Simplify,
+    Factor,
+    Expand,
     NumericEvaluate,
     Plot,
 }
@@ -548,6 +550,8 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::Substitute as u8)
                 | (1 << ObjectCapability::EvaluateLimit as u8)
                 | (1 << ObjectCapability::Simplify as u8)
+                | (1 << ObjectCapability::Factor as u8)
+                | (1 << ObjectCapability::Expand as u8)
                 | (1 << ObjectCapability::NumericEvaluate as u8)
                 | (1 << ObjectCapability::Plot as u8),
         )

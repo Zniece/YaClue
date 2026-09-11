@@ -39,6 +39,11 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
             };
             can_execute_elaborated_tree(&expression.children[operand_index])
         }
+        crate::elaboration::MathematicalForm::Application { head }
+            if is_migrated_transform(head) =>
+        {
+            expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
+        }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
                 && expression.children.iter().all(can_execute_elaborated_tree)
@@ -53,12 +58,27 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
     }
 }
 
+pub fn is_migrated_transform(head: &str) -> bool {
+    matches!(head, "Simplify" | "Tidy" | "Expand" | "Factor")
+}
+
 pub fn has_migrated_calculus_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
     expression.children.iter().any(|child| {
         matches!(&child.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
             || has_migrated_calculus_descendant(child)
+    })
+}
+
+pub fn has_migrated_transform_descendant(
+    expression: &crate::elaboration::ElaboratedObject,
+) -> bool {
+    expression.children.iter().any(|child| {
+        matches!(&child.form,
+            crate::elaboration::MathematicalForm::Application { head }
+                if is_migrated_transform(head))
+            || has_migrated_transform_descendant(child)
     })
 }
 
@@ -78,6 +98,9 @@ pub fn execute_elaborated_structure(
     if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
         if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate") {
             return execute_calculus_application(engine, expression, head);
+        }
+        if is_migrated_transform(head) {
+            return execute_transform_application(engine, expression, head);
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
@@ -179,6 +202,37 @@ pub fn execute_elaborated_structure(
         trace.events = child_traces;
     }
     Ok(computation)
+}
+
+fn execute_transform_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    let [operand_node] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(format!(
+            "{head} 需要一个 operand"
+        )));
+    };
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, head, 0);
+    }
+    let input = operand.value().expect("checked value operand").clone();
+    let kind = match head {
+        "Simplify" => crate::algebra::TransformKind::Simplify,
+        "Tidy" => crate::algebra::TransformKind::Tidy,
+        "Expand" => crate::algebra::TransformKind::Expand,
+        "Factor" => crate::algebra::TransformKind::Factor,
+        _ => unreachable!(),
+    };
+    let mut current = crate::algebra::TransformOperation.compute(
+        engine,
+        &input,
+        &crate::algebra::TransformRequest { kind },
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
 }
 
 fn execute_container(
@@ -619,7 +673,7 @@ fn execute_calculus_application(
     }
     let mut operand = execute_elaborated_structure(engine, &expression.children[operand_index])?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
-        return Ok(operand);
+        return retain_pending_application(expression, operand, head, operand_index);
     }
     let input = operand.value().expect("checked value computation").clone();
     if let CalculusRequest::Integral(request) = &mut request {
@@ -680,6 +734,96 @@ enum CalculusRequest {
     Derivative(crate::derivatives::DerivativeRequest),
     Integral(crate::integrals::IntegralRequest),
     DefiniteIntegral(crate::integrals::DefiniteIntegralRequest),
+}
+
+fn retain_pending_application(
+    expression: &crate::elaboration::ElaboratedObject,
+    mut operand: Computation,
+    head: &str,
+    operand_index: usize,
+) -> Result<Computation, EngineError> {
+    if matches!(operand.output, ComputationOutput::EffectsOnly) {
+        return Err(EngineError::InvalidInput(format!(
+            "带副作用的动作不能作为 {head} 的 operand"
+        )));
+    }
+    let child = operand
+        .subject()
+        .expect("non-effect application operand owns an object")
+        .clone();
+    let mut arguments = expression
+        .children
+        .iter()
+        .map(|node| node.object.clone())
+        .collect::<Vec<_>>();
+    arguments[operand_index] = child.clone();
+    let rebuilt = expression.object.rebuild_application_with(&arguments)?;
+    let no_value = matches!(operand.output, ComputationOutput::NoValue(_));
+    let mut output = expression.object.clone();
+    output.apply(ObjectDelta {
+        expression: Some(rebuilt),
+        semantics: Some(SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: if no_value {
+                SemanticInterpretation::StructuredUnevaluated {
+                    reason: "operand has no mathematical value".into(),
+                }
+            } else {
+                SemanticInterpretation::HeldApplication {
+                    operator: head.into(),
+                }
+            },
+            metadata: if no_value {
+                ResultMetadata::no_result(
+                    child.semantics.metadata.exactness,
+                    OutcomeReason::MathematicalAbsence,
+                )
+            } else {
+                ResultMetadata::unresolved(
+                    child.semantics.metadata.exactness,
+                    OutcomeReason::AlgorithmUncovered,
+                )
+            },
+            capabilities: if no_value {
+                CapabilitySet::empty()
+            } else {
+                CapabilitySet::symbolic_expression()
+            },
+            requirements: Vec::new(),
+        }),
+        overlay: None,
+        normalization: None,
+    });
+    let event = RuleEvent {
+        rule: if no_value {
+            "propagate-no-value"
+        } else {
+            "hold-operator-application"
+        }
+        .into(),
+        input: child.reference(None),
+        additional_inputs: Vec::new(),
+        output: output.reference(None),
+        bindings: vec![("operation".into(), head.into())],
+        conditions: Vec::new(),
+        payload: RulePayload::Structural,
+        importance: RuleImportance::Key,
+        presentation: None,
+    };
+    let mut current = Computation {
+        output: if no_value {
+            ComputationOutput::NoValue(output)
+        } else {
+            ComputationOutput::Held(output)
+        },
+        trace: Some(RuleTrace {
+            events: vec![event],
+        }),
+        certificates: Vec::new(),
+        effects: Vec::new(),
+    };
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
 }
 
 fn merge_prior_computation(current: &mut Computation, prior: &mut Computation) {
@@ -1384,6 +1528,47 @@ mod tests {
             let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
             assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
         }
+    }
+
+    #[test]
+    fn algebra_transforms_compose_with_object_native_calculus() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("Factor(D(x)(Integrate(x)(x^2-1)))", "(x+1)*(x-1)"),
+            ("Simplify(Integrate(x,0,1)(D(x)(x^3)))", "1"),
+            ("Expand(Limit(t,0)((t+1)^2+x))", "x+1"),
+            ("Sin(Factor(x^2-1))", "Sin((x+1)*(x-1))"),
+        ] {
+            let elaborated = crate::elaboration::elaborate(source).unwrap();
+            assert!(can_execute_elaborated_tree(&elaborated), "{source}");
+            let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+            assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
+            assert!(result
+                .trace
+                .as_ref()
+                .is_some_and(|trace| trace.events.iter().any(|event| matches!(
+                    event.rule.as_str(),
+                    "apply-algebra-transform" | "confirm-algebra-normal-form"
+                ))));
+        }
+    }
+
+    #[test]
+    fn unresolved_transform_retains_its_outer_application() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let elaborated = crate::elaboration::elaborate("Factor(Integrate(x)f(x))").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        assert!(result
+            .subject()
+            .unwrap()
+            .print_source()
+            .starts_with("Factor("));
+        assert!(result
+            .subject()
+            .unwrap()
+            .print_source()
+            .contains("Integrate"));
     }
 
     #[test]

@@ -110,11 +110,18 @@ pub fn execute_elaborated(
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
-            && crate::arithmetic::has_migrated_calculus_descendant(&input.root))
+            && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
+                || crate::arithmetic::has_migrated_transform_descendant(&input.root)))
+        || (matches!(&input.root.form,
+            crate::elaboration::MathematicalForm::Application { head }
+                if crate::arithmetic::is_migrated_transform(head))
+            && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
+                || crate::arithmetic::has_migrated_transform_descendant(&input.root)))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if !is_known_operator(head))
             && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
+                || crate::arithmetic::has_migrated_transform_descendant(&input.root)
                 || crate::arithmetic::has_effect_descendant(&input.root))))
         && crate::arithmetic::can_execute_elaborated_tree(&input.root)
     {
@@ -235,7 +242,9 @@ fn collect_migrated_operator_ids(
         collect_migrated_operator_ids(child, output);
     }
     if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
-        if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate") {
+        if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate")
+            || crate::arithmetic::is_migrated_transform(head)
+        {
             if let Some(descriptor) = operator_descriptor(head) {
                 output.push(descriptor.id);
             }
@@ -1130,32 +1139,14 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(result.status, CompositionStatus::Completed);
-
-        let factor = result
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert!(result.value.starts_with("D("), "{result:#?}");
+        assert!(result.value.contains("Factor("), "{result:#?}");
+        assert!(result
             .steps
             .iter()
-            .position(|step| step.rule == "compose_factor")
-            .unwrap();
-        assert!(factor > 0);
-        for step in &result.steps[..factor] {
-            assert!(step.expr.starts_with("D(x)(Factor("), "{step:#?}");
-            assert!(step.tex.contains(r"\operatorname{D}"), "{step:#?}");
-            assert!(step.tex.contains(r"\operatorname{Factor}"), "{step:#?}");
-        }
-
-        let factor_step = &result.steps[factor];
-        assert!(factor_step.expr.starts_with("D(x)("), "{factor_step:#?}");
-        assert!(!factor_step.expr.contains("Factor("), "{factor_step:#?}");
-        assert!(
-            factor_step.tex.contains(r"\operatorname{D}"),
-            "{factor_step:#?}"
-        );
-
-        for step in &result.steps[factor + 1..] {
-            assert!(!step.expr.starts_with("D(x)("), "{step:#?}");
-            assert!(!step.tex.contains(r"\operatorname{Factor}"), "{step:#?}");
-        }
+            .any(|step| step.rule == "hold-algebra-transform"));
+        assert!(!result.value.contains("FWatom"), "{result:#?}");
     }
 
     #[test]
@@ -1205,10 +1196,12 @@ mod tests {
                 "0",
                 "{expression}: {result:#?}"
             );
-            assert!(result
-                .steps
-                .iter()
-                .any(|step| step.rule == "compose_algebra_transform"));
+            assert!(result.steps.iter().any(|step| matches!(
+                step.rule.as_str(),
+                "compose_algebra_transform"
+                    | "apply-algebra-transform"
+                    | "confirm-algebra-normal-form"
+            )));
         }
     }
 

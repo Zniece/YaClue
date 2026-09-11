@@ -222,7 +222,9 @@ fn project_domain_semantic(
     // Completed composition binders describe consumed operations, not the
     // free symbols of their result. Function families retain their binder
     // while generated integration constants remain present.
-    if result.kind == "composition"
+    let composition_completed = result.kind == "composition"
+        && result.data.get("status").and_then(Value::as_str) == Some("completed");
+    if composition_completed
         && generated.is_empty()
         && projection_input.kind != ValueKind::SolutionSet
     {
@@ -234,7 +236,7 @@ fn project_domain_semantic(
             }
         }
     }
-    processing::semantic::project_result(
+    let mut projected = processing::semantic::project_result(
         &projection_input,
         semantic_expression,
         &generated,
@@ -245,7 +247,18 @@ fn project_domain_semantic(
             _ => None,
         },
     )
-    .map_err(message)
+    .map_err(message)?;
+    if result.kind == "composition"
+        && result
+            .data
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| status.contains("unresolved"))
+    {
+        projected.kind = ValueKind::Unevaluated;
+        projected.completeness = None;
+    }
+    Ok(projected)
 }
 
 fn condition_set_from_value(value: Option<&Value>) -> Result<ConditionSet, ErrorResponse> {
@@ -434,6 +447,7 @@ fn dispatch_expression_with_engine(
         elaborated.root.form,
         processing::elaboration::MathematicalForm::Structural { .. }
     ) || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
+        || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
         || processing::arithmetic::has_effect_descendant(&elaborated.root)
         || call
             .as_ref()
@@ -1924,10 +1938,10 @@ mod tests {
                 .unwrap();
         assert_eq!(transformed.kind, "composition");
         assert_eq!(transformed.expression, "1");
-        assert!(transformed
-            .steps
-            .iter()
-            .any(|step| step.rule == "compose_algebra_transform"));
+        assert!(transformed.steps.iter().any(|step| matches!(
+            step.rule.as_str(),
+            "apply-algebra-transform" | "confirm-algebra-normal-form"
+        )));
 
         let apart =
             process_expression_with_engine(request("Apart((x+1)/(x^2-1),x)", true), &mut engine)
@@ -2055,6 +2069,36 @@ mod tests {
                 && identity.role == processing::binding::SymbolRole::Free
                 && identity.binder.is_none()
         }));
+    }
+
+    #[test]
+    fn unified_input_routes_nested_algebra_and_preserves_held_structure() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let nested =
+            process_expression_with_engine(request("Sin(Factor(x^2-1))", true), &mut engine)
+                .unwrap();
+        assert_eq!(nested.kind, "composition");
+        assert_eq!(nested.expression, "Sin((x+1)*(x-1))");
+        assert!(nested
+            .steps
+            .iter()
+            .any(|step| step.rule == "apply-algebra-transform"));
+
+        let held =
+            process_expression_with_engine(request("Factor(Integrate(x)f(x))", false), &mut engine)
+                .unwrap();
+        assert_eq!(held.expression, "Factor(Integrate(x)f(x))");
+        assert_eq!(held.semantic.kind, ValueKind::Unevaluated);
+        assert_eq!(held.semantic.bound_symbols, ["x"]);
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(held.data["operators"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|operator| operator == "factor"));
     }
 
     #[test]
