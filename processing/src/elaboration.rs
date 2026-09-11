@@ -58,6 +58,61 @@ pub fn elaborate_input(source: &str) -> Result<ElaboratedInput, EngineError> {
     })
 }
 
+/// Recognize an unambiguous bodied operator whose only missing slot is its
+/// operand. Forms that are also valid complete calls (notably two-argument
+/// Limit) remain with their established interpretation.
+pub fn operand_partial(
+    expression: &ElaboratedObject,
+) -> Result<Option<MathematicalObject>, EngineError> {
+    let MathematicalForm::Application { head } = &expression.form else {
+        return Ok(None);
+    };
+    let Some(descriptor) = crate::semantic_core::operator_descriptor(head) else {
+        return Ok(None);
+    };
+    let bound_count = expression.children.len();
+    if descriptor.arities.contains(&bound_count)
+        || !descriptor.arities.contains(&(bound_count + 1))
+        || descriptor.value_argument != crate::semantic_core::ValueArgument::Last
+        || !descriptor
+            .forms
+            .contains(&crate::semantic_core::ApplicationForm::Bodied)
+    {
+        return Ok(None);
+    }
+    for binder in descriptor.binders {
+        let Some(argument) = expression.children.get(binder.binder_argument) else {
+            return Err(EngineError::InvalidInput(format!(
+                "{head} 部分应用缺少绑定变量"
+            )));
+        };
+        let variable = crate::input::with_parse_env(|env| {
+            argument
+                .object
+                .view(env)
+                .atom()
+                .map(str::to_string)
+                .ok_or_else(|| EngineError::InvalidInput(format!("{head} 的绑定变量必须是符号")))
+        })?;
+        crate::input::validate_symbol(&variable, "绑定变量")?;
+    }
+    let state = crate::semantic_core::operand_partial_state(head, bound_count)?;
+    Ok(Some(MathematicalObject::new(
+        expression.object.id,
+        expression.object.raw_expression(),
+        SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: SemanticInterpretation::PartialApplication(state.clone()),
+            metadata: ResultMetadata::unresolved(
+                Exactness::Symbolic,
+                OutcomeReason::AlgorithmUncovered,
+            ),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: state.missing,
+        },
+    )))
+}
+
 fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject {
     let (form, children, kind, interpretation, capabilities) = match &node.kind {
         ObjectKind::Number(_) => (
@@ -196,6 +251,24 @@ mod tests {
             root.children[1].children[1].form,
             MathematicalForm::Application { .. }
         ));
+    }
+
+    #[test]
+    fn recognizes_only_unambiguous_missing_operand_forms_as_partials() {
+        for source in ["D(x)", "Integrate(x)"] {
+            let root = elaborate(source).unwrap();
+            let partial = operand_partial(&root).unwrap().expect(source);
+            assert!(matches!(
+                partial.semantics.interpretation,
+                SemanticInterpretation::PartialApplication(_)
+            ));
+        }
+        let limit = elaborate("Limit(x,0)").unwrap();
+        assert!(operand_partial(&limit).unwrap().is_none());
+        let complete = elaborate("D(x)(x^2)").unwrap();
+        assert!(operand_partial(&complete).unwrap().is_none());
+        let invalid = elaborate("D(x+1)").unwrap();
+        assert!(operand_partial(&invalid).is_err());
     }
 
     #[test]

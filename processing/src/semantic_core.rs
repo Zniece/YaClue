@@ -61,7 +61,7 @@ pub struct NormalizationState {
 
 /// A path into the current AST.  Paths are scoped to one computation and are
 /// invalidated by a rewrite that changes their ancestor.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct ExpressionPath(Vec<usize>);
 
 impl ExpressionPath {
@@ -202,20 +202,20 @@ pub struct BinderDescriptor {
 
 /// A bound argument is addressed in the retained application AST, rather
 /// than copied into semantic state as source text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BoundArgument {
     pub slot: usize,
     pub path: ExpressionPath,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BinderScope {
     pub binder_slot: usize,
     pub scope_slot: usize,
 }
 
 /// Semantic closure state for a bodied operator awaiting its value argument.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PartialApplication {
     pub operator: OperatorId,
     pub spelling: String,
@@ -559,7 +559,8 @@ impl CapabilitySet {
 
 /// Missing context is data, not an error or an invitation to stringify an
 /// object. It lets partial applications remain composable.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Requirement {
     Operand,
     Variable,

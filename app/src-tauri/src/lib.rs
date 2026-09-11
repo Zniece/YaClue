@@ -218,8 +218,24 @@ fn project_domain_semantic(
         .get("semantic_expression")
         .and_then(Value::as_str)
         .unwrap_or(&result.expression);
+    let mut projection_input = input.clone();
+    // Completed composition binders describe consumed operations, not the
+    // free symbols of their result. Function families retain their binder
+    // while generated integration constants remain present.
+    if result.kind == "composition"
+        && generated.is_empty()
+        && projection_input.kind != ValueKind::SolutionSet
+    {
+        projection_input.bound_symbols.clear();
+        for identity in &mut projection_input.symbol_identities {
+            if identity.role == processing::binding::SymbolRole::Bound {
+                identity.role = processing::binding::SymbolRole::Free;
+                identity.binder = None;
+            }
+        }
+    }
     processing::semantic::project_result(
-        input,
+        &projection_input,
         semantic_expression,
         &generated,
         if result.kind == "ode" { &["x"] } else { &[] },
@@ -1351,6 +1367,72 @@ pub fn process_expression_with_engine(
     let elaborated =
         processing::elaboration::elaborate_input(&request.expression).map_err(message)?;
     let analyzed = &elaborated.analyzed;
+    if let Some(partial_object) =
+        processing::elaboration::operand_partial(&elaborated.root).map_err(message)?
+    {
+        let processing::semantic_core::SemanticInterpretation::PartialApplication(partial) =
+            &partial_object.semantics.interpretation
+        else {
+            unreachable!("operand_partial returns a partial application")
+        };
+        let mut semantic = analyzed.semantic.clone();
+        semantic.kind = ValueKind::Unevaluated;
+        for scope in &partial.binder_scopes {
+            let Some(name) = elaborated
+                .root
+                .children
+                .get(scope.binder_slot)
+                .map(|child| child.object.print_source())
+            else {
+                continue;
+            };
+            semantic.symbols.retain(|symbol| symbol != &name);
+            if !semantic.bound_symbols.contains(&name) {
+                semantic.bound_symbols.push(name.clone());
+                semantic.bound_symbols.sort();
+            }
+            if let Some(identity) = semantic
+                .symbol_identities
+                .iter_mut()
+                .find(|identity| identity.name == name)
+            {
+                identity.role = processing::binding::SymbolRole::Bound;
+                identity.binder = Some(scope.binder_slot as u32);
+            }
+        }
+        let outcome =
+            ResultMetadata::unresolved(semantic.exactness, OutcomeReason::AlgorithmUncovered);
+        let parameter_sources = elaborated
+            .root
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect::<Vec<_>>();
+        let parameter_tex = engine
+            .render_tex_batch(&parameter_sources)
+            .map_err(message)?
+            .into_iter()
+            .map(|tex| processing::input::strip_tex_delimiters(&tex))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let tex = format!(
+            "\\operatorname{{{}}}\\left({parameter_tex}\\right)",
+            partial.spelling
+        );
+        return Ok(ProcessExpressionResult {
+            kind: "partial_application".into(),
+            title: "部分应用".into(),
+            expression: request.expression,
+            tex,
+            steps: Vec::new(),
+            data: serde_json::json!({
+                "status": "partial_application",
+                "partial": partial,
+            }),
+            semantic,
+            outcome,
+        });
+    }
     let semantic_input = match analyzed.root_call.as_ref() {
         Some(call) if call.head == "Limit" && call.arguments.len() == 2 => {
             processing::semantic::analyze_input(
@@ -1860,7 +1942,8 @@ mod tests {
         .unwrap();
         assert_eq!(limited.kind, "composition");
         assert_eq!(limited.expression, "2*x");
-        assert_eq!(limited.semantic.bound_symbols, ["x"]);
+        assert_eq!(limited.semantic.symbols, ["x"]);
+        assert!(limited.semantic.bound_symbols.is_empty());
 
         let limited_without_steps = process_expression_with_engine(
             request("D(x)Limit(t,0)(Sin(t)/t+x^2)", false),
@@ -1870,7 +1953,8 @@ mod tests {
         assert_eq!(limited_without_steps.kind, "composition");
         assert_eq!(limited_without_steps.expression, "2*x");
         assert!(limited_without_steps.steps.is_empty());
-        assert_eq!(limited_without_steps.semantic.bound_symbols, ["x"]);
+        assert_eq!(limited_without_steps.semantic.symbols, ["x"]);
+        assert!(limited_without_steps.semantic.bound_symbols.is_empty());
 
         let absent =
             process_expression_with_engine(request("D(x)Limit(t,0)(1/t)", false), &mut engine)
@@ -1935,6 +2019,42 @@ mod tests {
         .unwrap();
         assert_eq!(relation.expression, "1==1");
         assert_eq!(relation.semantic.kind, ValueKind::Equation);
+    }
+
+    #[test]
+    fn unified_input_exposes_typed_partials_and_reclassifies_final_symbols() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for (expression, operator) in [("D(x)", "derivative"), ("Integrate(x)", "integral")] {
+            let result =
+                process_expression_with_engine(request(expression, false), &mut engine).unwrap();
+            assert_eq!(result.kind, "partial_application", "{expression}");
+            assert_eq!(result.expression, expression);
+            assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
+            assert_eq!(result.semantic.bound_symbols, ["x"]);
+            assert_eq!(result.data["partial"]["operator"].as_str(), Some(operator));
+            assert_eq!(
+                result.data["partial"]["missing"],
+                serde_json::json!(["operand"])
+            );
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Unresolved
+            );
+        }
+
+        let completed = process_expression_with_engine(
+            request("Limit(t,0)(D(x)(Integrate(x)(Sin(t)/t+x^2)))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(completed.expression, "x^2+1");
+        assert_eq!(completed.semantic.symbols, ["x"]);
+        assert!(completed.semantic.bound_symbols.is_empty());
+        assert!(completed.semantic.symbol_identities.iter().any(|identity| {
+            identity.name == "x"
+                && identity.role == processing::binding::SymbolRole::Free
+                && identity.binder.is_none()
+        }));
     }
 
     #[test]
