@@ -300,6 +300,7 @@ pub fn derivative_computation_for_object(
             // object/revision semantics without inventing display-only names.
             rule: fact.rule,
             input: input_ref.clone(),
+            additional_inputs: Vec::new(),
             output: output_ref.clone(),
             bindings: vec![
                 ("variable".into(), request.variable.clone()),

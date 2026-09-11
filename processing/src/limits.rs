@@ -397,6 +397,7 @@ fn limit_rule_events(
             RuleEvent {
                 rule: event.rule.into(),
                 input: input.clone(),
+                additional_inputs: Vec::new(),
                 output: output.clone(),
                 bindings: vec![
                     ("variable".into(), result.variable.clone()),

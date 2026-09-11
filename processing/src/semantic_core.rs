@@ -323,6 +323,8 @@ pub enum SemanticInterpretation {
 /// domains migrate without creating a closed hierarchy of value types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectCapability {
+    Add,
+    Multiply,
     Differentiate,
     Integrate,
     Substitute,
@@ -341,7 +343,9 @@ impl CapabilitySet {
     }
     pub const fn symbolic_expression() -> Self {
         Self(
-            (1 << ObjectCapability::Differentiate as u8)
+            (1 << ObjectCapability::Add as u8)
+                | (1 << ObjectCapability::Multiply as u8)
+                | (1 << ObjectCapability::Differentiate as u8)
                 | (1 << ObjectCapability::Integrate as u8)
                 | (1 << ObjectCapability::Substitute as u8)
                 | (1 << ObjectCapability::EvaluateLimit as u8)
@@ -534,6 +538,9 @@ pub enum RuleImportance {
 pub struct RuleEvent {
     pub rule: String,
     pub input: ObjectReference,
+    /// Other typed inputs for non-unary rules. `input` remains the primary
+    /// subject for compatibility with unary domain traces.
+    pub additional_inputs: Vec<ObjectReference>,
     pub output: ObjectReference,
     pub bindings: Vec<(String, String)>,
     pub conditions: Vec<Condition>,
@@ -643,6 +650,19 @@ pub trait SemanticOperation<Request> {
         &self,
         engine: &mut dyn crate::engine::Engine,
         input: &MathematicalObject,
+        request: &Request,
+    ) -> Result<Computation, crate::engine::EngineError>;
+}
+
+/// The minimal counterpart for structural operators such as `+` and `*`.
+/// It is introduced only now because those operators provide concrete
+/// evidence that unary `SemanticOperation` cannot represent provenance.
+pub trait BinarySemanticOperation<Request> {
+    fn compute(
+        &self,
+        engine: &mut dyn crate::engine::Engine,
+        left: &MathematicalObject,
+        right: &MathematicalObject,
         request: &Request,
     ) -> Result<Computation, crate::engine::EngineError>;
 }

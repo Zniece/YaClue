@@ -5,6 +5,7 @@
 //! runtime); everything in this crate is original work licensed MIT.
 
 pub mod algebra;
+pub mod arithmetic;
 pub mod assumptions;
 pub mod binding;
 pub mod composition;
