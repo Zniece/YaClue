@@ -410,6 +410,32 @@ pub fn substitute_free(
     })
 }
 
+pub(crate) fn substitute_free_objects(
+    input: &crate::semantic_core::MathematicalObject,
+    symbol: &str,
+    replacement: &crate::semantic_core::MathematicalObject,
+) -> Result<Rc<LispObject>, EngineError> {
+    crate::input::validate_symbol(symbol, "替换符号")?;
+    with_parse_env(|env| {
+        let tree = input.raw_expression();
+        let replacement_tree = replacement.raw_expression();
+        let replacement_free = analyze_tree(&replacement_tree).free_symbols;
+        let analyzed = analyze_tree(&tree);
+        let mut occupied = analyzed.free_symbols;
+        occupied.extend(analyzed.bound_symbols);
+        occupied.extend(replacement_free.iter().cloned());
+        Ok(substitute_node(
+            &tree,
+            symbol,
+            &replacement_tree,
+            &replacement_free,
+            &mut occupied,
+            &mut Vec::new(),
+            &mut env.symtab,
+        ))
+    })
+}
+
 fn rewrite(
     input: &str,
     transform: impl FnOnce(

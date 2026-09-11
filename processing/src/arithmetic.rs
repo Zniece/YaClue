@@ -44,6 +44,11 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
         {
             expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
         }
+        crate::elaboration::MathematicalForm::Application { head } if head == "Subst" => {
+            expression.children.len() == 3
+                && can_execute_elaborated_tree(&expression.children[1])
+                && can_execute_elaborated_tree(&expression.children[2])
+        }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
                 && expression.children.iter().all(can_execute_elaborated_tree)
@@ -82,6 +87,16 @@ pub fn has_migrated_transform_descendant(
     })
 }
 
+pub fn has_migrated_substitution_descendant(
+    expression: &crate::elaboration::ElaboratedObject,
+) -> bool {
+    expression.children.iter().any(|child| {
+        matches!(&child.form,
+            crate::elaboration::MathematicalForm::Application { head } if head == "Subst")
+            || has_migrated_substitution_descendant(child)
+    })
+}
+
 pub fn has_effect_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
     expression.children.iter().any(|child| {
         matches!(
@@ -101,6 +116,9 @@ pub fn execute_elaborated_structure(
         }
         if is_migrated_transform(head) {
             return execute_transform_application(engine, expression, head);
+        }
+        if head == "Subst" {
+            return execute_substitution_application(engine, expression);
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
@@ -202,6 +220,53 @@ pub fn execute_elaborated_structure(
         trace.events = child_traces;
     }
     Ok(computation)
+}
+
+fn execute_substitution_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let [variable, replacement_node, operand_node] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(
+            "Subst 需要 variable、replacement 和 operand".into(),
+        ));
+    };
+    let mut replacement = execute_elaborated_structure(engine, replacement_node)?;
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if matches!(replacement.output, ComputationOutput::EffectsOnly)
+        || matches!(operand.output, ComputationOutput::EffectsOnly)
+    {
+        return Err(EngineError::InvalidInput(
+            "带副作用的动作不能参与变量替换".into(),
+        ));
+    }
+    if matches!(replacement.output, ComputationOutput::NoValue(_)) {
+        return retain_pending_application(expression, replacement, "Subst", 1);
+    }
+    if matches!(operand.output, ComputationOutput::NoValue(_)) {
+        return retain_pending_application(expression, operand, "Subst", 2);
+    }
+    let input = operand
+        .subject()
+        .expect("substitution operand owns an object")
+        .clone();
+    let replacement_object = replacement
+        .subject()
+        .expect("substitution replacement owns an object")
+        .clone();
+    let request = crate::substitution::SubstitutionRequest {
+        variable: variable.object.print_source(),
+    };
+    let mut current = BinarySemanticOperation::compute(
+        &crate::substitution::SubstitutionOperation,
+        engine,
+        &input,
+        &replacement_object,
+        &request,
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
+    merge_prior_computation(&mut current, &mut replacement);
+    Ok(current)
 }
 
 fn execute_transform_application(
@@ -1569,6 +1634,35 @@ mod tests {
             .unwrap()
             .print_source()
             .contains("Integrate"));
+    }
+
+    #[test]
+    fn substitution_composes_with_calculus_and_held_objects() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("Subst(x,2)(D(x)(x^3))", "12"),
+            ("D(x)(Subst(y,x^2)(Sin(y)))", "2*Cos(x^2)*x"),
+            ("Subst(x,Limit(t,0)(Sin(t)/t))(x^2+1)", "2"),
+        ] {
+            let elaborated = crate::elaboration::elaborate(source).unwrap();
+            assert!(can_execute_elaborated_tree(&elaborated), "{source}");
+            let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+            assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
+            assert!(result
+                .trace
+                .as_ref()
+                .unwrap()
+                .events
+                .iter()
+                .any(|event| event.rule == "substitute-free-symbol"));
+        }
+
+        let held = crate::elaboration::elaborate("Subst(x,2)((Integrate(t)f(t))+x)").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &held).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        let source = result.subject().unwrap().print_source();
+        assert!(source.contains("Integrate"));
+        assert!(source.contains("+2"), "{source}");
     }
 
     #[test]

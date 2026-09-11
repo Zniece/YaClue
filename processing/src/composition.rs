@@ -111,17 +111,22 @@ pub fn execute_elaborated(
             crate::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
             && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
-                || crate::arithmetic::has_migrated_transform_descendant(&input.root)))
+                || crate::arithmetic::has_migrated_transform_descendant(&input.root)
+                || crate::arithmetic::has_migrated_substitution_descendant(&input.root)))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if crate::arithmetic::is_migrated_transform(head))
             && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
-                || crate::arithmetic::has_migrated_transform_descendant(&input.root)))
+                || crate::arithmetic::has_migrated_transform_descendant(&input.root)
+                || crate::arithmetic::has_migrated_substitution_descendant(&input.root)))
+        || matches!(&input.root.form,
+            crate::elaboration::MathematicalForm::Application { head } if head == "Subst")
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if !is_known_operator(head))
             && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
                 || crate::arithmetic::has_migrated_transform_descendant(&input.root)
+                || crate::arithmetic::has_migrated_substitution_descendant(&input.root)
                 || crate::arithmetic::has_effect_descendant(&input.root))))
         && crate::arithmetic::can_execute_elaborated_tree(&input.root)
     {
@@ -242,8 +247,10 @@ fn collect_migrated_operator_ids(
         collect_migrated_operator_ids(child, output);
     }
     if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
-        if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate")
-            || crate::arithmetic::is_migrated_transform(head)
+        if matches!(
+            head.as_str(),
+            "Limit" | "D" | "Deriv" | "Integrate" | "Subst"
+        ) || crate::arithmetic::is_migrated_transform(head)
         {
             if let Some(descriptor) = operator_descriptor(head) {
                 output.push(descriptor.id);

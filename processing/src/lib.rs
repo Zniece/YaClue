@@ -35,6 +35,7 @@ pub mod semantic;
 pub mod semantic_core;
 pub mod series;
 pub mod steps;
+pub mod substitution;
 pub mod surface_integrals;
 
 #[cfg(test)]

@@ -154,7 +154,21 @@ pub fn render_rule_trace(
         .filter(|(_, presentation)| presentation.tex_override.is_none())
         .map(|(_, presentation)| presentation.expression.clone())
         .collect::<Vec<_>>();
-    let mut rendered = engine.render_tex_batch(&expressions)?.into_iter();
+    let rendered = match engine.render_tex_batch(&expressions) {
+        Ok(rendered) => rendered,
+        Err(_) => expressions
+            .iter()
+            .map(|expression| {
+                engine
+                    .render_tex_batch(std::slice::from_ref(expression))
+                    .ok()
+                    .and_then(|mut rendered| rendered.pop())
+                    .map(|tex| strip_tex_delimiters(&tex))
+                    .unwrap_or_else(|| literal_tex(expression))
+            })
+            .collect(),
+    };
+    let mut rendered = rendered.into_iter();
     Ok(events
         .into_iter()
         .map(|(event, presentation)| Step {
@@ -171,6 +185,26 @@ pub fn render_rule_trace(
             },
         })
         .collect())
+}
+
+fn literal_tex(source: &str) -> String {
+    let mut escaped = String::new();
+    for character in source.chars() {
+        match character {
+            '\\' => escaped.push_str(r"\backslash "),
+            '{' => escaped.push_str(r"\{"),
+            '}' => escaped.push_str(r"\}"),
+            '_' => escaped.push_str(r"\_"),
+            '^' => escaped.push_str(r"\^{}"),
+            '%' | '#' | '&' | '$' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            '~' => escaped.push_str(r"\sim "),
+            _ => escaped.push(character),
+        }
+    }
+    format!(r"\mathtt{{{escaped}}}")
 }
 
 /// 执行 StepsX'Full 命令并提取步骤(规则名 + 表达式 + 文案 + LaTeX)

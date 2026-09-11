@@ -446,8 +446,11 @@ fn dispatch_expression_with_engine(
     if matches!(
         elaborated.root.form,
         processing::elaboration::MathematicalForm::Structural { .. }
-    ) || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
+    ) || matches!(&elaborated.root.form,
+        processing::elaboration::MathematicalForm::Application { head } if head == "Subst")
+        || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
+        || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
         || processing::arithmetic::has_effect_descendant(&elaborated.root)
         || call
             .as_ref()
@@ -2099,6 +2102,36 @@ mod tests {
             .unwrap()
             .iter()
             .any(|operator| operator == "factor"));
+    }
+
+    #[test]
+    fn unified_input_routes_object_native_substitution() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let direct =
+            process_expression_with_engine(request("Subst(x,2)(x^2+1)", true), &mut engine)
+                .unwrap();
+        assert_eq!(direct.kind, "composition");
+        assert_eq!(direct.expression, "5");
+        assert_eq!(direct.semantic.kind, ValueKind::Scalar);
+        assert!(direct.semantic.symbols.is_empty());
+        assert!(direct
+            .steps
+            .iter()
+            .any(|step| step.rule == "substitute-free-symbol"));
+
+        let held = process_expression_with_engine(
+            request("Subst(x,2)((Integrate(t)f(t))+x)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(held.kind, "composition");
+        assert_eq!(held.semantic.kind, ValueKind::Unevaluated);
+        assert!(held.expression.contains("Integrate"));
+        assert!(held.expression.contains("+2"));
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
     }
 
     #[test]
