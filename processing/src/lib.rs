@@ -17,6 +17,7 @@ pub mod equivalence;
 pub mod extrema;
 pub mod improper_integrals;
 pub mod input;
+pub mod integrals;
 pub mod intrinsics;
 pub mod limits;
 pub mod line_integrals;

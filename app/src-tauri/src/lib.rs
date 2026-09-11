@@ -1478,17 +1478,10 @@ mod tests {
             process_expression_with_engine(request("D(x)Integrate(x)x*Exp(x)", true), &mut engine)
                 .unwrap();
         assert_eq!(composed.kind, "composition");
-        let integration = composed
+        assert!(composed
             .steps
             .iter()
-            .position(|step| step.rule == "method-parts")
-            .unwrap();
-        let outer_derivative = composed
-            .steps
-            .iter()
-            .position(|step| step.why.contains("外层求导"))
-            .unwrap();
-        assert!(integration < outer_derivative);
+            .any(|step| step.rule == "derivative-of-indefinite-integral"));
         assert!(composed
             .semantic
             .symbol_identities
@@ -1497,7 +1490,7 @@ mod tests {
         assert!(composed
             .steps
             .iter()
-            .any(|step| { step.rule == "antiderivative-family" && step.expr.contains(" + C)") }));
+            .all(|step| step.rule != "antiderivative-family"));
 
         let repeated_integral =
             process_expression_with_engine(request("Integrate(x)Integrate(x)x", true), &mut engine)

@@ -109,7 +109,7 @@ pub fn execute_elaborated(
         || crate::arithmetic::has_effect_descendant(&input.root)))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "Limit" | "D" | "Deriv"))
+                if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
             && crate::arithmetic::has_migrated_calculus_descendant(&input.root))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
@@ -139,7 +139,7 @@ pub fn execute_elaborated(
         } else {
             strip_tex_delimiters(&engine.eval(&value)?.tex)
         };
-        let steps = if include_steps {
+        let mut steps = if include_steps {
             computation
                 .trace
                 .as_ref()
@@ -149,6 +149,18 @@ pub fn execute_elaborated(
         } else {
             Vec::new()
         };
+        if let crate::elaboration::MathematicalForm::Application { head } = &input.root.form {
+            if matches!(head.as_str(), "D" | "Deriv") {
+                if let Some(variable) = input.root.children.first() {
+                    let variable = variable.object.print_source();
+                    for step in &mut steps {
+                        if step.rule == "antiderivative-family" {
+                            step.expr = format!("D({variable})({})", step.expr);
+                        }
+                    }
+                }
+            }
+        }
         let reason = match status {
             CompositionStatus::NoValue => Some("内层数学结论不存在，外层运算未执行。".into()),
             CompositionStatus::Unresolved
@@ -165,14 +177,35 @@ pub fn execute_elaborated(
             CompositionStatus::Unresolved => Some("数学对象保持未解析，等待适用能力。".into()),
             _ => None,
         };
+        let mut operators = Vec::new();
+        collect_migrated_operator_ids(&input.root, &mut operators);
+        let present_symbols = crate::input::with_parse_env(|env| {
+            crate::semantic::analyze_tree(env, &subject.raw_expression())
+                .semantic
+                .symbols
+        });
+        let arbitrary_constants = computation
+            .trace
+            .as_ref()
+            .into_iter()
+            .flat_map(|trace| &trace.events)
+            .flat_map(|event| &event.bindings)
+            .filter(|(name, value)| name == "constant" && present_symbols.contains(value))
+            .map(|(_, value)| value.clone())
+            .fold(Vec::new(), |mut constants, value| {
+                if !constants.contains(&value) {
+                    constants.push(value);
+                }
+                constants
+            });
         return Ok(Some(CompositionResult {
             status,
             value,
             tex,
             steps,
-            operators: Vec::new(),
+            operators,
             reason,
-            arbitrary_constants: Vec::new(),
+            arbitrary_constants,
             held: None,
         }));
     }
@@ -192,6 +225,22 @@ pub fn execute_elaborated(
         verbosity,
         include_steps,
     )
+}
+
+fn collect_migrated_operator_ids(
+    expression: &crate::elaboration::ElaboratedObject,
+    output: &mut Vec<CompositionOperator>,
+) {
+    for child in &expression.children {
+        collect_migrated_operator_ids(child, output);
+    }
+    if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
+        if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate") {
+            if let Some(descriptor) = operator_descriptor(head) {
+                output.push(descriptor.id);
+            }
+        }
+    }
 }
 
 fn execute_collected(
@@ -956,13 +1005,14 @@ mod tests {
         );
         assert!(result.arbitrary_constants.is_empty());
         assert!(!result.value.contains(" + C"));
-        let family_step = result
+        assert!(result
             .steps
             .iter()
-            .find(|step| step.rule == "antiderivative-family")
-            .unwrap();
-        assert!(family_step.expr.starts_with("D(x)("));
-        assert!(family_step.expr.contains(" + C)"));
+            .any(|step| step.rule == "derivative-of-indefinite-integral"));
+        assert!(result
+            .steps
+            .iter()
+            .all(|step| step.rule != "antiderivative-family"));
     }
 
     #[test]
@@ -976,7 +1026,12 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(repeated.status, CompositionStatus::Completed);
-        assert_eq!(repeated.arbitrary_constants, ["C", "C1"]);
+        assert_eq!(
+            repeated.arbitrary_constants,
+            ["C", "C1"],
+            "{}",
+            repeated.value
+        );
         assert!(repeated.value.contains("C"));
         assert!(repeated.value.contains("C1"));
         assert_eq!(

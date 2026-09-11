@@ -18,10 +18,14 @@ use crate::semantic_core::{
 pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedObject) -> bool {
     match &expression.form {
         crate::elaboration::MathematicalForm::Structural { .. } => {
-            expression.children.iter().all(can_execute_elaborated_tree)
+            !expression
+                .children
+                .iter()
+                .any(|child| matches!(child.form, crate::elaboration::MathematicalForm::Collection))
+                && expression.children.iter().all(can_execute_elaborated_tree)
         }
         crate::elaboration::MathematicalForm::Application { head }
-            if matches!(head.as_str(), "Limit" | "D" | "Deriv") =>
+            if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate") =>
         {
             let operand_index = match (head.as_str(), expression.children.len()) {
                 ("Limit", 2) => 0,
@@ -29,6 +33,7 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                 ("Limit", 4) => 3,
                 ("D" | "Deriv", 2) => 1,
                 ("D" | "Deriv", 3) => 2,
+                ("Integrate", 2) => 1,
                 _ => return false,
             };
             can_execute_elaborated_tree(&expression.children[operand_index])
@@ -51,7 +56,7 @@ pub fn has_migrated_calculus_descendant(expression: &crate::elaboration::Elabora
     expression.children.iter().any(|child| {
         matches!(&child.form,
             crate::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "Limit" | "D" | "Deriv"))
+                if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
             || has_migrated_calculus_descendant(child)
     })
 }
@@ -70,7 +75,7 @@ pub fn execute_elaborated_structure(
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
-        if matches!(head.as_str(), "Limit" | "D" | "Deriv") {
+        if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate") {
             return execute_calculus_application(engine, expression, head);
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -472,7 +477,7 @@ fn execute_calculus_application(
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
-    let (operand_index, request) = match head {
+    let (operand_index, mut request) = match head {
         "Limit" => {
             let (operand_index, variable, at, direction) = match expression.children.as_slice() {
                 [_operand, at] => (
@@ -546,16 +551,86 @@ fn execute_calculus_application(
                 }),
             )
         }
+        "Integrate" => {
+            let [variable, _operand] = expression.children.as_slice() else {
+                return Err(EngineError::InvalidInput(
+                    "当前对象积分迁移仅支持不定积分 Integrate(variable)(operand)".into(),
+                ));
+            };
+            (
+                1,
+                CalculusRequest::Integral(crate::integrals::IntegralRequest {
+                    variable: variable.object.print_source(),
+                    arbitrary_constant: "C".into(),
+                }),
+            )
+        }
         _ => unreachable!(),
     };
+    if let CalculusRequest::Derivative(derivative) = &request {
+        let operand_node = &expression.children[operand_index];
+        if matches!(&operand_node.form,
+            crate::elaboration::MathematicalForm::Application { head } if head == "Integrate")
+            && operand_node.children.len() == 2
+            && operand_node.children[0].object.print_source() == derivative.variable
+        {
+            let mut result = execute_elaborated_structure(engine, &operand_node.children[1])?;
+            let output = result
+                .subject()
+                .expect("integral operand is a mathematical object")
+                .reference(None);
+            let event = RuleEvent {
+                rule: "derivative-of-indefinite-integral".into(),
+                input: operand_node.object.reference(None),
+                additional_inputs: Vec::new(),
+                output,
+                bindings: vec![("variable".into(), derivative.variable.clone())],
+                conditions: Vec::new(),
+                payload: RulePayload::Rewrite,
+                importance: RuleImportance::Key,
+                presentation: Some(RulePresentation {
+                    expression: result
+                        .subject()
+                        .expect("integral operand is a mathematical object")
+                        .print_source(),
+                    explanation: "同变量求导与不定积分相消。".into(),
+                    tex_override: None,
+                }),
+            };
+            if let Some(trace) = result.trace.as_mut() {
+                trace.events.push(event);
+            } else {
+                result.trace = Some(RuleTrace {
+                    events: vec![event],
+                });
+            }
+            return Ok(result);
+        }
+    }
     let mut operand = execute_elaborated_structure(engine, &expression.children[operand_index])?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return Ok(operand);
     }
     let input = operand.value().expect("checked value computation").clone();
+    if let CalculusRequest::Integral(request) = &mut request {
+        let occupied = crate::input::with_parse_env(|env| {
+            let analyzed = crate::semantic::analyze_tree(env, &input.raw_expression());
+            analyzed
+                .semantic
+                .symbols
+                .into_iter()
+                .chain(analyzed.semantic.constants)
+                .collect::<Vec<_>>()
+        });
+        request.arbitrary_constant = crate::semantic::display_arbitrary_constants(&occupied, 1)
+            .into_iter()
+            .next()
+            .expect("one arbitrary constant requested");
+    }
     let required_capability = match &request {
         CalculusRequest::Limit(_) => ObjectCapability::EvaluateLimit,
         CalculusRequest::Derivative(_) => ObjectCapability::Differentiate,
+        CalculusRequest::Integral(_) => ObjectCapability::Integrate,
     };
     if !input.semantics.capabilities.contains(required_capability) {
         let mut blocked = input.clone();
@@ -590,6 +665,9 @@ fn execute_calculus_application(
         CalculusRequest::Derivative(request) => {
             crate::derivatives::DerivativeOperation.compute(engine, &input, &request)?
         }
+        CalculusRequest::Integral(request) => {
+            crate::integrals::IntegralOperation.compute(engine, &input, &request)?
+        }
     };
     merge_prior_computation(&mut computation, &mut operand);
     Ok(computation)
@@ -598,6 +676,7 @@ fn execute_calculus_application(
 enum CalculusRequest {
     Limit(crate::limits::LimitRequest),
     Derivative(crate::derivatives::DerivativeRequest),
+    Integral(crate::integrals::IntegralRequest),
 }
 
 fn merge_prior_computation(current: &mut Computation, prior: &mut Computation) {
@@ -1272,6 +1351,21 @@ mod tests {
         let result = execute_elaborated_structure(&mut engine, &relation).unwrap();
         assert_eq!(result.value().unwrap().semantics.kind, ValueKind::Equation);
         assert_eq!(result.value().unwrap().print_source(), "1==1");
+    }
+
+    #[test]
+    fn derivative_peels_even_an_unresolved_indefinite_integral() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let elaborated = crate::elaboration::elaborate("D(x)(Integrate(x)f(x))").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+        assert_eq!(result.value().unwrap().print_source(), "f(x)");
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| event.rule == "derivative-of-indefinite-integral"));
     }
 
     #[test]
