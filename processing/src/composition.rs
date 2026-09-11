@@ -5,15 +5,15 @@ use serde::Serialize;
 
 use crate::algebra::{self, TransformKind};
 use crate::engine::{Engine, EngineError};
-use crate::input::{analyze_expression, strip_tex_delimiters, validate_safe_text, RootCall};
+use crate::input::{analyze_expression, strip_tex_delimiters, RootCall};
 use crate::numeric;
 use crate::ode::{self, OdeStatus};
 use crate::protocol::{OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, operator_descriptor, CapabilitySet, ComputationOutput, ExpressionView,
-    MathematicalObject, ObjectCapability, ObjectId, OperatorDescriptor, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    object_from_source, operator_descriptor, CapabilitySet, ComputationOutput, MathematicalObject,
+    ObjectCapability, ObjectId, OperatorDescriptor, SemanticInterpretation, SemanticOperation,
+    SemanticState,
 };
 pub use crate::semantic_core::{OperatorId as CompositionOperator, ValueArgument};
 use crate::steps::{
@@ -113,23 +113,47 @@ pub fn execute_steps(
     expression: &str,
     verbosity: StepVerbosity,
 ) -> Result<Option<CompositionResult>, EngineError> {
-    validate_safe_text(expression, "组合表达式")?;
-    let (operations, collected) = crate::input::with_parse_env(|env| {
-        let tree = yacas_rs::parser::parse_expression(env, &format!("{expression};"))
-            .map_err(|error| EngineError::InvalidInput(format!("组合表达式语法错误: {error:?}")))?
-            .ok_or_else(|| EngineError::InvalidInput("组合表达式为空".into()))?;
-        let mut operations = Vec::new();
-        let collected =
-            collect_operations_view(&ExpressionView::new(env, &tree), &mut operations, 0)?;
-        Ok::<_, EngineError>((operations, collected))
-    })?;
+    let elaborated = crate::elaboration::elaborate_input(expression)?;
+    execute_elaborated(engine, &elaborated, verbosity)
+}
+
+pub fn execute_elaborated(
+    engine: &mut dyn Engine,
+    input: &crate::elaboration::ElaboratedInput,
+    verbosity: StepVerbosity,
+) -> Result<Option<CompositionResult>, EngineError> {
+    let mut operations = Vec::new();
+    let collected = collect_operations_elaborated(&input.root, &mut operations, 0)?;
+    let mut occupied_symbols = input.analyzed.semantic.symbols.clone();
+    occupied_symbols.extend(input.analyzed.semantic.bound_symbols.iter().cloned());
+    occupied_symbols.extend(input.analyzed.semantic.constants.iter().cloned());
+    occupied_symbols.sort();
+    occupied_symbols.dedup();
+    execute_collected(
+        engine,
+        operations,
+        collected,
+        input.root.object.print_source(),
+        occupied_symbols,
+        verbosity,
+    )
+}
+
+fn execute_collected(
+    engine: &mut dyn Engine,
+    operations: Vec<Operation>,
+    collected: (Result<String, String>, Option<String>),
+    expression: String,
+    mut occupied_symbols: Vec<String>,
+    verbosity: StepVerbosity,
+) -> Result<Option<CompositionResult>, EngineError> {
     let (leaf, leaf_head) = collected;
     let leaf = match leaf {
         Ok(leaf) => leaf,
         Err(reason) => {
             return Ok(Some(CompositionResult {
                 status: CompositionStatus::Unsupported,
-                value: expression.into(),
+                value: expression.clone(),
                 tex: String::new(),
                 steps: Vec::new(),
                 operators: operations
@@ -155,13 +179,13 @@ pub fn execute_steps(
                 .collect();
             let step = operation_step(
                 "held-operator-application",
-                expression.into(),
+                expression.clone(),
                 "保留尚未降低的数学对象与外层运算，等待适用的组合规则。",
-                tex_code(expression),
+                tex_code(&expression),
             );
             return Ok(Some(CompositionResult {
                 status: CompositionStatus::Unresolved,
-                value: expression.into(),
+                value: expression.clone(),
                 tex: step.tex.clone(),
                 steps: vec![step],
                 operators: operations
@@ -171,7 +195,7 @@ pub fn execute_steps(
                 reason: Some("组合在语义上有效，但当前没有适用的降低规则".into()),
                 arbitrary_constants: Vec::new(),
                 held: Some(HeldApplication {
-                    source: expression.into(),
+                    source: expression.clone(),
                     operand_head,
                     pending_operators,
                 }),
@@ -192,7 +216,6 @@ pub fn execute_steps(
     let mut steps = Vec::new();
     let mut unresolved = false;
     let mut arbitrary_constants = Vec::new();
-    let mut occupied_symbols = analyze_expression(expression, "组合表达式")?.symbols;
     for index in (0..operations.len()).rev() {
         let operation = &operations[index];
         occupied_symbols.extend(arbitrary_constants.iter().cloned());
@@ -481,8 +504,11 @@ fn tex_code(value: &str) -> String {
     format!(r"\mathtt{{{escaped}}}")
 }
 
-fn collect_operations_view(
-    expression: &ExpressionView<'_>,
+/// AST-native counterpart of the legacy collector.  It deliberately consumes
+/// elaborated children, so composition can be moved off its second parse one
+/// route at a time.
+fn collect_operations_elaborated(
+    expression: &crate::elaboration::ElaboratedObject,
     operations: &mut Vec<Operation>,
     depth: usize,
 ) -> Result<(Result<String, String>, Option<String>), EngineError> {
@@ -492,29 +518,40 @@ fn collect_operations_view(
             None,
         ));
     }
-    let Some(name) = expression.head() else {
-        return Ok((Ok(expression.print_source()), None));
+    let head = match &expression.form {
+        crate::elaboration::MathematicalForm::Application { head }
+        | crate::elaboration::MathematicalForm::EffectApplication { head } => head,
+        crate::elaboration::MathematicalForm::Structural { operator } => {
+            return Ok((Ok(expression.object.print_source()), Some(operator.clone())));
+        }
+        _ => return Ok((Ok(expression.object.print_source()), None)),
     };
-    let Some(signature) = operator_descriptor(name) else {
-        return Ok((Ok(expression.print_source()), Some(name.into())));
+    let Some(signature) = operator_descriptor(head) else {
+        return Ok((Ok(expression.object.print_source()), Some(head.clone())));
     };
-    let arguments = expression.arguments();
-    if !signature.arities.contains(&arguments.len()) {
+    if !signature.arities.contains(&expression.children.len()) {
         return Ok((
-            Err(format!("{name} 不支持 {} 个参数", arguments.len())),
+            Err(format!(
+                "{head} 不支持 {} 个参数",
+                expression.children.len()
+            )),
             None,
         ));
     }
-    let value_index = value_index(signature, arguments.len());
-    let Some(inner) = arguments.get(value_index) else {
-        return Ok((Err(format!("{name} 缺少值参数")), None));
+    let value_index = value_index(signature, expression.children.len());
+    let Some(inner) = expression.children.get(value_index) else {
+        return Ok((Err(format!("{head} 缺少值参数")), None));
     };
     operations.push(Operation {
-        name: name.into(),
+        name: head.clone(),
         signature,
-        arguments: arguments.iter().map(ExpressionView::print_source).collect(),
+        arguments: expression
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect(),
     });
-    collect_operations_view(inner, operations, depth + 1)
+    collect_operations_elaborated(inner, operations, depth + 1)
 }
 
 fn value_index(signature: &OperatorDescriptor, argument_count: usize) -> usize {

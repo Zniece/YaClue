@@ -424,7 +424,7 @@ fn dispatch_expression_with_engine(
             .is_some_and(processing::composition::is_candidate)
     {
         if let Some(mut result) =
-            processing::composition::execute_steps(&mut *engine, &request.expression, verbosity)
+            processing::composition::execute_elaborated(&mut *engine, elaborated, verbosity)
                 .map_err(message)?
         {
             if !request.steps {
