@@ -6,8 +6,8 @@ use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     object_from_source, CapabilitySet, Computation, ComputationOutput, ObjectDelta, ObjectId,
-    ObjectReference, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
-    SemanticInterpretation, SemanticOperation, SemanticState,
+    ObjectReference, Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation,
+    RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use crate::steps::{Step, StepVerbosity};
 use serde::Serialize;
@@ -26,6 +26,43 @@ pub struct LimitRequest {
     pub variable: String,
     pub at: String,
     pub direction: LimitDirection,
+}
+
+impl LimitRequest {
+    pub fn validate(&self) -> Result<(), EngineError> {
+        validate_symbol(&self.variable, "极限变量")?;
+        validate_expression(&self.at, "趋近点")
+    }
+}
+
+/// Build a curried Limit application that awaits its operand. It is a normal
+/// mathematical object, not a command string or an effect.
+pub fn limit_partial(
+    id: ObjectId,
+    request: &LimitRequest,
+) -> Result<crate::semantic_core::MathematicalObject, EngineError> {
+    request.validate()?;
+    let source = match request.direction {
+        LimitDirection::Both => format!("Limit({},{})", request.variable, request.at),
+        LimitDirection::Left => format!("Limit({},{},Left)", request.variable, request.at),
+        LimitDirection::Right => format!("Limit({},{},Right)", request.variable, request.at),
+    };
+    object_from_source(
+        id,
+        &source,
+        SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: SemanticInterpretation::HeldApplication {
+                operator: "Limit".into(),
+            },
+            metadata: ResultMetadata::unresolved(
+                Exactness::Symbolic,
+                OutcomeReason::AlgorithmUncovered,
+            ),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: vec![Requirement::Operand],
+        },
+    )
 }
 
 /// Limit's domain implementation under the common semantic operation
@@ -171,6 +208,9 @@ pub fn limit_computation(
     at: &str,
     direction: LimitDirection,
 ) -> Result<Computation, EngineError> {
+    validate_expression(expression, "极限表达式")?;
+    validate_symbol(variable, "极限变量")?;
+    validate_expression(at, "趋近点")?;
     let initial_metadata =
         ResultMetadata::unresolved(Exactness::Unknown, OutcomeReason::AlgorithmUncovered);
     let object = object_from_source(
@@ -197,6 +237,8 @@ pub fn limit_computation_for_object(
     at: &str,
     direction: LimitDirection,
 ) -> Result<Computation, EngineError> {
+    validate_symbol(variable, "极限变量")?;
+    validate_expression(at, "趋近点")?;
     let expression = operand.print_source();
     let mut object = operand.clone();
     let input = object.reference(None);
@@ -1109,6 +1151,28 @@ mod tests {
         assert_eq!(trace.events[0].input.object, ObjectId(42));
         assert_eq!(computation.value().unwrap().id, ObjectId(42));
         assert_eq!(computation.value().unwrap().revision.0, 1);
+    }
+
+    #[test]
+    fn partial_limit_is_a_held_object_with_an_operand_requirement() {
+        let partial = limit_partial(
+            ObjectId(9),
+            &LimitRequest {
+                variable: "x".into(),
+                at: "0".into(),
+                direction: LimitDirection::Both,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            partial.semantics.interpretation,
+            SemanticInterpretation::HeldApplication { .. }
+        ));
+        assert_eq!(partial.semantics.requirements, vec![Requirement::Operand]);
+        assert!(partial
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::EvaluateLimit));
     }
 
     #[test]
