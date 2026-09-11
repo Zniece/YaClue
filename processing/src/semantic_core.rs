@@ -568,6 +568,7 @@ pub enum SemanticInterpretation {
     HeldApplication {
         operator: String,
     },
+    HeldTypedApplication(TypedApplication),
     PartialApplication(PartialApplication),
     StructuredUnevaluated {
         reason: String,
@@ -727,6 +728,39 @@ pub fn typed_application_state(
         conditions,
         result,
     })
+}
+
+pub fn promote_held_application(
+    spelling: &str,
+    expression: &Rc<LispObject>,
+    semantics: &mut SemanticState,
+) -> Result<(), EngineError> {
+    let arity =
+        crate::input::with_parse_env(|env| ExpressionView::new(env, expression).arguments().len());
+    let application = typed_application_state(
+        spelling,
+        arity,
+        expression,
+        semantics.metadata.conditions.clone(),
+    )?;
+    semantics.interpretation = SemanticInterpretation::HeldTypedApplication(application);
+    Ok(())
+}
+
+pub fn promote_registered_held_expression(
+    expression: &Rc<LispObject>,
+    semantics: &mut SemanticState,
+) -> Result<bool, EngineError> {
+    let head = crate::input::with_parse_env(|env| {
+        ExpressionView::new(env, expression)
+            .head()
+            .map(str::to_string)
+    });
+    let Some(head) = head.filter(|head| operator_descriptor(head).is_some()) else {
+        return Ok(false);
+    };
+    promote_held_application(&head, expression, semantics)?;
+    Ok(true)
 }
 
 pub fn operand_partial_state(

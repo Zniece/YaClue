@@ -70,7 +70,7 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
         } else {
             ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
         };
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if result.unresolved {
                 ValueKind::Unevaluated
             } else {
@@ -90,6 +90,13 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &result.output, semantics.clone())?;
+        if result.unresolved {
+            crate::semantic_core::promote_held_application(
+                request.kind.name(),
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),
@@ -322,7 +329,7 @@ mod tests {
         assert!(matches!(held.output, ComputationOutput::Held(_)));
         assert!(matches!(
             held.subject().unwrap().semantics.interpretation,
-            SemanticInterpretation::HeldApplication { .. }
+            SemanticInterpretation::HeldTypedApplication(_)
         ));
     }
 }

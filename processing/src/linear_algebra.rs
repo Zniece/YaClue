@@ -130,7 +130,7 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             result.output.clone()
         };
         let analyzed = crate::semantic::analyze_input(&output_source, "矩阵运算结果")?;
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if held {
                 ValueKind::Unevaluated
             } else {
@@ -163,6 +163,19 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        if held {
+            let spelling = match request.operation {
+                MatrixOperation::Transpose => "Transpose",
+                MatrixOperation::Determinant => "Determinant",
+                MatrixOperation::Inverse => "Inverse",
+                _ => unreachable!(),
+            };
+            crate::semantic_core::promote_held_application(
+                spelling,
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),
@@ -623,7 +636,7 @@ fn held_matrix_analysis(
         MatrixAnalysisKind::ColumnSpace => "ColumnSpace",
         MatrixAnalysisKind::EigenSpaces => "EigenSpaces",
     };
-    let semantics = SemanticState {
+    let mut semantics = SemanticState {
         kind: ValueKind::Unevaluated,
         interpretation: SemanticInterpretation::HeldApplication {
             operator: head.into(),
@@ -640,6 +653,7 @@ fn held_matrix_analysis(
         &format!("{head}({})", input.print_source()),
         semantics.clone(),
     )?;
+    crate::semantic_core::promote_held_application(head, &parsed.raw_expression(), &mut semantics)?;
     let mut output = input.clone();
     output.apply(ObjectDelta {
         expression: Some(parsed.raw_expression()),

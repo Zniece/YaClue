@@ -54,7 +54,7 @@ impl BinarySemanticOperation<SubstitutionRequest> for SubstitutionOperation {
                 .semantic
                 .kind
         });
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if unresolved {
                 ValueKind::Unevaluated
             } else {
@@ -75,6 +75,9 @@ impl BinarySemanticOperation<SubstitutionRequest> for SubstitutionOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
+        if unresolved {
+            crate::semantic_core::promote_registered_held_expression(&expression, &mut semantics)?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(expression),

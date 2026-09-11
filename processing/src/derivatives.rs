@@ -277,7 +277,9 @@ pub fn derivative_computation_for_object(
     };
     let output_ast =
         object_from_source(output_object.id, &output_source, semantics.clone())?.raw_expression();
-    if !unresolved {
+    if unresolved {
+        crate::semantic_core::promote_held_application("D", &output_ast, &mut semantics)?;
+    } else {
         semantics.kind = crate::input::with_parse_env(|env| {
             crate::semantic::analyze_tree(env, &output_ast)
                 .semantic

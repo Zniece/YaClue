@@ -150,7 +150,7 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
         } else {
             format!("OdeSolve({})", input.print_source())
         };
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if solved {
                 ValueKind::FunctionFamily
             } else {
@@ -179,6 +179,13 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        if !solved {
+            crate::semantic_core::promote_held_application(
+                "OdeSolve",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),

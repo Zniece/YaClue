@@ -131,7 +131,7 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
         };
         let unresolved = result.status == SolveStatus::Unresolved;
         let no_value = result.status == SolveStatus::NoSolution;
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if unresolved || no_value {
                 ValueKind::Unevaluated
             } else {
@@ -162,6 +162,13 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        if unresolved {
+            crate::semantic_core::promote_held_application(
+                "Solve",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),

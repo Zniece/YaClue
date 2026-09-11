@@ -132,7 +132,7 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
         } else {
             ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
         };
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if unresolved {
                 ValueKind::Unevaluated
             } else {
@@ -150,6 +150,13 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        if unresolved {
+            crate::semantic_core::promote_held_application(
+                "Integrate",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),
@@ -284,7 +291,7 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
         } else {
             ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
         };
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if unresolved {
                 ValueKind::Unevaluated
             } else {
@@ -308,6 +315,13 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &representative, semantics.clone())?;
+        if unresolved {
+            crate::semantic_core::promote_held_application(
+                "Integrate",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),

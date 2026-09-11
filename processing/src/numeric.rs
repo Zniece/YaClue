@@ -68,7 +68,7 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
         } else {
             result.output.clone()
         };
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if unresolved || no_value {
                 ValueKind::Unevaluated
             } else {
@@ -115,6 +115,13 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        if unresolved {
+            crate::semantic_core::promote_held_application(
+                "N",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),
@@ -237,7 +244,7 @@ impl SemanticOperation<TaylorRequest> for TaylorOperation {
         } else {
             result.output.clone()
         };
-        let semantics = SemanticState {
+        let mut semantics = SemanticState {
             kind: if result.unresolved {
                 ValueKind::Unevaluated
             } else {
@@ -261,6 +268,13 @@ impl SemanticOperation<TaylorRequest> for TaylorOperation {
             requirements: Vec::new(),
         };
         let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        if result.unresolved {
+            crate::semantic_core::promote_held_application(
+                "Taylor",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),

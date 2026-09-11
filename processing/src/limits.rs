@@ -324,22 +324,26 @@ pub fn limit_computation_for_object(
             }
         }
     };
-    let parsed_output = object_from_source(
-        object.id,
-        output_source,
-        SemanticState {
-            kind: if produces_value {
-                ValueKind::Scalar
-            } else {
-                ValueKind::Unevaluated
-            },
-            interpretation: interpretation.clone(),
-            metadata: metadata.clone(),
-            capabilities: output_capabilities,
-            requirements: Vec::new(),
+    let mut output_semantics = SemanticState {
+        kind: if produces_value {
+            ValueKind::Scalar
+        } else {
+            ValueKind::Unevaluated
         },
-    )?;
+        interpretation,
+        metadata: metadata.clone(),
+        capabilities: output_capabilities,
+        requirements: Vec::new(),
+    };
+    let parsed_output = object_from_source(object.id, output_source, output_semantics.clone())?;
     let output_ast = parsed_output.raw_expression();
+    if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
+        crate::semantic_core::promote_held_application(
+            "Limit",
+            &output_ast,
+            &mut output_semantics,
+        )?;
+    }
     let output_kind = if produces_value {
         crate::input::with_parse_env(|env| {
             crate::semantic::analyze_tree(env, &output_ast)
@@ -354,7 +358,7 @@ pub fn limit_computation_for_object(
         expression: Some(output_ast),
         semantics: Some(SemanticState {
             kind: output_kind,
-            interpretation,
+            interpretation: output_semantics.interpretation,
             metadata,
             capabilities: output_capabilities,
             requirements: Vec::new(),

@@ -1270,6 +1270,16 @@ fn retain_pending_application(
     let rebuilt = expression.object.rebuild_application_with(&arguments)?;
     let no_value = matches!(operand.output, ComputationOutput::NoValue(_));
     let mut output = expression.object.clone();
+    let held_interpretation = match &expression.object.semantics.interpretation {
+        SemanticInterpretation::TypedApplication(application) => {
+            let mut application = application.clone();
+            application.conditions = child.semantics.metadata.conditions.clone();
+            SemanticInterpretation::HeldTypedApplication(application)
+        }
+        _ => SemanticInterpretation::HeldApplication {
+            operator: head.into(),
+        },
+    };
     output.apply(ObjectDelta {
         expression: Some(rebuilt),
         semantics: Some(SemanticState {
@@ -1279,9 +1289,7 @@ fn retain_pending_application(
                     reason: "operand has no mathematical value".into(),
                 }
             } else {
-                SemanticInterpretation::HeldApplication {
-                    operator: head.into(),
-                }
+                held_interpretation
             },
             metadata: if no_value {
                 ResultMetadata::no_result(
