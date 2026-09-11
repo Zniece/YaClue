@@ -356,6 +356,6 @@ mod tests {
             .map(|event| event.rule.as_str())
             .collect::<Vec<_>>();
         assert!(rules.contains(&"intrinsic-gamma-lowering"));
-        assert!(rules.contains(&"derivative-gamma-chain-rule"));
+        assert!(rules.contains(&"derivative-registered-function-chain-rule"));
     }
 }

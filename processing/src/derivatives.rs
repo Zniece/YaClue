@@ -239,7 +239,7 @@ pub fn derivative_computation_for_object(
     if let Some(computation) = derivative_of_typed_integral(engine, operand, request)? {
         return Ok(computation);
     }
-    if let Some(computation) = derivative_of_gamma(engine, operand, request)? {
+    if let Some(computation) = derivative_of_registered_function(engine, operand, request)? {
         return Ok(computation);
     }
     let source = operand.print_source();
@@ -356,7 +356,34 @@ pub fn derivative_computation_for_object(
     })
 }
 
-fn derivative_of_gamma(
+type PartialDerivativeBuilder = fn(&[String], usize) -> Option<String>;
+
+#[derive(Clone, Copy)]
+struct FunctionDerivativeRule {
+    id: &'static str,
+    head: &'static str,
+    arity: usize,
+    partial_derivative: PartialDerivativeBuilder,
+}
+
+fn gamma_partial(arguments: &[String], argument_index: usize) -> Option<String> {
+    (argument_index == 0).then(|| {
+        let argument = &arguments[0];
+        format!("Gamma({argument})*PolyGamma(0,{argument})")
+    })
+}
+
+/// Function identities are data in this bounded registry. The dispatcher
+/// owns chain-rule composition; adding Erf, Beta or Bessel derivatives does
+/// not add branches to `DerivativeOperation`.
+const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[FunctionDerivativeRule {
+    id: "function.gamma.derivative",
+    head: "Gamma",
+    arity: 1,
+    partial_derivative: gamma_partial,
+}];
+
+fn derivative_of_registered_function(
     engine: &mut dyn Engine,
     operand: &crate::semantic_core::MathematicalObject,
     request: &DerivativeRequest,
@@ -364,37 +391,73 @@ fn derivative_of_gamma(
     if request.order != 1 {
         return Ok(None);
     }
-    let argument = crate::input::with_parse_env(|env| {
+    let function = crate::input::with_parse_env(|env| {
         let view = operand.view(env);
-        let arguments = view.arguments();
-        match (view.head(), arguments.as_slice()) {
-            (Some("Gamma"), [argument]) => Ok(Some(argument.print_source())),
-            _ => Ok(None),
-        }
+        Ok(view.head().map(|head| {
+            (
+                head.to_owned(),
+                view.arguments()
+                    .into_iter()
+                    .map(|argument| argument.print_source())
+                    .collect::<Vec<_>>(),
+            )
+        }))
     })?;
-    let Some(argument) = argument else {
+    let Some((head, arguments)) = function else {
         return Ok(None);
     };
-    let inner = derivative_computation(engine, &argument, &request.variable, 1)?;
-    let Some(inner_value) = inner.value() else {
+    let Some(rule) = FUNCTION_DERIVATIVE_RULES
+        .iter()
+        .find(|rule| rule.head == head && rule.arity == arguments.len())
+    else {
         return Ok(None);
     };
-    let inner_source = inner_value.print_source();
-    let source = if inner_source == "1" {
-        format!("Gamma({argument})*PolyGamma(0,{argument})")
+    let mut terms = Vec::with_capacity(arguments.len());
+    let mut events = Vec::new();
+    let mut certificates = Vec::new();
+    let mut effects = Vec::new();
+    let mut condition_items = operand.semantics.metadata.conditions.conditions().to_vec();
+    for (index, argument) in arguments.iter().enumerate() {
+        let Some(partial) = (rule.partial_derivative)(&arguments, index) else {
+            continue;
+        };
+        let mut inner = derivative_computation(engine, argument, &request.variable, 1)?;
+        let Some(inner_value) = inner.value() else {
+            return Ok(None);
+        };
+        let inner_source = inner_value.print_source();
+        if inner_source != "0" {
+            terms.push(if inner_source == "1" {
+                partial
+            } else {
+                format!("({partial})*({inner_source})")
+            });
+        }
+        condition_items.extend(
+            inner_value
+                .semantics
+                .metadata
+                .conditions
+                .conditions()
+                .iter()
+                .cloned(),
+        );
+        events.extend(
+            inner
+                .trace
+                .take()
+                .map(|trace| trace.events)
+                .unwrap_or_default(),
+        );
+        certificates.append(&mut inner.certificates);
+        effects.append(&mut inner.effects);
+    }
+    let source = if terms.is_empty() {
+        "0".into()
     } else {
-        format!("Gamma({argument})*PolyGamma(0,{argument})*({inner_source})")
+        terms.join("+")
     };
-    let conditions = ConditionSet::new(
-        operand
-            .semantics
-            .metadata
-            .conditions
-            .conditions()
-            .iter()
-            .chain(inner_value.semantics.metadata.conditions.conditions())
-            .cloned(),
-    )?;
+    let conditions = ConditionSet::new(condition_items)?;
     let mut output = operand.clone();
     let semantics = SemanticState {
         kind: ValueKind::Expression,
@@ -416,30 +479,30 @@ fn derivative_of_gamma(
         }),
     });
     let event = RuleEvent {
-        rule: "derivative-gamma-chain-rule".into(),
+        rule: "derivative-registered-function-chain-rule".into(),
         input: input_ref,
         additional_inputs: Vec::new(),
         output: output.reference(None),
         bindings: vec![
             ("variable".into(), request.variable.clone()),
-            ("argument".into(), argument),
+            ("function".into(), head),
+            ("derivative_rule".into(), rule.id.into()),
         ],
         conditions: conditions.conditions().to_vec(),
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
-            explanation: "应用 Gamma 导数公式与链式法则。".into(),
+            explanation: "应用已登记的函数偏导规则，并由通用链式法则组合参数导数。".into(),
             tex_override: None,
         }),
     };
-    let mut events = inner.trace.map(|trace| trace.events).unwrap_or_default();
     events.push(event);
     Ok(Some(Computation {
         output: ComputationOutput::Value(output),
         trace: Some(RuleTrace { events }),
-        certificates: inner.certificates,
-        effects: inner.effects,
+        certificates,
+        effects,
     }))
 }
 
@@ -802,7 +865,14 @@ mod tests {
             .unwrap()
             .events
             .iter()
-            .any(|event| { event.rule == "derivative-gamma-chain-rule" }));
+            .any(|event| { event.rule == "derivative-registered-function-chain-rule" }));
+
+        let chained = crate::elaboration::elaborate("D(x)Gamma(x^2)").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &chained).unwrap();
+        let source = result.value().unwrap().print_source().replace(' ', "");
+        assert!(source.contains("Gamma(x^2)*PolyGamma(0,x^2)"));
+        assert!(source.contains("2*x"));
 
         let lowered =
             crate::elaboration::elaborate("D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t)))")
@@ -826,7 +896,7 @@ mod tests {
             .map(|event| event.rule.as_str())
             .collect::<Vec<_>>();
         assert!(rules.contains(&"intrinsic-gamma-lowering"));
-        assert!(rules.contains(&"derivative-gamma-chain-rule"));
+        assert!(rules.contains(&"derivative-registered-function-chain-rule"));
     }
 
     #[test]
@@ -863,5 +933,21 @@ mod tests {
             .events
             .iter()
             .any(|event| { event.rule == "differentiate-under-integral-sign" }));
+    }
+
+    #[test]
+    fn unregistered_functions_do_not_create_implicit_derivative_rules() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let expression = crate::elaboration::elaborate("D(x)UnknownSpecial(x)").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .all(|event| { event.rule != "derivative-registered-function-chain-rule" }));
     }
 }
