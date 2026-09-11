@@ -151,12 +151,8 @@ pub fn render_rule_trace(
         .collect::<Vec<_>>();
     let expressions = events
         .iter()
-        .filter_map(|(_, presentation)| {
-            presentation
-                .tex_override
-                .is_none()
-                .then(|| presentation.expression.clone())
-        })
+        .filter(|(_, presentation)| presentation.tex_override.is_none())
+        .map(|(_, presentation)| presentation.expression.clone())
         .collect::<Vec<_>>();
     let mut rendered = engine.render_tex_batch(&expressions)?.into_iter();
     Ok(events

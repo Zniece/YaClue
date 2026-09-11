@@ -660,14 +660,14 @@ pub fn limit_steps_with_verbosity(
     validate_expression(at, "趋近点")?;
     validate_symbol(variable, "极限变量")?;
     let computation = limit_computation(engine, expression, variable, at, direction)?;
-    return crate::steps::render_rule_trace(
+    crate::steps::render_rule_trace(
         engine,
         computation
             .trace
             .as_ref()
             .expect("limit computation always records its rule trace"),
         verbosity,
-    );
+    )
 }
 
 fn format_condition_expression(condition: &LimitCondition) -> String {
