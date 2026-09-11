@@ -340,11 +340,13 @@ mod tests {
     }
 
     #[test]
-    fn nested_derivative_receives_lowered_gamma_object() {
+    fn nested_derivative_consumes_lowered_gamma_object() {
         let (_, result) = execute("D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t)))");
-        let output = result.subject().expect("held derivative remains an object");
-        assert_eq!(output.print_source().replace(' ', ""), "D(x,1)Gamma(x)");
-        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        let output = result.value().expect("Gamma derivative is a value");
+        assert_eq!(
+            output.print_source().replace(' ', ""),
+            "Gamma(x)*PolyGamma(0,x)"
+        );
         let rules = result
             .trace
             .as_ref()
@@ -354,5 +356,6 @@ mod tests {
             .map(|event| event.rule.as_str())
             .collect::<Vec<_>>();
         assert!(rules.contains(&"intrinsic-gamma-lowering"));
+        assert!(rules.contains(&"derivative-gamma-chain-rule"));
     }
 }

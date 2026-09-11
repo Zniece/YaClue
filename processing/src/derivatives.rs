@@ -4,7 +4,7 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{validate_expression, validate_symbol};
-use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     object_from_source, CapabilitySet, Computation, ComputationOutput, ExpressionView,
@@ -236,6 +236,12 @@ pub fn derivative_computation_for_object(
     {
         return Err(EngineError::InvalidInput("该数学对象不具备求导能力".into()));
     }
+    if let Some(computation) = derivative_of_typed_integral(engine, operand, request)? {
+        return Ok(computation);
+    }
+    if let Some(computation) = derivative_of_gamma(engine, operand, request)? {
+        return Ok(computation);
+    }
     let source = operand.print_source();
     let facts = facts(engine, &source, request)?;
     let final_expression = facts
@@ -251,11 +257,17 @@ pub fn derivative_computation_for_object(
             .head()
             .is_some_and(|head| matches!(head, "D" | "Deriv")))
     })?;
-    let metadata = if unresolved {
+    let mut metadata = if unresolved {
         ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
     } else {
-        ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+        ResultMetadata::solved(
+            Exactness::Symbolic,
+            operand.semantics.metadata.conditions.clone(),
+        )
     };
+    if unresolved {
+        metadata.conditions = operand.semantics.metadata.conditions.clone();
+    }
     let mut output_object = operand.clone();
     let output_source = if unresolved {
         format!("D({},{})({source})", request.variable, request.order)
@@ -314,7 +326,7 @@ pub fn derivative_computation_for_object(
                 ("variable".into(), request.variable.clone()),
                 ("order".into(), request.order.to_string()),
             ],
-            conditions: Vec::new(),
+            conditions: operand.semantics.metadata.conditions.conditions().to_vec(),
             payload: if index == last {
                 RulePayload::Rewrite
             } else {
@@ -342,6 +354,277 @@ pub fn derivative_computation_for_object(
         certificates: Vec::new(),
         effects: Vec::new(),
     })
+}
+
+fn derivative_of_gamma(
+    engine: &mut dyn Engine,
+    operand: &crate::semantic_core::MathematicalObject,
+    request: &DerivativeRequest,
+) -> Result<Option<Computation>, EngineError> {
+    if request.order != 1 {
+        return Ok(None);
+    }
+    let argument = crate::input::with_parse_env(|env| {
+        let view = operand.view(env);
+        let arguments = view.arguments();
+        match (view.head(), arguments.as_slice()) {
+            (Some("Gamma"), [argument]) => Ok(Some(argument.print_source())),
+            _ => Ok(None),
+        }
+    })?;
+    let Some(argument) = argument else {
+        return Ok(None);
+    };
+    let inner = derivative_computation(engine, &argument, &request.variable, 1)?;
+    let Some(inner_value) = inner.value() else {
+        return Ok(None);
+    };
+    let inner_source = inner_value.print_source();
+    let source = if inner_source == "1" {
+        format!("Gamma({argument})*PolyGamma(0,{argument})")
+    } else {
+        format!("Gamma({argument})*PolyGamma(0,{argument})*({inner_source})")
+    };
+    let conditions = ConditionSet::new(
+        operand
+            .semantics
+            .metadata
+            .conditions
+            .conditions()
+            .iter()
+            .chain(inner_value.semantics.metadata.conditions.conditions())
+            .cloned(),
+    )?;
+    let mut output = operand.clone();
+    let semantics = SemanticState {
+        kind: ValueKind::Expression,
+        interpretation: SemanticInterpretation::PlainExpression,
+        metadata: ResultMetadata::solved(Exactness::Symbolic, conditions.clone()),
+        capabilities: CapabilitySet::symbolic_expression(),
+        requirements: Vec::new(),
+    };
+    let parsed = object_from_source(output.id, &source, semantics.clone())?;
+    let input_ref = output.reference(None);
+    output.apply(ObjectDelta {
+        expression: Some(parsed.raw_expression()),
+        semantics: Some(semantics),
+        overlay: None,
+        normalization: Some(NormalizationMetadata {
+            level: NormalizationLevel::Domain,
+            assumptions: conditions.conditions().to_vec(),
+            mode: NormalizationMode::Operation(OperatorId::Derivative),
+        }),
+    });
+    let event = RuleEvent {
+        rule: "derivative-gamma-chain-rule".into(),
+        input: input_ref,
+        additional_inputs: Vec::new(),
+        output: output.reference(None),
+        bindings: vec![
+            ("variable".into(), request.variable.clone()),
+            ("argument".into(), argument),
+        ],
+        conditions: conditions.conditions().to_vec(),
+        payload: RulePayload::Rewrite,
+        importance: RuleImportance::Key,
+        presentation: Some(RulePresentation {
+            expression: output.print_source(),
+            explanation: "应用 Gamma 导数公式与链式法则。".into(),
+            tex_override: None,
+        }),
+    };
+    let mut events = inner.trace.map(|trace| trace.events).unwrap_or_default();
+    events.push(event);
+    Ok(Some(Computation {
+        output: ComputationOutput::Value(output),
+        trace: Some(RuleTrace { events }),
+        certificates: inner.certificates,
+        effects: inner.effects,
+    }))
+}
+
+fn derivative_of_typed_integral(
+    engine: &mut dyn Engine,
+    operand: &crate::semantic_core::MathematicalObject,
+    request: &DerivativeRequest,
+) -> Result<Option<Computation>, EngineError> {
+    let application = match &operand.semantics.interpretation {
+        SemanticInterpretation::TypedApplication(application)
+        | SemanticInterpretation::HeldTypedApplication(application)
+            if application.operator == OperatorId::Integral =>
+        {
+            application
+        }
+        _ => return Ok(None),
+    };
+    let source_for = |requirement: Requirement| -> Result<Option<String>, EngineError> {
+        let Some(argument) = application
+            .arguments
+            .iter()
+            .find(|argument| argument.requirement == requirement)
+        else {
+            return Ok(None);
+        };
+        crate::input::with_parse_env(|env| {
+            operand
+                .view(env)
+                .at_path(&argument.path)
+                .map(|view| view.print_source())
+                .ok_or_else(|| EngineError::Parse("积分 typed slot 的 AST 路径失效".into()))
+                .map(Some)
+        })
+    };
+    let Some(variable) = source_for(Requirement::Variable)? else {
+        return Ok(None);
+    };
+    let Some(integrand) = source_for(Requirement::Operand)? else {
+        return Ok(None);
+    };
+    if variable == request.variable && source_for(Requirement::LowerBound)?.is_none() {
+        let semantics = SemanticState {
+            kind: ValueKind::Expression,
+            interpretation: SemanticInterpretation::PlainExpression,
+            metadata: ResultMetadata::solved(
+                Exactness::Symbolic,
+                operand.semantics.metadata.conditions.clone(),
+            ),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(operand.id, &integrand, semantics.clone())?;
+        let mut output = operand.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: operand.semantics.metadata.conditions.conditions().to_vec(),
+                mode: NormalizationMode::Operation(OperatorId::Derivative),
+            }),
+        });
+        return Ok(Some(integral_derivative_computation(
+            operand,
+            output,
+            "derivative-of-indefinite-integral",
+            "同变量求导与不定积分相消。",
+            operand.semantics.metadata.conditions.clone(),
+            false,
+        )));
+    }
+    let lower = source_for(Requirement::LowerBound)?;
+    let upper = source_for(Requirement::UpperBound)?;
+    for bound in [&lower, &upper].into_iter().flatten() {
+        if crate::binding::analyze(bound)?
+            .free_symbols
+            .contains(&request.variable)
+        {
+            // Variable bounds require the full Leibniz boundary terms. Keep
+            // the original derivative held until that typed rule is added.
+            return Ok(None);
+        }
+    }
+    let differentiated = derivative_computation(engine, &integrand, &request.variable, 1)?;
+    let derivative = differentiated
+        .subject()
+        .expect("derivative produces a mathematical object")
+        .print_source();
+    let source = match (lower, upper) {
+        (Some(lower), Some(upper)) => {
+            format!("Integrate({variable},{lower},{upper})({derivative})")
+        }
+        (None, None) => format!("Integrate({variable})({derivative})"),
+        _ => return Ok(None),
+    };
+    let condition = Condition::Unknown {
+        description: format!("允许对参数 {} 在积分号下求导", request.variable),
+    };
+    let conditions = ConditionSet::new(
+        operand
+            .semantics
+            .metadata
+            .conditions
+            .conditions()
+            .iter()
+            .cloned()
+            .chain(std::iter::once(condition)),
+    )?;
+    let mut metadata =
+        ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::ConditionInsufficient);
+    metadata.conditions = conditions.clone();
+    let mut semantics = SemanticState {
+        kind: ValueKind::Unevaluated,
+        interpretation: SemanticInterpretation::HeldApplication {
+            operator: "Integrate".into(),
+        },
+        metadata,
+        capabilities: CapabilitySet::symbolic_expression(),
+        requirements: Vec::new(),
+    };
+    let parsed = object_from_source(operand.id, &source, semantics.clone())?;
+    crate::semantic_core::promote_held_application(
+        "Integrate",
+        &parsed.raw_expression(),
+        &mut semantics,
+    )?;
+    let mut output = operand.clone();
+    output.apply(ObjectDelta {
+        expression: Some(parsed.raw_expression()),
+        semantics: Some(semantics),
+        overlay: None,
+        normalization: None,
+    });
+    let mut computation = integral_derivative_computation(
+        operand,
+        output,
+        "differentiate-under-integral-sign",
+        "在显式正则性条件下，将参数求导保留到积分号内。",
+        conditions,
+        true,
+    );
+    if let Some(trace) = differentiated.trace {
+        let mut events = trace.events;
+        events.extend(computation.trace.take().unwrap().events);
+        computation.trace = Some(RuleTrace { events });
+    }
+    Ok(Some(computation))
+}
+
+fn integral_derivative_computation(
+    input: &crate::semantic_core::MathematicalObject,
+    output: crate::semantic_core::MathematicalObject,
+    rule: &str,
+    explanation: &str,
+    conditions: ConditionSet,
+    held: bool,
+) -> Computation {
+    let event = RuleEvent {
+        rule: rule.into(),
+        input: input.reference(None),
+        additional_inputs: Vec::new(),
+        output: output.reference(None),
+        bindings: Vec::new(),
+        conditions: conditions.conditions().to_vec(),
+        payload: RulePayload::Rewrite,
+        importance: RuleImportance::Key,
+        presentation: Some(RulePresentation {
+            expression: output.print_source(),
+            explanation: explanation.into(),
+            tex_override: None,
+        }),
+    };
+    Computation {
+        output: if held {
+            ComputationOutput::Held(output)
+        } else {
+            ComputationOutput::Value(output)
+        },
+        trace: Some(RuleTrace {
+            events: vec![event],
+        }),
+        certificates: Vec::new(),
+        effects: Vec::new(),
+    }
 }
 
 pub fn derivative_result(
@@ -502,5 +785,83 @@ mod tests {
             expression.value().unwrap().semantics.kind,
             ValueKind::Expression
         );
+    }
+
+    #[test]
+    fn differentiates_native_gamma_and_preserves_lowering_conditions() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let direct = crate::elaboration::elaborate("D(x)Gamma(x)").unwrap();
+        let result = crate::arithmetic::execute_elaborated_structure(&mut engine, &direct).unwrap();
+        assert_eq!(
+            result.value().unwrap().print_source().replace(' ', ""),
+            "Gamma(x)*PolyGamma(0,x)"
+        );
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| { event.rule == "derivative-gamma-chain-rule" }));
+
+        let lowered =
+            crate::elaboration::elaborate("D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t)))")
+                .unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &lowered).unwrap();
+        assert_eq!(
+            result.value().unwrap().print_source().replace(' ', ""),
+            "Gamma(x)*PolyGamma(0,x)"
+        );
+        assert!(matches!(
+            result.value().unwrap().semantics.metadata.conditions.conditions(),
+            [Condition::RealPartPositive { expression }] if expression == "x"
+        ));
+        let rules = result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .map(|event| event.rule.as_str())
+            .collect::<Vec<_>>();
+        assert!(rules.contains(&"intrinsic-gamma-lowering"));
+        assert!(rules.contains(&"derivative-gamma-chain-rule"));
+    }
+
+    #[test]
+    fn held_integral_degrades_to_conditional_under_integral_derivative() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let expression =
+            crate::elaboration::elaborate("D(x)(Integrate(t,0,1)(Sin(x*t)/(1+t^2)))").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        assert!(matches!(
+            result.subject().unwrap().semantics.interpretation,
+            SemanticInterpretation::HeldTypedApplication(ref application)
+                if application.operator == OperatorId::Integral
+        ));
+        assert!(result
+            .subject()
+            .unwrap()
+            .print_source()
+            .contains("Integrate"));
+        assert!(result
+            .subject()
+            .unwrap()
+            .semantics
+            .metadata
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::Unknown { .. })));
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| { event.rule == "differentiate-under-integral-sign" }));
     }
 }

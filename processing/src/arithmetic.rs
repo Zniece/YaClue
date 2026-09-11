@@ -1173,49 +1173,49 @@ fn execute_calculus_application(
     };
     if let CalculusRequest::Derivative(derivative) = &request {
         let operand_node = &expression.children[operand_index];
-        if matches!(&operand_node.form,
-            crate::elaboration::MathematicalForm::Application { head } if head == "Integrate")
-            && operand_node.children.len() == 2
-            && operand_node.children[0].object.print_source() == derivative.variable
-        {
-            let mut result = execute_elaborated_structure(engine, &operand_node.children[1])?;
-            let output = result
-                .subject()
-                .expect("integral operand is a mathematical object")
-                .reference(None);
-            let event = RuleEvent {
-                rule: "derivative-of-indefinite-integral".into(),
-                input: operand_node.object.reference(None),
-                additional_inputs: Vec::new(),
-                output,
-                bindings: vec![("variable".into(), derivative.variable.clone())],
-                conditions: Vec::new(),
-                payload: RulePayload::Rewrite,
-                importance: RuleImportance::Key,
-                presentation: Some(RulePresentation {
-                    expression: result
-                        .subject()
-                        .expect("integral operand is a mathematical object")
-                        .print_source(),
-                    explanation: "同变量求导与不定积分相消。".into(),
-                    tex_override: None,
-                }),
-            };
-            if let Some(trace) = result.trace.as_mut() {
-                trace.events.push(event);
-            } else {
-                result.trace = Some(RuleTrace {
-                    events: vec![event],
-                });
+        let typed_integral = matches!(
+            &operand_node.object.semantics.interpretation,
+            SemanticInterpretation::TypedApplication(application)
+                | SemanticInterpretation::HeldTypedApplication(application)
+                if application.operator == OperatorId::Integral
+        );
+        if typed_integral {
+            if let Some(mut lowered) = crate::lowering::try_lower_application(
+                engine,
+                &operand_node.object,
+                crate::semantic_core::TraceMode::Detailed,
+            )? {
+                let input = lowered
+                    .value()
+                    .expect("successful integral lowering produces a value")
+                    .clone();
+                let mut computation =
+                    crate::derivatives::DerivativeOperation.compute(engine, &input, derivative)?;
+                merge_prior_computation(&mut computation, &mut lowered);
+                return Ok(computation);
             }
-            return Ok(result);
+            return crate::derivatives::DerivativeOperation.compute(
+                engine,
+                &operand_node.object,
+                derivative,
+            );
         }
     }
     let mut operand = execute_elaborated_structure(engine, &expression.children[operand_index])?;
-    if !matches!(operand.output, ComputationOutput::Value(_)) {
+    let derivative_accepts_held = matches!(request, CalculusRequest::Derivative(_))
+        && matches!(
+            operand
+                .subject()
+                .map(|object| &object.semantics.interpretation),
+            Some(SemanticInterpretation::HeldTypedApplication(_))
+        );
+    if !matches!(operand.output, ComputationOutput::Value(_)) && !derivative_accepts_held {
         return retain_pending_application(expression, operand, head, operand_index);
     }
-    let input = operand.value().expect("checked value computation").clone();
+    let input = operand
+        .subject()
+        .expect("checked mathematical computation")
+        .clone();
     if let CalculusRequest::Integral(request) = &mut request {
         request.arbitrary_constant = crate::integrals::available_constant(&input);
     }
