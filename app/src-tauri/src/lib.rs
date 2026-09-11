@@ -1332,45 +1332,18 @@ fn dispatch_expression_with_engine(
                 lowering_steps.extend(right_steps);
                 generated_constants.extend(right_constants);
                 let lowered_equation = format!("({left})==({right})");
-                let equations = [&lowered_equation[..]];
-                let preferred_variables = processing::input::validate_symbol(&left, "等式左侧")
-                    .is_ok()
-                    .then_some([left.as_str()]);
-                let variables = preferred_variables
-                    .as_ref()
-                    .map(|variables| &variables[..])
-                    .unwrap_or(&[]);
-                let solved = processing::equations::solve(&mut *engine, &equations, variables)
-                    .map_err(message)?;
-                let (solved, equation_steps) = if request.steps && solved.variables.len() == 1 {
-                    let stepped = processing::equations::solve_steps_with_verbosity(
-                        &mut *engine,
-                        &lowered_equation,
-                        &solved.variables[0],
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    (stepped.result, stepped.steps)
-                } else {
-                    (solved, vec![])
-                };
-                let steps = if request.steps {
-                    lowering_steps.extend(equation_steps);
-                    lowering_steps
-                } else {
-                    Vec::new()
-                };
+                let evaluated = engine.eval(&lowered_equation).map_err(message)?;
                 let mut output = unified_result(
                     "equation",
                     "方程",
-                    solved
-                        .solutions
-                        .first()
-                        .map(|solution| format!("{solution:?}"))
-                        .unwrap_or_default(),
-                    solved.tex.clone(),
-                    steps,
-                    &solved,
+                    evaluated.expr.to_string(),
+                    processing::input::strip_tex_delimiters(&evaluated.tex),
+                    if request.steps {
+                        lowering_steps
+                    } else {
+                        Vec::new()
+                    },
+                    &serde_json::json!({ "status": "equation" }),
                 )?;
                 if let Value::Object(data) = &mut output.data {
                     data.insert(
@@ -1886,7 +1859,7 @@ mod tests {
     }
 
     #[test]
-    fn unified_equation_lowers_structured_operands_before_solving() {
+    fn unified_equation_lowers_operands_without_implicitly_solving() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         let result = process_expression_with_engine(
             request("y'==(Integrate(x)Taylor(Exp(x),0,2))", true),
@@ -1905,11 +1878,7 @@ mod tests {
             result.expression
         );
         assert!(result.expression.contains("C"), "{}", result.expression);
-        assert!(
-            result.expression.contains("variable: \"y'\""),
-            "{}",
-            result.expression
-        );
+        assert!(result.expression.contains("y'"), "{}", result.expression);
         assert!(result.steps.iter().any(|step| step.rule == "taylor-expand"));
         assert!(result
             .steps
