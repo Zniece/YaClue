@@ -322,6 +322,33 @@ pub fn operator_descriptor(name: &str) -> Option<&'static OperatorDescriptor> {
         .find(|descriptor| descriptor.names.contains(&name))
 }
 
+/// Transitional recognition for product operations whose typed descriptor has
+/// not migrated yet. Keeping it beside descriptors prevents execution layers
+/// from growing independent string lists.
+pub fn is_known_operator(name: &str) -> bool {
+    operator_descriptor(name).is_some()
+        || matches!(
+            name,
+            "Determinant"
+                | "DoubleIntegral"
+                | "EigenValues"
+                | "Extrema"
+                | "FindRoot"
+                | "ImproperIntegral"
+                | "Inverse"
+                | "Lagrange"
+                | "MatrixSolve"
+                | "OdeSolve"
+                | "OdeSolveNumeric"
+                | "Plot"
+                | "PolarIntegral"
+                | "PrincipalValueIntegral"
+                | "Solve"
+                | "SolveMatrix"
+                | "Transpose"
+        )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticInterpretation {
     PlainExpression,

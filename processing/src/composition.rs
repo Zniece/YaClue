@@ -11,9 +11,9 @@ use crate::ode::{self, OdeStatus};
 use crate::protocol::{OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, operator_descriptor, CapabilitySet, ComputationOutput, MathematicalObject,
-    ObjectCapability, ObjectId, OperatorDescriptor, SemanticInterpretation, SemanticOperation,
-    SemanticState,
+    is_known_operator, object_from_source, operator_descriptor, CapabilitySet, ComputationOutput,
+    MathematicalObject, ObjectCapability, ObjectId, OperatorDescriptor, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 pub use crate::semantic_core::{OperatorId as CompositionOperator, ValueArgument};
 use crate::steps::{
@@ -23,29 +23,6 @@ use crate::steps::{
 
 const MAX_COMPOSITION_DEPTH: usize = 16;
 const DEFAULT_PRECISION: u32 = 10;
-
-/// Structured product operations are valid operands even before a lowering
-/// rule exists for a particular outer operation. They must remain held rather
-/// than falling through to raw Yacas evaluation.
-const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
-    "Determinant",
-    "DoubleIntegral",
-    "EigenValues",
-    "Extrema",
-    "FindRoot",
-    "ImproperIntegral",
-    "Inverse",
-    "Lagrange",
-    "MatrixSolve",
-    "OdeSolve",
-    "OdeSolveNumeric",
-    "Plot",
-    "PolarIntegral",
-    "PrincipalValueIntegral",
-    "Solve",
-    "SolveMatrix",
-    "Transpose",
-];
 
 pub use crate::semantic_core::OPERATOR_DESCRIPTORS as OPERATOR_SIGNATURES;
 
@@ -100,9 +77,7 @@ pub fn is_candidate(call: &RootCall) -> bool {
     call.argument_heads
         .get(value_index)
         .and_then(|head| head.as_deref())
-        .is_some_and(|head| {
-            operator_descriptor(head).is_some() || STRUCTURED_OPERATOR_NAMES.contains(&head)
-        })
+        .is_some_and(|head| is_known_operator(head))
 }
 
 /// Execute a supported nested chain. `None` means the expression contains
@@ -123,21 +98,32 @@ pub fn execute_elaborated(
     verbosity: StepVerbosity,
     include_steps: bool,
 ) -> Result<Option<CompositionResult>, EngineError> {
-    if matches!(
+    if (matches!(
         input.root.form,
         crate::elaboration::MathematicalForm::Structural { .. }
-    ) {
+    ) || (matches!(&input.root.form,
+            crate::elaboration::MathematicalForm::Application { head }
+                if matches!(head.as_str(), "Limit" | "D" | "Deriv"))
+        && crate::arithmetic::has_migrated_calculus_descendant(&input.root)))
+        && crate::arithmetic::can_execute_elaborated_tree(&input.root)
+    {
         let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
         let subject = computation
             .subject()
             .expect("structural computation always owns a mathematical object");
         let value = subject.print_source();
-        let status = if matches!(computation.output, ComputationOutput::Held(_)) {
-            CompositionStatus::Unresolved
-        } else {
-            CompositionStatus::Completed
+        let status = match computation.output {
+            ComputationOutput::Held(_) => CompositionStatus::Unresolved,
+            ComputationOutput::NoValue(_) => CompositionStatus::NoValue,
+            ComputationOutput::Value(_) => CompositionStatus::Completed,
+            ComputationOutput::EffectsOnly => {
+                unreachable!("calculus and structures are mathematical")
+            }
         };
-        let tex = if status == CompositionStatus::Unresolved {
+        let tex = if matches!(
+            status,
+            CompositionStatus::Unresolved | CompositionStatus::NoValue
+        ) {
             tex_code(&value)
         } else {
             strip_tex_delimiters(&engine.eval(&value)?.tex)
@@ -152,13 +138,29 @@ pub fn execute_elaborated(
         } else {
             Vec::new()
         };
+        let reason = match status {
+            CompositionStatus::NoValue => Some("内层数学结论不存在，外层运算未执行。".into()),
+            CompositionStatus::Unresolved
+                if matches!(&input.root.form,
+                    crate::elaboration::MathematicalForm::Application { head }
+                        if matches!(head.as_str(), "D" | "Deriv"))
+                    && !subject
+                        .semantics
+                        .capabilities
+                        .contains(ObjectCapability::Differentiate) =>
+            {
+                Some("内层结果属于不可求导的扩展实数，外层求导保持未解析。".into())
+            }
+            CompositionStatus::Unresolved => Some("数学对象保持未解析，等待适用能力。".into()),
+            _ => None,
+        };
         return Ok(Some(CompositionResult {
             status,
             value,
             tex,
             steps,
             operators: Vec::new(),
-            reason: None,
+            reason,
             arbitrary_constants: Vec::new(),
             held: None,
         }));
@@ -212,9 +214,7 @@ fn execute_collected(
     let executable_single = operations.len() == 1
         && is_conventional_value_form(operations[0].signature, operations[0].arguments.len());
     if operations.len() < 2 && !executable_single {
-        if let Some(operand_head) =
-            leaf_head.filter(|head| STRUCTURED_OPERATOR_NAMES.contains(&head.as_str()))
-        {
+        if let Some(operand_head) = leaf_head.filter(|head| is_known_operator(head)) {
             let pending_operators = operations
                 .iter()
                 .rev()
@@ -901,7 +901,7 @@ mod tests {
             "0"
         );
 
-        let held = crate::elaboration::elaborate_input("(Limit(f(x),x,0))+1").unwrap();
+        let held = crate::elaboration::elaborate_input("(Limit(x,0)(f(x)))+1").unwrap();
         assert!(
             matches!(
                 held.root.form,
@@ -913,8 +913,8 @@ mod tests {
         let result = execute_elaborated(&mut engine, &held, StepVerbosity::Standard, false)
             .unwrap()
             .unwrap();
-        assert_eq!(result.status, CompositionStatus::Unresolved);
-        assert!(result.value.contains("Limit"));
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert!(result.value.contains("f(0)"));
     }
 
     #[test]

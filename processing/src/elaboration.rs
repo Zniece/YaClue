@@ -146,7 +146,7 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
     *next_id += 1;
     let immediately_usable = matches!(form, MathematicalForm::Number | MathematicalForm::Symbol)
         || matches!(&form, MathematicalForm::Application { head }
-            if crate::semantic_core::operator_descriptor(head).is_none())
+            if !crate::semantic_core::is_known_operator(head))
         || matches!(
             form,
             MathematicalForm::Relation { .. } | MathematicalForm::Collection

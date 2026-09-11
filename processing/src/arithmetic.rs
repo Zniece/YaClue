@@ -9,16 +9,70 @@ use crate::semantic_core::{
     object_from_source, BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput,
     NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
     ObjectId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
-    SemanticInterpretation, SemanticState, UnarySemanticOperation,
+    SemanticInterpretation, SemanticOperation, SemanticState, UnarySemanticOperation,
 };
 
 /// Recursively execute a structural elaboration tree without reparsing its
 /// children. Registered domain applications remain typed Held operands until
 /// their own executor has lowered them.
+pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedObject) -> bool {
+    match &expression.form {
+        crate::elaboration::MathematicalForm::Structural { .. } => {
+            expression.children.iter().all(can_execute_elaborated_tree)
+        }
+        crate::elaboration::MathematicalForm::Application { head }
+            if matches!(head.as_str(), "Limit" | "D" | "Deriv") =>
+        {
+            let operand_index = match (head.as_str(), expression.children.len()) {
+                ("Limit", 2) => 0,
+                ("Limit", 3) => 2,
+                ("Limit", 4) => 3,
+                ("D" | "Deriv", 2) => 1,
+                ("D" | "Deriv", 3) => 2,
+                _ => return false,
+            };
+            can_execute_elaborated_tree(&expression.children[operand_index])
+        }
+        crate::elaboration::MathematicalForm::Application { head } => {
+            !crate::semantic_core::is_known_operator(head)
+        }
+        crate::elaboration::MathematicalForm::EffectApplication { .. }
+        | crate::elaboration::MathematicalForm::OpaqueEngineValue { .. } => false,
+        crate::elaboration::MathematicalForm::Relation { .. }
+        | crate::elaboration::MathematicalForm::Collection => false,
+        _ => true,
+    }
+}
+
+pub fn has_migrated_calculus_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
+    expression.children.iter().any(|child| {
+        matches!(&child.form,
+            crate::elaboration::MathematicalForm::Application { head }
+                if matches!(head.as_str(), "Limit" | "D" | "Deriv"))
+            || has_migrated_calculus_descendant(child)
+    })
+}
+
 pub fn execute_elaborated_structure(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
+    if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
+        if matches!(head.as_str(), "Limit" | "D" | "Deriv") {
+            return execute_calculus_application(engine, expression, head);
+        }
+    }
+    if matches!(
+        expression.form,
+        crate::elaboration::MathematicalForm::EffectApplication { .. }
+    ) {
+        return Ok(Computation {
+            output: ComputationOutput::EffectsOnly,
+            trace: None,
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        });
+    }
     let crate::elaboration::MathematicalForm::Structural { operator } = &expression.form else {
         return Ok(Computation {
             output: if expression.object.semantics.metadata.resolution
@@ -58,6 +112,14 @@ pub fn execute_elaborated_structure(
             child_traces.extend(trace.events);
         }
     }
+    if child_computations
+        .iter()
+        .any(|child| matches!(child.output, ComputationOutput::EffectsOnly))
+    {
+        return Err(EngineError::InvalidInput(
+            "带副作用的动作不能作为数学结构运算的操作数".into(),
+        ));
+    }
     let request = ArithmeticRequest {
         output_id: expression.object.id,
         operation,
@@ -89,6 +151,155 @@ pub fn execute_elaborated_structure(
         trace.events = child_traces;
     }
     Ok(computation)
+}
+
+fn execute_calculus_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    let (operand_index, request) = match head {
+        "Limit" => {
+            let (operand_index, variable, at, direction) = match expression.children.as_slice() {
+                [_operand, at] => (
+                    0,
+                    "x".to_string(),
+                    at.object.print_source(),
+                    crate::limits::LimitDirection::Both,
+                ),
+                [variable, at, _operand] => (
+                    2,
+                    variable.object.print_source(),
+                    at.object.print_source(),
+                    crate::limits::LimitDirection::Both,
+                ),
+                [variable, at, direction, _operand] => {
+                    let direction = match direction.object.print_source().as_str() {
+                        "Left" => crate::limits::LimitDirection::Left,
+                        "Right" => crate::limits::LimitDirection::Right,
+                        _ => {
+                            return Err(EngineError::InvalidInput(
+                                "极限方向应为 Left 或 Right".into(),
+                            ))
+                        }
+                    };
+                    (
+                        3,
+                        variable.object.print_source(),
+                        at.object.print_source(),
+                        direction,
+                    )
+                }
+                _ => {
+                    return Err(EngineError::InvalidInput(format!(
+                        "Limit 不支持 {} 个参数",
+                        expression.children.len()
+                    )))
+                }
+            };
+            (
+                operand_index,
+                CalculusRequest::Limit(crate::limits::LimitRequest {
+                    variable,
+                    at,
+                    direction,
+                }),
+            )
+        }
+        "D" | "Deriv" => {
+            let (operand_index, variable, order) =
+                match expression.children.as_slice() {
+                    [variable, _operand] => (1, variable.object.print_source(), 1),
+                    [variable, order, _operand] => (
+                        2,
+                        variable.object.print_source(),
+                        order.object.print_source().parse::<u32>().map_err(|_| {
+                            EngineError::InvalidInput("求导阶数必须是正整数".into())
+                        })?,
+                    ),
+                    _ => {
+                        return Err(EngineError::InvalidInput(format!(
+                            "{head} 不支持 {} 个参数",
+                            expression.children.len()
+                        )))
+                    }
+                };
+            (
+                operand_index,
+                CalculusRequest::Derivative(crate::derivatives::DerivativeRequest {
+                    variable,
+                    order,
+                }),
+            )
+        }
+        _ => unreachable!(),
+    };
+    let mut operand = execute_elaborated_structure(engine, &expression.children[operand_index])?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return Ok(operand);
+    }
+    let input = operand.value().expect("checked value computation").clone();
+    let required_capability = match &request {
+        CalculusRequest::Limit(_) => ObjectCapability::EvaluateLimit,
+        CalculusRequest::Derivative(_) => ObjectCapability::Differentiate,
+    };
+    if !input.semantics.capabilities.contains(required_capability) {
+        let mut blocked = input.clone();
+        let mut semantics = blocked.semantics.clone();
+        semantics.kind = ValueKind::Unevaluated;
+        semantics.interpretation = SemanticInterpretation::HeldApplication {
+            operator: head.into(),
+        };
+        semantics.metadata = ResultMetadata::unresolved(
+            semantics.metadata.exactness,
+            OutcomeReason::UnsupportedOperation,
+        );
+        blocked.apply(ObjectDelta {
+            expression: None,
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: None,
+        });
+        let mut computation = Computation {
+            output: ComputationOutput::Held(blocked),
+            trace: None,
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        };
+        merge_prior_computation(&mut computation, &mut operand);
+        return Ok(computation);
+    }
+    let mut computation = match request {
+        CalculusRequest::Limit(request) => {
+            crate::limits::LimitOperation.compute(engine, &input, &request)?
+        }
+        CalculusRequest::Derivative(request) => {
+            crate::derivatives::DerivativeOperation.compute(engine, &input, &request)?
+        }
+    };
+    merge_prior_computation(&mut computation, &mut operand);
+    Ok(computation)
+}
+
+enum CalculusRequest {
+    Limit(crate::limits::LimitRequest),
+    Derivative(crate::derivatives::DerivativeRequest),
+}
+
+fn merge_prior_computation(current: &mut Computation, prior: &mut Computation) {
+    let mut events = prior
+        .trace
+        .take()
+        .map(|trace| trace.events)
+        .unwrap_or_default();
+    if let Some(trace) = current.trace.as_mut() {
+        events.append(&mut trace.events);
+        trace.events = events;
+    } else if !events.is_empty() {
+        current.trace = Some(RuleTrace { events });
+    }
+    current.certificates.append(&mut prior.certificates);
+    current.effects.append(&mut prior.effects);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +334,23 @@ impl BinarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor 
                 "一元负号不能作为二元运算执行".into(),
             ));
         }
+        let symbol = symbol(request.operation);
+        let source = format!(
+            "({}){symbol}({})",
+            left.print_source(),
+            right.print_source()
+        );
+        if left.semantics.metadata.resolution == ResolutionState::NoResult
+            || right.semantics.metadata.resolution == ResolutionState::NoResult
+        {
+            return no_value_structure(
+                request.output_id,
+                &source,
+                left,
+                Some(right),
+                request.operation,
+            );
+        }
         let capability = capability(request.operation);
         if !left.semantics.capabilities.contains(capability)
             || !right.semantics.capabilities.contains(capability)
@@ -131,17 +359,6 @@ impl BinarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor 
                 "数学对象不具备该结构运算能力".into(),
             ));
         }
-        if left.semantics.metadata.resolution == ResolutionState::NoResult
-            || right.semantics.metadata.resolution == ResolutionState::NoResult
-        {
-            return Err(EngineError::InvalidInput("无值结论不能参与结构运算".into()));
-        }
-        let symbol = symbol(request.operation);
-        let source = format!(
-            "({}){symbol}({})",
-            left.print_source(),
-            right.print_source()
-        );
         let held = left.semantics.metadata.resolution == ResolutionState::Unresolved
             || right.semantics.metadata.resolution == ResolutionState::Unresolved;
         let conditionally_sensitive = matches!(
@@ -242,6 +459,15 @@ impl UnarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor {
         if request.operation != ArithmeticOperation::Negate {
             return Err(EngineError::InvalidInput("该算术请求不是一元运算".into()));
         }
+        if input.semantics.metadata.resolution == ResolutionState::NoResult {
+            return no_value_structure(
+                request.output_id,
+                &format!("-({})", input.print_source()),
+                input,
+                None,
+                request.operation,
+            );
+        }
         if !input
             .semantics
             .capabilities
@@ -250,9 +476,6 @@ impl UnarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor {
             return Err(EngineError::InvalidInput(
                 "数学对象不具备一元取负能力".into(),
             ));
-        }
-        if input.semantics.metadata.resolution == ResolutionState::NoResult {
-            return Err(EngineError::InvalidInput("无值结论不能参与结构运算".into()));
         }
         let source = format!("-({})", input.print_source());
         let held = input.semantics.metadata.resolution == ResolutionState::Unresolved;
@@ -405,6 +628,63 @@ fn arithmetic_metadata(
     metadata
 }
 
+fn no_value_structure(
+    output_id: ObjectId,
+    source: &str,
+    left: &crate::semantic_core::MathematicalObject,
+    right: Option<&crate::semantic_core::MathematicalObject>,
+    operation: ArithmeticOperation,
+) -> Result<Computation, EngineError> {
+    let conditions = combined_conditions(left, right)?;
+    let mut metadata = ResultMetadata::no_result(
+        combined_exactness(left, right),
+        OutcomeReason::MathematicalAbsence,
+    );
+    if !conditions.is_empty() {
+        metadata.conditionality = Conditionality::Conditional;
+        metadata.conditions = conditions.clone();
+    }
+    let output = object_from_source(
+        output_id,
+        source,
+        SemanticState {
+            kind: ValueKind::Unevaluated,
+            interpretation: SemanticInterpretation::StructuredUnevaluated {
+                reason: "operand has no mathematical value".into(),
+            },
+            metadata,
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        },
+    )?;
+    let event = RuleEvent {
+        rule: "propagate-no-value".into(),
+        input: left.reference(None),
+        additional_inputs: right
+            .into_iter()
+            .map(|object| object.reference(None))
+            .collect(),
+        output: output.reference(None),
+        bindings: vec![("operator".into(), symbol(operation).into())],
+        conditions: conditions.conditions().to_vec(),
+        payload: RulePayload::Inference,
+        importance: RuleImportance::Key,
+        presentation: Some(RulePresentation {
+            expression: output.print_source(),
+            explanation: "操作数没有数学值，因此结构运算也没有值。".into(),
+            tex_override: None,
+        }),
+    };
+    Ok(Computation {
+        output: ComputationOutput::NoValue(output),
+        trace: Some(RuleTrace {
+            events: vec![event],
+        }),
+        certificates: Vec::new(),
+        effects: Vec::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,5 +814,54 @@ mod tests {
             ),
             NormalizationLevel::Structural
         );
+    }
+
+    #[test]
+    fn recursively_executes_limit_and_derivative_inside_structures() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let elaborated = crate::elaboration::elaborate("(Limit(t,0)(Sin(t)/t+x^2))+3").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Value(_)));
+        assert_eq!(
+            engine
+                .eval_expr(&format!(
+                    "Simplify(({})-(x^2+4))",
+                    result.value().unwrap().print_source()
+                ))
+                .unwrap()
+                .to_string(),
+            "0"
+        );
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| event.rule == "limit-result"));
+
+        let chain = crate::elaboration::elaborate("D(x)((Limit(t,0)(Sin(t)/t+x^2)))").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &chain).unwrap();
+        assert_eq!(result.value().unwrap().print_source(), "2*x");
+        assert!(result.trace.as_ref().unwrap().events.len() >= 2);
+    }
+
+    #[test]
+    fn no_value_propagates_through_outer_structures() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let elaborated = crate::elaboration::elaborate("(Limit(x,0)(1/x))+1").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+        assert!(matches!(result.output, ComputationOutput::NoValue(_)));
+        assert_eq!(
+            result.subject().unwrap().semantics.metadata.resolution,
+            ResolutionState::NoResult
+        );
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| event.rule == "propagate-no-value"));
     }
 }
