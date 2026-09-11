@@ -5,9 +5,9 @@ use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, ObjectDelta, ObjectId,
-    ObjectReference, Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation,
-    RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
+    object_from_source, CapabilitySet, Computation, ComputationOutput, ExpressionView, ObjectDelta,
+    ObjectId, ObjectReference, Requirement, RuleEvent, RuleImportance, RulePayload,
+    RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use crate::steps::{Step, StepVerbosity};
 use serde::Serialize;
@@ -63,6 +63,47 @@ pub fn limit_partial(
             requirements: vec![Requirement::Operand],
         },
     )
+}
+
+/// Complete a previously built curried Limit application using an object
+/// operand. The request is recovered from the partial object's AST, so its
+/// parameter structure is not reconstructed from a display string.
+pub fn apply_limit_partial(
+    engine: &mut dyn Engine,
+    partial: &crate::semantic_core::MathematicalObject,
+    operand: &crate::semantic_core::MathematicalObject,
+) -> Result<Computation, EngineError> {
+    if !matches!(
+        partial.semantics.interpretation,
+        SemanticInterpretation::HeldApplication { ref operator } if operator == "Limit"
+    ) || partial.semantics.requirements != [Requirement::Operand]
+    {
+        return Err(EngineError::InvalidInput(
+            "对象不是等待 operand 的 Limit 部分应用".into(),
+        ));
+    }
+    let request = crate::input::with_parse_env(|env| {
+        let view = partial.view(env);
+        if view.head() != Some("Limit") {
+            return Err(EngineError::Parse("Limit 部分应用 AST 形态异常".into()));
+        }
+        let arguments = view.arguments();
+        if !(2..=3).contains(&arguments.len()) {
+            return Err(EngineError::Parse("Limit 部分应用参数数量异常".into()));
+        }
+        let direction = match arguments.get(2).and_then(ExpressionView::atom) {
+            None => LimitDirection::Both,
+            Some("Left") => LimitDirection::Left,
+            Some("Right") => LimitDirection::Right,
+            Some(_) => return Err(EngineError::Parse("Limit 部分应用方向异常".into())),
+        };
+        Ok(LimitRequest {
+            variable: arguments[0].print_source(),
+            at: arguments[1].print_source(),
+            direction,
+        })
+    })?;
+    LimitOperation.compute(engine, operand, &request)
 }
 
 /// Limit's domain implementation under the common semantic operation
@@ -1173,6 +1214,38 @@ mod tests {
             .semantics
             .capabilities
             .contains(crate::semantic_core::ObjectCapability::EvaluateLimit));
+    }
+
+    #[test]
+    fn partial_limit_recovers_its_request_from_ast_before_execution() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let partial = limit_partial(
+            ObjectId(9),
+            &LimitRequest {
+                variable: "x".into(),
+                at: "0".into(),
+                direction: LimitDirection::Both,
+            },
+        )
+        .unwrap();
+        let operand = object_from_source(
+            ObjectId(10),
+            "Sin(x)/x",
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::unresolved(
+                    Exactness::Unknown,
+                    OutcomeReason::AlgorithmUncovered,
+                ),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let result = apply_limit_partial(&mut engine, &partial, &operand).unwrap();
+        assert!(matches!(&result.output, ComputationOutput::Value(_)));
+        assert_eq!(result.value().unwrap().print_source(), "1");
     }
 
     #[test]
