@@ -69,6 +69,11 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
         crate::elaboration::MathematicalForm::Application { head } if head == "OdeSolve" => {
             expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
         }
+        crate::elaboration::MathematicalForm::Application { head }
+            if is_migrated_matrix_unary(head) =>
+        {
+            expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
+        }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
                 && expression.children.iter().all(can_execute_elaborated_tree)
@@ -89,6 +94,9 @@ pub fn is_migrated_transform(head: &str) -> bool {
 
 pub fn is_migrated_numeric_evaluation(head: &str) -> bool {
     matches!(head, "N" | "Approximate")
+}
+pub fn is_migrated_matrix_unary(head: &str) -> bool {
+    matches!(head, "Transpose" | "Determinant" | "Inverse")
 }
 
 pub fn has_migrated_taylor_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
@@ -192,6 +200,9 @@ pub fn execute_elaborated_structure(
         }
         if head == "OdeSolve" {
             return execute_ode_solve_application(engine, expression);
+        }
+        if is_migrated_matrix_unary(head) {
+            return execute_matrix_unary_application(engine, expression, head);
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
@@ -453,6 +464,34 @@ fn execute_ode_solve_application(
     Ok(current)
 }
 
+fn execute_matrix_unary_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    let [operand_node] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(format!("{head} 需要一个矩阵")));
+    };
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, head, 0);
+    }
+    let input = operand.value().expect("checked matrix operand").clone();
+    let operation = match head {
+        "Transpose" => crate::linear_algebra::MatrixOperation::Transpose,
+        "Determinant" => crate::linear_algebra::MatrixOperation::Determinant,
+        "Inverse" => crate::linear_algebra::MatrixOperation::Inverse,
+        _ => unreachable!(),
+    };
+    let mut current = crate::linear_algebra::UnaryMatrixOperation.compute(
+        engine,
+        &input,
+        &crate::linear_algebra::UnaryMatrixRequest { operation },
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
+}
+
 fn execute_substitution_application(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
@@ -575,7 +614,16 @@ fn execute_container(
             format!("construct-relation-{operator}"),
         ),
         crate::elaboration::MathematicalForm::Collection => {
-            (SemanticInterpretation::List, "construct-collection".into())
+            match &expression.object.semantics.interpretation {
+                SemanticInterpretation::Matrix { rows, columns } => (
+                    SemanticInterpretation::Matrix {
+                        rows: *rows,
+                        columns: *columns,
+                    },
+                    "construct-matrix".into(),
+                ),
+                _ => (SemanticInterpretation::List, "construct-collection".into()),
+            }
         }
         _ => unreachable!(),
     };

@@ -2,6 +2,14 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{fresh_internal_symbols, strip_tex_delimiters, validate_expression};
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
+};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
@@ -73,6 +81,123 @@ pub struct MatrixResult {
     pub tex: String,
     /// The engine kept the requested operation unevaluated.
     pub unresolved: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnaryMatrixRequest {
+    pub operation: MatrixOperation,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UnaryMatrixOperation;
+
+impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &UnaryMatrixRequest,
+    ) -> Result<Computation, EngineError> {
+        let capability = match request.operation {
+            MatrixOperation::Transpose => ObjectCapability::MatrixTranspose,
+            MatrixOperation::Determinant => ObjectCapability::MatrixDeterminant,
+            MatrixOperation::Inverse => ObjectCapability::MatrixInverse,
+            _ => return Err(EngineError::InvalidInput("该操作不是一元矩阵运算".into())),
+        };
+        if !input.semantics.capabilities.contains(capability) {
+            return Err(EngineError::InvalidInput(
+                "输入不是具备所需能力的矩阵对象".into(),
+            ));
+        }
+        let result = compute(engine, &input.print_source(), request.operation, None)?;
+        let held = result.unresolved;
+        let output_source = if held {
+            format!(
+                "{}({})",
+                match request.operation {
+                    MatrixOperation::Transpose => "Transpose",
+                    MatrixOperation::Determinant => "Determinant",
+                    MatrixOperation::Inverse => "Inverse",
+                    _ => unreachable!(),
+                },
+                input.print_source()
+            )
+        } else {
+            result.output.clone()
+        };
+        let analyzed = crate::semantic::analyze_input(&output_source, "矩阵运算结果")?;
+        let semantics = SemanticState {
+            kind: if held {
+                ValueKind::Unevaluated
+            } else {
+                analyzed.semantic.kind
+            },
+            interpretation: if held {
+                SemanticInterpretation::HeldApplication {
+                    operator: request.operation.name().into(),
+                }
+            } else if let Some(shape) = analyzed.semantic.shape {
+                SemanticInterpretation::Matrix {
+                    rows: shape.rows,
+                    columns: shape.columns,
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata: if held {
+                ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+            } else {
+                ResultMetadata::solved(analyzed.semantic.exactness, ConditionSet::empty())
+            },
+            capabilities: if held {
+                CapabilitySet::matrix()
+            } else if analyzed.semantic.kind == ValueKind::Matrix {
+                CapabilitySet::matrix()
+            } else {
+                CapabilitySet::symbolic_expression()
+            },
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!held).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixTransform),
+            }),
+        });
+        let event = RuleEvent {
+            rule: format!("matrix-{}", request.operation.name()),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: (!held).then(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "执行类型检查后的矩阵运算。".into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: if held {
+                ComputationOutput::Held(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -716,6 +841,65 @@ mod tests {
             assert!(!result.tex.is_empty());
             assert!(!result.unresolved);
         }
+    }
+
+    #[test]
+    fn unary_matrix_objects_preserve_shape_identity_and_scalar_outputs() {
+        let object = |source: &str, rows, columns| {
+            object_from_source(
+                crate::semantic_core::ObjectId(101),
+                source,
+                SemanticState {
+                    kind: ValueKind::Matrix,
+                    interpretation: SemanticInterpretation::Matrix { rows, columns },
+                    metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                    capabilities: CapabilitySet::matrix(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let matrix = object("{{1,2,3},{4,5,6}}", 2, 3);
+        let transposed = UnaryMatrixOperation
+            .compute(
+                &mut engine,
+                &matrix,
+                &UnaryMatrixRequest {
+                    operation: MatrixOperation::Transpose,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            transposed.value().unwrap().id,
+            crate::semantic_core::ObjectId(101)
+        );
+        assert!(matches!(
+            transposed.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::Matrix {
+                rows: 3,
+                columns: 2
+            }
+        ));
+        assert!(transposed
+            .value()
+            .unwrap()
+            .meets_normalization(NormalizationLevel::Domain));
+
+        let determinant = UnaryMatrixOperation
+            .compute(
+                &mut engine,
+                &object("{{1,2},{3,4}}", 2, 2),
+                &UnaryMatrixRequest {
+                    operation: MatrixOperation::Determinant,
+                },
+            )
+            .unwrap();
+        assert_eq!(determinant.value().unwrap().print_source(), "-2");
+        assert_eq!(
+            determinant.value().unwrap().semantics.kind,
+            ValueKind::Scalar
+        );
     }
 
     #[test]

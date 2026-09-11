@@ -153,13 +153,26 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
                 .map(|child| elaborate_node(child, next_id))
                 .collect();
             if head == "List" {
-                (
-                    MathematicalForm::Collection,
-                    children,
-                    ValueKind::Expression,
-                    SemanticInterpretation::List,
-                    CapabilitySet::equation_input(),
-                )
+                if let Some(shape) = crate::semantic::matrix_shape(node) {
+                    (
+                        MathematicalForm::Collection,
+                        children,
+                        ValueKind::Matrix,
+                        SemanticInterpretation::Matrix {
+                            rows: shape.rows,
+                            columns: shape.columns,
+                        },
+                        CapabilitySet::matrix(),
+                    )
+                } else {
+                    (
+                        MathematicalForm::Collection,
+                        children,
+                        ValueKind::Expression,
+                        SemanticInterpretation::List,
+                        CapabilitySet::equation_input(),
+                    )
+                }
             } else if matches!(head.as_str(), "+" | "-" | "*" | "/" | "^") {
                 (
                     MathematicalForm::Structural {

@@ -166,6 +166,7 @@ pub enum OperatorId {
     Limit,
     Taylor,
     Solve,
+    MatrixTransform,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +181,7 @@ pub enum CapabilityId {
     EvaluateLimit,
     ExpandTaylor,
     SolveEquation,
+    TransformMatrix,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,6 +339,15 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         capability: CapabilityId::SolveEquation,
     },
     OperatorDescriptor {
+        id: OperatorId::MatrixTransform,
+        names: &["Transpose", "Determinant", "Inverse"],
+        arities: &[1],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::TransformMatrix,
+    },
+    OperatorDescriptor {
         id: OperatorId::OdeSolve,
         names: &["OdeSolve"],
         arities: &[1],
@@ -369,13 +380,11 @@ pub fn is_known_operator(name: &str) -> bool {
     operator_descriptor(name).is_some()
         || matches!(
             name,
-            "Determinant"
-                | "DoubleIntegral"
+            "DoubleIntegral"
                 | "EigenValues"
                 | "Extrema"
                 | "FindRoot"
                 | "ImproperIntegral"
-                | "Inverse"
                 | "Lagrange"
                 | "MatrixSolve"
                 | "OdeSolve"
@@ -384,7 +393,6 @@ pub fn is_known_operator(name: &str) -> bool {
                 | "PolarIntegral"
                 | "PrincipalValueIntegral"
                 | "SolveMatrix"
-                | "Transpose"
         )
 }
 
@@ -553,6 +561,12 @@ pub enum ObjectCapability {
     ExpandTaylor,
     SolveEquation,
     SolveOde,
+    MatrixAdd,
+    MatrixMultiply,
+    MatrixTranspose,
+    MatrixDeterminant,
+    MatrixInverse,
+    MatrixSolve,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -585,6 +599,16 @@ impl CapabilitySet {
     }
     pub const fn equation_input() -> Self {
         Self((1 << ObjectCapability::SolveEquation as u8) | (1 << ObjectCapability::SolveOde as u8))
+    }
+    pub const fn matrix() -> Self {
+        Self(
+            (1 << ObjectCapability::MatrixAdd as u8)
+                | (1 << ObjectCapability::MatrixMultiply as u8)
+                | (1 << ObjectCapability::MatrixTranspose as u8)
+                | (1 << ObjectCapability::MatrixDeterminant as u8)
+                | (1 << ObjectCapability::MatrixInverse as u8)
+                | (1 << ObjectCapability::MatrixSolve as u8),
+        )
     }
     pub const fn contains(self, capability: ObjectCapability) -> bool {
         self.0 & (1 << capability as u8) != 0

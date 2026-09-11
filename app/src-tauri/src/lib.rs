@@ -459,6 +459,9 @@ fn dispatch_expression_with_engine(
             processing::elaboration::MathematicalForm::Application { head } if head == "Taylor")
         || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head } if head == "Solve")
+        || matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head }
+                if processing::arithmetic::is_migrated_matrix_unary(head))
         || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
@@ -472,6 +475,9 @@ fn dispatch_expression_with_engine(
     {
         let object_native_solve = matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head } if head == "Solve");
+        let object_native_matrix = matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head }
+                if processing::arithmetic::is_migrated_matrix_unary(head));
         if let Some(mut result) = processing::composition::execute_elaborated(
             &mut *engine,
             elaborated,
@@ -486,11 +492,15 @@ fn dispatch_expression_with_engine(
             return unified_result(
                 if object_native_solve {
                     "equation"
+                } else if object_native_matrix {
+                    "matrix"
                 } else {
                     "composition"
                 },
                 if object_native_solve {
                     "方程"
+                } else if object_native_matrix {
+                    "线性代数"
                 } else {
                     "组合运算"
                 },

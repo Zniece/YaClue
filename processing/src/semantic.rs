@@ -234,7 +234,7 @@ fn classify(
     }
 }
 
-fn matrix_shape(node: &std::rc::Rc<LispObject>) -> Option<MatrixShape> {
+pub(crate) fn matrix_shape(node: &std::rc::Rc<LispObject>) -> Option<MatrixShape> {
     let ObjectKind::Sublist(first) = &node.kind else {
         return None;
     };
