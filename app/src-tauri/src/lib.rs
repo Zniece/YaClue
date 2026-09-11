@@ -1566,7 +1566,7 @@ mod tests {
         for steps in [true, false] {
             let result =
                 process_expression_with_engine(request("Limit(x,0)", steps), &mut engine).unwrap();
-            assert_eq!(result.kind, "composition");
+            assert_eq!(result.kind, "limit");
             assert_eq!(result.expression, "0");
             assert_eq!(result.steps.is_empty(), !steps);
             assert_eq!(result.semantic.bound_symbols, ["x"]);

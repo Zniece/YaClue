@@ -561,7 +561,7 @@ fn limit_rule_events(
         .and_then(|event| event.presentation.as_mut())
     {
         presentation.tex_override = Some(format!(
-            "\\\\lim_{{{} \\to {}{}}} {}",
+            "\\lim_{{{} \\to {}{}}} {}",
             result.variable, rendered[1], direction_suffix, rendered[0]
         ));
     }
