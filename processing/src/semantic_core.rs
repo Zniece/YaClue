@@ -353,7 +353,11 @@ pub enum SemanticInterpretation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectCapability {
     Add,
+    Subtract,
     Multiply,
+    Divide,
+    Power,
+    Negate,
     Differentiate,
     Integrate,
     Substitute,
@@ -373,7 +377,11 @@ impl CapabilitySet {
     pub const fn symbolic_expression() -> Self {
         Self(
             (1 << ObjectCapability::Add as u8)
+                | (1 << ObjectCapability::Subtract as u8)
                 | (1 << ObjectCapability::Multiply as u8)
+                | (1 << ObjectCapability::Divide as u8)
+                | (1 << ObjectCapability::Power as u8)
+                | (1 << ObjectCapability::Negate as u8)
                 | (1 << ObjectCapability::Differentiate as u8)
                 | (1 << ObjectCapability::Integrate as u8)
                 | (1 << ObjectCapability::Substitute as u8)
@@ -482,6 +490,12 @@ impl MathematicalObject {
             revision: self.revision,
             focus,
         }
+    }
+
+    pub fn meets_normalization(&self, minimum: NormalizationLevel) -> bool {
+        self.normalization
+            .as_ref()
+            .is_some_and(|state| state.revision == self.revision && state.metadata.level >= minimum)
     }
 
     /// Apply syntax and semantic changes together.  Callers construct the
@@ -687,6 +701,10 @@ impl Computation {
 /// identity, revision and semantic state the data-plane boundary; text APIs
 /// are allowed only as adapters around this contract.
 pub trait SemanticOperation<Request> {
+    fn minimum_input_normalization(&self) -> NormalizationLevel {
+        NormalizationLevel::Structural
+    }
+
     fn compute(
         &self,
         engine: &mut dyn crate::engine::Engine,
@@ -699,11 +717,28 @@ pub trait SemanticOperation<Request> {
 /// It is introduced only now because those operators provide concrete
 /// evidence that unary `SemanticOperation` cannot represent provenance.
 pub trait BinarySemanticOperation<Request> {
+    fn minimum_input_normalization(&self) -> NormalizationLevel {
+        NormalizationLevel::Structural
+    }
+
     fn compute(
         &self,
         engine: &mut dyn crate::engine::Engine,
         left: &MathematicalObject,
         right: &MathematicalObject,
+        request: &Request,
+    ) -> Result<Computation, crate::engine::EngineError>;
+}
+
+pub trait UnarySemanticOperation<Request> {
+    fn minimum_input_normalization(&self) -> NormalizationLevel {
+        NormalizationLevel::Structural
+    }
+
+    fn compute(
+        &self,
+        engine: &mut dyn crate::engine::Engine,
+        input: &MathematicalObject,
         request: &Request,
     ) -> Result<Computation, crate::engine::EngineError>;
 }

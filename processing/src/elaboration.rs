@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use crate::engine::EngineError;
-use crate::protocol::{OutcomeReason, ResultMetadata};
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     CapabilitySet, MathematicalObject, ObjectId, SemanticInterpretation, SemanticState,
@@ -144,6 +144,13 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
     };
     let id = ObjectId(*next_id);
     *next_id += 1;
+    let immediately_usable = matches!(form, MathematicalForm::Number | MathematicalForm::Symbol)
+        || matches!(&form, MathematicalForm::Application { head }
+            if crate::semantic_core::operator_descriptor(head).is_none())
+        || matches!(
+            form,
+            MathematicalForm::Relation { .. } | MathematicalForm::Collection
+        );
     ElaboratedObject {
         object: MathematicalObject::new(
             id,
@@ -151,10 +158,14 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
             SemanticState {
                 kind,
                 interpretation,
-                metadata: ResultMetadata::unresolved(
-                    Exactness::Unknown,
-                    OutcomeReason::AlgorithmUncovered,
-                ),
+                metadata: if immediately_usable {
+                    ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+                } else {
+                    ResultMetadata::unresolved(
+                        Exactness::Unknown,
+                        OutcomeReason::AlgorithmUncovered,
+                    )
+                },
                 capabilities,
                 requirements: Vec::new(),
             },

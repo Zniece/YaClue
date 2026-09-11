@@ -414,7 +414,10 @@ fn dispatch_expression_with_engine(
             &result,
         );
     }
-    if call
+    if matches!(
+        elaborated.root.form,
+        processing::elaboration::MathematicalForm::Structural { .. }
+    ) || call
         .as_ref()
         .is_some_and(processing::composition::is_candidate)
     {

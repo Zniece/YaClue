@@ -123,6 +123,46 @@ pub fn execute_elaborated(
     verbosity: StepVerbosity,
     include_steps: bool,
 ) -> Result<Option<CompositionResult>, EngineError> {
+    if matches!(
+        input.root.form,
+        crate::elaboration::MathematicalForm::Structural { .. }
+    ) {
+        let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
+        let subject = computation
+            .subject()
+            .expect("structural computation always owns a mathematical object");
+        let value = subject.print_source();
+        let status = if matches!(computation.output, ComputationOutput::Held(_)) {
+            CompositionStatus::Unresolved
+        } else {
+            CompositionStatus::Completed
+        };
+        let tex = if status == CompositionStatus::Unresolved {
+            tex_code(&value)
+        } else {
+            strip_tex_delimiters(&engine.eval(&value)?.tex)
+        };
+        let steps = if include_steps {
+            computation
+                .trace
+                .as_ref()
+                .map(|trace| crate::steps::render_rule_trace(engine, trace, verbosity))
+                .transpose()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        return Ok(Some(CompositionResult {
+            status,
+            value,
+            tex,
+            steps,
+            operators: Vec::new(),
+            reason: None,
+            arbitrary_constants: Vec::new(),
+            held: None,
+        }));
+    }
     let mut operations = Vec::new();
     let collected = collect_operations_elaborated(&input.root, &mut operations, 0)?;
     let mut occupied_symbols = input.analyzed.semantic.symbols.clone();
@@ -841,6 +881,40 @@ mod tests {
         assert!(OPERATOR_SIGNATURES
             .iter()
             .any(|item| item.names.contains(&"N")));
+    }
+
+    #[test]
+    fn executes_root_structures_through_the_typed_object_pipeline() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let input = crate::elaboration::elaborate_input("-(x-1)+2^3").unwrap();
+        let result = execute_elaborated(&mut engine, &input, StepVerbosity::Standard, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert!(result.steps.is_empty());
+        assert_eq!(
+            engine
+                .eval(&format!("Simplify(({})-(9-x))", result.value))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0"
+        );
+
+        let held = crate::elaboration::elaborate_input("(Limit(f(x),x,0))+1").unwrap();
+        assert!(
+            matches!(
+                held.root.form,
+                crate::elaboration::MathematicalForm::Structural { .. }
+            ),
+            "{:?}",
+            held.root.form
+        );
+        let result = execute_elaborated(&mut engine, &held, StepVerbosity::Standard, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert!(result.value.contains("Limit"));
     }
 
     #[test]
