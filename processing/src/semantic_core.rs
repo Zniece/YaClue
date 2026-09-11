@@ -169,6 +169,7 @@ pub enum OperatorId {
     MatrixTransform,
     MatrixSolve,
     MatrixAnalyze,
+    MatrixDecompose,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,6 +378,21 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         capability: CapabilityId::AnalyzeMatrix,
     },
     OperatorDescriptor {
+        id: OperatorId::MatrixDecompose,
+        names: &[
+            "PLDU",
+            "Cholesky",
+            "GramSchmidt",
+            "OrthogonalBasis",
+            "OrthonormalBasis",
+        ],
+        arities: &[1],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::AnalyzeMatrix,
+    },
+    OperatorDescriptor {
         id: OperatorId::OdeSolve,
         names: &["OdeSolve"],
         arities: &[1],
@@ -449,6 +465,19 @@ pub enum SemanticInterpretation {
         ambient_dimension: usize,
         space_count: usize,
     },
+    MatrixFactorization {
+        dimension: usize,
+        kind: MatrixFactorizationKind,
+        factor_count: usize,
+        verified: bool,
+    },
+    OrderedBasis {
+        ambient_dimension: usize,
+        vector_count: usize,
+        orthogonal: bool,
+        normalized: bool,
+        verified: bool,
+    },
     SolutionSet {
         variables: Vec<String>,
         parameters: Vec<String>,
@@ -472,6 +501,12 @@ pub enum SemanticInterpretation {
 pub enum LinearSubspaceKind {
     NullSpace,
     ColumnSpace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixFactorizationKind {
+    Pldu,
+    Cholesky,
 }
 
 pub fn operand_partial_state(

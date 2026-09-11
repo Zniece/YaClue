@@ -952,6 +952,9 @@ fn apply(
         CompositionOperator::MatrixAnalyze => Err(EngineError::InvalidInput(
             "矩阵结构分析必须通过类型化矩阵对象执行".into(),
         )),
+        CompositionOperator::MatrixDecompose => Err(EngineError::InvalidInput(
+            "矩阵分解必须通过类型化矩阵对象执行".into(),
+        )),
     }
 }
 

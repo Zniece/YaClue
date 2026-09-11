@@ -655,6 +655,151 @@ fn held_matrix_analysis(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixDecompositionKind {
+    Pldu,
+    Cholesky,
+    GramSchmidt { normalized: bool },
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MatrixDecompositionOperation;
+
+impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        kind: &MatrixDecompositionKind,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::MatrixAnalyze)
+        {
+            return Err(EngineError::InvalidInput(
+                "输入不具备矩阵分解或基变换能力".into(),
+            ));
+        }
+        let (source, tex, interpretation, rule) = match kind {
+            MatrixDecompositionKind::Pldu => {
+                let result = pldu(engine, &input.print_source())?;
+                if !result.verified {
+                    return Err(EngineError::Parse("PLDU 分解未通过恒等式验证".into()));
+                }
+                (
+                    format!(
+                        "PLDUDecomposition({},{},{},{})",
+                        matrix_expression(&result.permutation),
+                        matrix_expression(&result.lower),
+                        matrix_expression(&result.diagonal),
+                        matrix_expression(&result.upper)
+                    ),
+                    result.tex,
+                    SemanticInterpretation::MatrixFactorization {
+                        dimension: result.dimension,
+                        kind: crate::semantic_core::MatrixFactorizationKind::Pldu,
+                        factor_count: 4,
+                        verified: true,
+                    },
+                    "matrix-pldu-decomposition",
+                )
+            }
+            MatrixDecompositionKind::Cholesky => {
+                let result = cholesky(engine, &input.print_source())?;
+                if !result.verified {
+                    return Err(EngineError::Parse("Cholesky 分解未通过恒等式验证".into()));
+                }
+                (
+                    format!(
+                        "CholeskyDecomposition({})",
+                        matrix_expression(&result.upper)
+                    ),
+                    result.tex,
+                    SemanticInterpretation::MatrixFactorization {
+                        dimension: result.dimension,
+                        kind: crate::semantic_core::MatrixFactorizationKind::Cholesky,
+                        factor_count: 1,
+                        verified: true,
+                    },
+                    "matrix-cholesky-decomposition",
+                )
+            }
+            MatrixDecompositionKind::GramSchmidt { normalized } => {
+                let result = gram_schmidt(engine, &input.print_source(), *normalized)?;
+                if !result.verified {
+                    return Err(EngineError::Parse(
+                        "Gram-Schmidt 结果未通过正交性验证".into(),
+                    ));
+                }
+                let head = if result.normalized {
+                    "OrthonormalBasisObject"
+                } else {
+                    "OrthogonalBasisObject"
+                };
+                (
+                    format!("{head}({})", matrix_expression(&result.basis)),
+                    result.tex,
+                    SemanticInterpretation::OrderedBasis {
+                        ambient_dimension: result.vector_dimension,
+                        vector_count: result.vector_count,
+                        orthogonal: true,
+                        normalized: result.normalized,
+                        verified: true,
+                    },
+                    if result.normalized {
+                        "matrix-orthonormal-basis"
+                    } else {
+                        "matrix-orthogonal-basis"
+                    },
+                )
+            }
+        };
+        let semantics = SemanticState {
+            kind: ValueKind::Expression,
+            interpretation,
+            metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixDecompose),
+            }),
+        });
+        let event = RuleEvent {
+            rule: rule.into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: Some(RulePresentation {
+                expression: output.print_source(),
+                explanation: "构造经过验证、可组合的类型化线性代数对象。".into(),
+                tex_override: Some(tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LinearStructureResult {
     pub rows: usize,
@@ -1540,6 +1685,77 @@ mod tests {
         ));
         assert_eq!(
             eigenspaces.value().unwrap().semantics.capabilities,
+            CapabilitySet::empty()
+        );
+    }
+
+    #[test]
+    fn decomposition_outputs_are_verified_typed_objects() {
+        let matrix = |id, source: &str, rows, columns| {
+            object_from_source(
+                crate::semantic_core::ObjectId(id),
+                source,
+                SemanticState {
+                    kind: ValueKind::Matrix,
+                    interpretation: SemanticInterpretation::Matrix { rows, columns },
+                    metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                    capabilities: CapabilitySet::matrix(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let square = matrix(30, "{{4,2},{2,2}}", 2, 2);
+        let pldu = MatrixDecompositionOperation
+            .compute(&mut engine, &square, &MatrixDecompositionKind::Pldu)
+            .unwrap();
+        assert_eq!(pldu.value().unwrap().id, square.id);
+        assert!(pldu
+            .value()
+            .unwrap()
+            .print_source()
+            .starts_with("PLDUDecomposition("));
+        assert!(matches!(
+            pldu.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::MatrixFactorization {
+                dimension: 2,
+                kind: crate::semantic_core::MatrixFactorizationKind::Pldu,
+                factor_count: 4,
+                verified: true,
+            }
+        ));
+        let cholesky = MatrixDecompositionOperation
+            .compute(&mut engine, &square, &MatrixDecompositionKind::Cholesky)
+            .unwrap();
+        assert!(matches!(
+            cholesky.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::MatrixFactorization {
+                kind: crate::semantic_core::MatrixFactorizationKind::Cholesky,
+                verified: true,
+                ..
+            }
+        ));
+        let vectors = matrix(31, "{{1,1},{1,-1}}", 2, 2);
+        let basis = MatrixDecompositionOperation
+            .compute(
+                &mut engine,
+                &vectors,
+                &MatrixDecompositionKind::GramSchmidt { normalized: true },
+            )
+            .unwrap();
+        assert!(matches!(
+            basis.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::OrderedBasis {
+                ambient_dimension: 2,
+                vector_count: 2,
+                orthogonal: true,
+                normalized: true,
+                verified: true,
+            }
+        ));
+        assert_eq!(
+            basis.value().unwrap().semantics.capabilities,
             CapabilitySet::empty()
         );
     }

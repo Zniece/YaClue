@@ -114,6 +114,11 @@ pub fn is_migrated_matrix_unary(head: &str) -> bool {
             | "NullSpace"
             | "ColumnSpace"
             | "EigenSpaces"
+            | "PLDU"
+            | "Cholesky"
+            | "GramSchmidt"
+            | "OrthogonalBasis"
+            | "OrthonormalBasis"
     )
 }
 
@@ -554,6 +559,26 @@ fn execute_matrix_unary_application(
         return retain_pending_application(expression, operand, head, 0);
     }
     let input = operand.value().expect("checked matrix operand").clone();
+    if matches!(
+        head,
+        "PLDU" | "Cholesky" | "GramSchmidt" | "OrthogonalBasis" | "OrthonormalBasis"
+    ) {
+        let kind = match head {
+            "PLDU" => crate::linear_algebra::MatrixDecompositionKind::Pldu,
+            "Cholesky" => crate::linear_algebra::MatrixDecompositionKind::Cholesky,
+            "GramSchmidt" | "OrthonormalBasis" => {
+                crate::linear_algebra::MatrixDecompositionKind::GramSchmidt { normalized: true }
+            }
+            "OrthogonalBasis" => {
+                crate::linear_algebra::MatrixDecompositionKind::GramSchmidt { normalized: false }
+            }
+            _ => unreachable!(),
+        };
+        let mut current =
+            crate::linear_algebra::MatrixDecompositionOperation.compute(engine, &input, &kind)?;
+        merge_prior_computation(&mut current, &mut operand);
+        return Ok(current);
+    }
     let operation = match head {
         "Transpose" => crate::linear_algebra::MatrixOperation::Transpose,
         "Determinant" => crate::linear_algebra::MatrixOperation::Determinant,

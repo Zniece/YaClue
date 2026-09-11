@@ -2261,4 +2261,40 @@ mod tests {
             [processing::protocol::Condition::RealPartPositive { expression }] if expression == "a"
         ));
     }
+
+    #[test]
+    fn unified_input_routes_typed_matrix_decompositions() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for (expression, output_head, rule) in [
+            (
+                "PLDU({{4,2},{2,2}})",
+                "PLDUDecomposition(",
+                "matrix-pldu-decomposition",
+            ),
+            (
+                "Cholesky({{4,2},{2,2}})",
+                "CholeskyDecomposition(",
+                "matrix-cholesky-decomposition",
+            ),
+            (
+                "GramSchmidt({{1,0},{1,1}})",
+                "OrthonormalBasisObject(",
+                "matrix-orthonormal-basis",
+            ),
+        ] {
+            let result =
+                process_expression_with_engine(request(expression, true), &mut engine).unwrap();
+            assert_eq!(result.kind, "matrix", "{expression}");
+            assert!(result.expression.starts_with(output_head), "{expression}");
+            assert!(
+                result.steps.iter().any(|step| step.rule == rule),
+                "{expression}"
+            );
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Solved,
+                "{expression}"
+            );
+        }
+    }
 }
