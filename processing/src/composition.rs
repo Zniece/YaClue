@@ -114,13 +114,14 @@ pub fn execute_steps(
     verbosity: StepVerbosity,
 ) -> Result<Option<CompositionResult>, EngineError> {
     let elaborated = crate::elaboration::elaborate_input(expression)?;
-    execute_elaborated(engine, &elaborated, verbosity)
+    execute_elaborated(engine, &elaborated, verbosity, true)
 }
 
 pub fn execute_elaborated(
     engine: &mut dyn Engine,
     input: &crate::elaboration::ElaboratedInput,
     verbosity: StepVerbosity,
+    include_steps: bool,
 ) -> Result<Option<CompositionResult>, EngineError> {
     let mut operations = Vec::new();
     let collected = collect_operations_elaborated(&input.root, &mut operations, 0)?;
@@ -136,6 +137,7 @@ pub fn execute_elaborated(
         input.root.object.print_source(),
         occupied_symbols,
         verbosity,
+        include_steps,
     )
 }
 
@@ -146,6 +148,7 @@ fn execute_collected(
     expression: String,
     mut occupied_symbols: Vec<String>,
     verbosity: StepVerbosity,
+    include_steps: bool,
 ) -> Result<Option<CompositionResult>, EngineError> {
     let (leaf, leaf_head) = collected;
     let leaf = match leaf {
@@ -208,7 +211,9 @@ fn execute_collected(
     // the legacy string protocol below: a solved Limit object is handed to
     // DerivativeOperation as an object with its identity/revision/capability,
     // never printed and reparsed by composition.
-    if let Some(result) = execute_limit_then_derivative(engine, &operations, &leaf, verbosity)? {
+    if let Some(result) =
+        execute_limit_then_derivative(engine, &operations, &leaf, verbosity, include_steps)?
+    {
         return Ok(Some(result));
     }
 
@@ -274,6 +279,7 @@ fn execute_limit_then_derivative(
     operations: &[Operation],
     leaf: &str,
     verbosity: StepVerbosity,
+    include_steps: bool,
 ) -> Result<Option<CompositionResult>, EngineError> {
     if operations.len() != 2
         || operations[0].signature.id != CompositionOperator::Derivative
@@ -288,10 +294,12 @@ fn execute_limit_then_derivative(
     let limit_object = match &limited.output {
         ComputationOutput::Value(object) | ComputationOutput::Held(object) => object,
         ComputationOutput::NoValue(_object) => {
-            let steps = crate::steps::render_rule_trace(
+            let (steps, tex) = project_composition_trace(
                 engine,
                 limited.trace.as_ref().expect("Limit records a trace"),
+                "Undefined",
                 verbosity,
+                include_steps,
             )?;
             return Ok(Some(CompositionResult {
                 status: CompositionStatus::NoValue,
@@ -299,10 +307,7 @@ fn execute_limit_then_derivative(
                 // an operand for a later operation.  The trace still gives
                 // the product its explanatory conclusion.
                 value: "Undefined".into(),
-                tex: steps
-                    .last()
-                    .map(|step| step.tex.clone())
-                    .unwrap_or_default(),
+                tex,
                 steps,
                 operators: vec![CompositionOperator::Limit, CompositionOperator::Derivative],
                 reason: Some("内层极限不存在，不能作为求导操作数".into()),
@@ -317,18 +322,18 @@ fn execute_limit_then_derivative(
         .capabilities
         .contains(ObjectCapability::Differentiate)
     {
-        let steps = crate::steps::render_rule_trace(
+        let value = limit_object.print_source();
+        let (steps, tex) = project_composition_trace(
             engine,
             limited.trace.as_ref().expect("Limit records a trace"),
+            &value,
             verbosity,
+            include_steps,
         )?;
         return Ok(Some(CompositionResult {
             status: CompositionStatus::Unresolved,
-            value: limit_object.print_source(),
-            tex: steps
-                .last()
-                .map(|step| step.tex.clone())
-                .unwrap_or_default(),
+            value,
+            tex,
             steps,
             operators: vec![CompositionOperator::Limit, CompositionOperator::Derivative],
             reason: Some("内层极限产生扩展实数，不能作为求导操作数".into()),
@@ -351,11 +356,7 @@ fn execute_limit_then_derivative(
             .events,
     );
     let trace = crate::semantic_core::RuleTrace { events };
-    let steps = crate::steps::render_rule_trace(engine, &trace, verbosity)?;
-    let tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
+    let (steps, tex) = project_composition_trace(engine, &trace, &value, verbosity, include_steps)?;
     Ok(Some(CompositionResult {
         status: if completed {
             CompositionStatus::Completed
@@ -370,6 +371,31 @@ fn execute_limit_then_derivative(
         arbitrary_constants: Vec::new(),
         held: None,
     }))
+}
+
+fn project_composition_trace(
+    engine: &mut dyn Engine,
+    trace: &crate::semantic_core::RuleTrace,
+    value: &str,
+    verbosity: StepVerbosity,
+    include_steps: bool,
+) -> Result<(Vec<Step>, String), EngineError> {
+    if include_steps {
+        let steps = crate::steps::render_rule_trace(engine, trace, verbosity)?;
+        let tex = steps
+            .last()
+            .map(|step| step.tex.clone())
+            .unwrap_or_default();
+        Ok((steps, tex))
+    } else {
+        let tex = engine
+            .render_tex_batch(&[value.to_string()])?
+            .into_iter()
+            .next()
+            .map(|tex| strip_tex_delimiters(&tex))
+            .unwrap_or_default();
+        Ok((Vec::new(), tex))
+    }
 }
 
 fn composition_operand(source: &str) -> Result<MathematicalObject, EngineError> {

@@ -414,18 +414,17 @@ fn dispatch_expression_with_engine(
             &result,
         );
     }
-    let conventional_bodied = call.as_ref().is_some_and(|call| {
-        (call.head == "Limit" && call.arguments.len() == 2)
-            || (call.head == "Taylor" && call.arguments.len() == 3)
-    });
-    if (request.steps || conventional_bodied)
-        && call
-            .as_ref()
-            .is_some_and(processing::composition::is_candidate)
+    if call
+        .as_ref()
+        .is_some_and(processing::composition::is_candidate)
     {
-        if let Some(mut result) =
-            processing::composition::execute_elaborated(&mut *engine, elaborated, verbosity)
-                .map_err(message)?
+        if let Some(mut result) = processing::composition::execute_elaborated(
+            &mut *engine,
+            elaborated,
+            verbosity,
+            request.steps,
+        )
+        .map_err(message)?
         {
             if !request.steps {
                 result.steps.clear();
@@ -1864,6 +1863,25 @@ mod tests {
         assert_eq!(limited.kind, "composition");
         assert_eq!(limited.expression, "2*x");
         assert_eq!(limited.semantic.bound_symbols, ["x"]);
+
+        let limited_without_steps = process_expression_with_engine(
+            request("D(x)Limit(t,0)(Sin(t)/t+x^2)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(limited_without_steps.kind, "composition");
+        assert_eq!(limited_without_steps.expression, "2*x");
+        assert!(limited_without_steps.steps.is_empty());
+        assert_eq!(limited_without_steps.semantic.bound_symbols, ["x"]);
+
+        let absent =
+            process_expression_with_engine(request("D(x)Limit(t,0)(1/t)", false), &mut engine)
+                .unwrap();
+        assert_eq!(absent.kind, "composition");
+        assert_eq!(
+            absent.outcome.resolution,
+            processing::protocol::ResolutionState::NoResult
+        );
     }
 
     #[test]
