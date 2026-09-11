@@ -52,7 +52,9 @@ pub struct GramSchmidtResult {
 #[serde(rename_all = "snake_case")]
 pub enum MatrixOperation {
     Add,
+    Subtract,
     Multiply,
+    Scale,
     Transpose,
     Determinant,
     Inverse,
@@ -64,7 +66,9 @@ impl MatrixOperation {
     fn name(self) -> &'static str {
         match self {
             Self::Add => "add",
+            Self::Subtract => "subtract",
             Self::Multiply => "multiply",
+            Self::Scale => "scale",
             Self::Transpose => "transpose",
             Self::Determinant => "determinant",
             Self::Inverse => "inverse",
@@ -218,12 +222,13 @@ impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
         request: &BinaryMatrixRequest,
     ) -> Result<Computation, EngineError> {
         let capability = match request.operation {
-            MatrixOperation::Add => ObjectCapability::MatrixAdd,
-            MatrixOperation::Multiply => ObjectCapability::MatrixMultiply,
+            MatrixOperation::Add | MatrixOperation::Subtract => ObjectCapability::MatrixAdd,
+            MatrixOperation::Multiply | MatrixOperation::Scale => ObjectCapability::MatrixMultiply,
             _ => return Err(EngineError::InvalidInput("该操作不是二元矩阵运算".into())),
         };
+        let scaling = request.operation == MatrixOperation::Scale;
         if !left.semantics.capabilities.contains(capability)
-            || !right.semantics.capabilities.contains(capability)
+            || (!scaling && !right.semantics.capabilities.contains(capability))
         {
             return Err(EngineError::InvalidInput(
                 "矩阵运算的两侧都必须是矩阵对象".into(),
@@ -237,26 +242,55 @@ impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
             _ => Err(EngineError::InvalidInput("矩阵对象缺少形状信息".into())),
         };
         let (left_rows, left_columns) = shape(left)?;
-        let (right_rows, right_columns) = shape(right)?;
+        let (right_rows, right_columns) = if scaling { (0, 0) } else { shape(right)? };
         let (rows, columns) = match request.operation {
             MatrixOperation::Add if (left_rows, left_columns) == (right_rows, right_columns) => {
                 (left_rows, left_columns)
             }
-            MatrixOperation::Add => return Err(EngineError::InvalidInput(format!(
+            MatrixOperation::Add => {
+                return Err(EngineError::InvalidInput(format!(
                 "矩阵加法形状不兼容: {left_rows}x{left_columns} 与 {right_rows}x{right_columns}"
-            ))),
+            )))
+            }
+            MatrixOperation::Subtract
+                if (left_rows, left_columns) == (right_rows, right_columns) =>
+            {
+                (left_rows, left_columns)
+            }
+            MatrixOperation::Subtract => {
+                return Err(EngineError::InvalidInput(format!(
+                "矩阵减法形状不兼容: {left_rows}x{left_columns} 与 {right_rows}x{right_columns}"
+            )))
+            }
             MatrixOperation::Multiply if left_columns == right_rows => (left_rows, right_columns),
-            MatrixOperation::Multiply => return Err(EngineError::InvalidInput(format!(
+            MatrixOperation::Multiply => {
+                return Err(EngineError::InvalidInput(format!(
                 "矩阵乘法形状不兼容: {left_rows}x{left_columns} 与 {right_rows}x{right_columns}"
-            ))),
+            )))
+            }
+            MatrixOperation::Scale => (left_rows, left_columns),
             _ => unreachable!(),
         };
-        let result = compute(
-            engine,
-            &left.print_source(),
-            request.operation,
-            Some(&right.print_source()),
-        )?;
+        let result = if scaling {
+            let evaluated = engine.eval(&format!(
+                "({})*({})",
+                left.print_source(),
+                right.print_source()
+            ))?;
+            MatrixResult {
+                operation: request.operation,
+                output: evaluated.expr.to_string(),
+                tex: strip_tex_delimiters(&evaluated.tex),
+                unresolved: false,
+            }
+        } else {
+            compute(
+                engine,
+                &left.print_source(),
+                request.operation,
+                Some(&right.print_source()),
+            )?
+        };
         let semantics = SemanticState {
             kind: ValueKind::Matrix,
             interpretation: SemanticInterpretation::Matrix { rows, columns },
@@ -292,6 +326,89 @@ impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: "按矩阵形状规则组合两个矩阵对象。".into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MatrixSolveOperation;
+
+impl BinarySemanticOperation<crate::semantic_core::ObjectId> for MatrixSolveOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        matrix: &crate::semantic_core::MathematicalObject,
+        vector: &crate::semantic_core::MathematicalObject,
+        output_id: &crate::semantic_core::ObjectId,
+    ) -> Result<Computation, EngineError> {
+        let SemanticInterpretation::Matrix { rows, columns } = matrix.semantics.interpretation
+        else {
+            return Err(EngineError::InvalidInput(
+                "MatrixSolve 左侧必须是矩阵".into(),
+            ));
+        };
+        if rows != columns {
+            return Err(EngineError::InvalidInput(format!(
+                "MatrixSolve 要求方阵，收到 {rows}x{columns}"
+            )));
+        }
+        let length = crate::input::with_parse_env(|env| vector.view(env).arguments().len());
+        if length != rows {
+            return Err(EngineError::InvalidInput(format!(
+                "MatrixSolve 维度不兼容: {rows}x{columns} 与长度 {length}"
+            )));
+        }
+        let result = compute(
+            engine,
+            &matrix.print_source(),
+            MatrixOperation::Solve,
+            Some(&vector.print_source()),
+        )?;
+        let semantics = SemanticState {
+            kind: ValueKind::Expression,
+            interpretation: SemanticInterpretation::Vector { length },
+            metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(*output_id, &result.output, semantics.clone())?;
+        let mut output = crate::semantic_core::MathematicalObject::new(
+            *output_id,
+            parsed.raw_expression(),
+            semantics,
+        );
+        output.apply(ObjectDelta {
+            expression: None,
+            semantics: None,
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixSolve),
+            }),
+        });
+        let event = RuleEvent {
+            rule: "matrix-solve".into(),
+            input: matrix.reference(None),
+            additional_inputs: vec![vector.reference(None)],
+            output: output.reference(None),
+            bindings: vec![("dimension".into(), rows.to_string())],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: Some(RulePresentation {
+                expression: output.print_source(),
+                explanation: "求解形状兼容的线性方程组。".into(),
                 tex_override: Some(result.tex),
             }),
         };
@@ -825,7 +942,11 @@ pub fn compute(
 
     let binary = matches!(
         operation,
-        MatrixOperation::Add | MatrixOperation::Multiply | MatrixOperation::Solve
+        MatrixOperation::Add
+            | MatrixOperation::Subtract
+            | MatrixOperation::Multiply
+            | MatrixOperation::Scale
+            | MatrixOperation::Solve
     );
     if binary != right.is_some() {
         return Err(EngineError::InvalidInput(if binary {
@@ -859,11 +980,15 @@ fn checked_command(left: &str, operation: MatrixOperation, right: Option<&str>) 
              InputCheck(Dimensions({a})=Dimensions({b}),\"matrix dimensions must match\"); {a}+{b}",
             right.unwrap()
         ),
+        MatrixOperation::Subtract => format!(
+            "{b}:={}; InputCheck(IsMatrix({b}),\"right operand must be a matrix\"); InputCheck(Dimensions({a})=Dimensions({b}),\"matrix dimensions must match\"); {a}-{b}", right.unwrap()
+        ),
         MatrixOperation::Multiply => format!(
             "{b}:={}; InputCheck(IsMatrix({b}),\"right operand must be a matrix\"); \
              InputCheck(Length({a}[1])=Length({b}),\"matrix dimensions are incompatible\"); {a}*{b}",
             right.unwrap()
         ),
+        MatrixOperation::Scale => format!("{a}*{}", right.unwrap()),
         MatrixOperation::Transpose => format!("Transpose({a})"),
         MatrixOperation::Determinant => format!("{square_check}; Determinant({a})"),
         MatrixOperation::Inverse => {
@@ -895,7 +1020,10 @@ fn unresolved(expr: &Expr, operation: MatrixOperation) -> bool {
         MatrixOperation::Inverse => "Inverse",
         MatrixOperation::Solve => "MatrixSolve",
         MatrixOperation::Eigenvalues => "EigenValues",
-        MatrixOperation::Add | MatrixOperation::Multiply => return false,
+        MatrixOperation::Add
+        | MatrixOperation::Subtract
+        | MatrixOperation::Multiply
+        | MatrixOperation::Scale => return false,
     };
     matches!(expr, Expr::Call { head, .. } if head == expected)
 }
@@ -1057,6 +1185,42 @@ mod tests {
             },
         );
         assert!(matches!(bad, Err(EngineError::InvalidInput(message)) if message.contains("1x2")));
+        let scalar = object_from_source(
+            crate::semantic_core::ObjectId(7),
+            "3",
+            SemanticState {
+                kind: ValueKind::Scalar,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let scaled = BinaryMatrixOperation
+            .compute(
+                &mut engine,
+                &object(8, "{{1,2}}", 1, 2),
+                &scalar,
+                &BinaryMatrixRequest {
+                    operation: MatrixOperation::Scale,
+                    output_id: crate::semantic_core::ObjectId(9),
+                },
+            )
+            .unwrap();
+        assert_eq!(scaled.value().unwrap().print_source(), "{{3,6}}");
+        let difference = BinaryMatrixOperation
+            .compute(
+                &mut engine,
+                &object(10, "{{5,4}}", 1, 2),
+                &object(11, "{{2,1}}", 1, 2),
+                &BinaryMatrixRequest {
+                    operation: MatrixOperation::Subtract,
+                    output_id: crate::semantic_core::ObjectId(12),
+                },
+            )
+            .unwrap();
+        assert_eq!(difference.value().unwrap().print_source(), "{{3,3}}");
     }
 
     #[test]

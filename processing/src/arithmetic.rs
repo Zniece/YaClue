@@ -44,6 +44,12 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
         {
             expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
         }
+        crate::elaboration::MathematicalForm::Application { head }
+            if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix") =>
+        {
+            expression.children.len() == 2
+                && expression.children.iter().all(can_execute_elaborated_tree)
+        }
         crate::elaboration::MathematicalForm::Application { head } if head == "Subst" => {
             expression.children.len() == 3
                 && can_execute_elaborated_tree(&expression.children[1])
@@ -204,6 +210,9 @@ pub fn execute_elaborated_structure(
         if is_migrated_matrix_unary(head) {
             return execute_matrix_unary_application(engine, expression, head);
         }
+        if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix") {
+            return execute_matrix_solve_application(engine, expression);
+        }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
         }
@@ -281,29 +290,46 @@ pub fn execute_elaborated_structure(
         .subject()
         .expect("mathematical child has an object");
     let right_object = child_computations.get(1).and_then(Computation::subject);
-    let matrix_binary = matches!(
-        operation,
-        ArithmeticOperation::Add | ArithmeticOperation::Multiply
-    ) && matches!(
+    let left_matrix = matches!(
         left_object.semantics.interpretation,
         SemanticInterpretation::Matrix { .. }
-    ) && right_object.is_some_and(|right| {
+    );
+    let right_matrix = right_object.is_some_and(|right| {
         matches!(
             right.semantics.interpretation,
             SemanticInterpretation::Matrix { .. }
         )
     });
+    let matrix_binary = matches!(
+        operation,
+        ArithmeticOperation::Add | ArithmeticOperation::Subtract | ArithmeticOperation::Multiply
+    ) && (left_matrix || right_matrix);
     let mut computation = if matrix_binary {
-        let matrix_operation = if operation == ArithmeticOperation::Add {
-            crate::linear_algebra::MatrixOperation::Add
+        let matrix_operation = match operation {
+            ArithmeticOperation::Add => crate::linear_algebra::MatrixOperation::Add,
+            ArithmeticOperation::Subtract => crate::linear_algebra::MatrixOperation::Subtract,
+            ArithmeticOperation::Multiply if left_matrix && right_matrix => {
+                crate::linear_algebra::MatrixOperation::Multiply
+            }
+            ArithmeticOperation::Multiply => crate::linear_algebra::MatrixOperation::Scale,
+            _ => unreachable!(),
+        };
+        let (matrix, other) = if left_matrix {
+            (
+                left_object,
+                right_object.expect("matrix binary has right operand"),
+            )
         } else {
-            crate::linear_algebra::MatrixOperation::Multiply
+            (
+                right_object.expect("matrix binary has matrix operand"),
+                left_object,
+            )
         };
         BinarySemanticOperation::compute(
             &crate::linear_algebra::BinaryMatrixOperation,
             engine,
-            left_object,
-            right_object.expect("matrix binary has right operand"),
+            matrix,
+            other,
             &crate::linear_algebra::BinaryMatrixRequest {
                 operation: matrix_operation,
                 output_id: expression.object.id,
@@ -364,6 +390,13 @@ fn execute_numeric_application(
         return retain_pending_application(expression, operand, head, 0);
     }
     let input = operand.value().expect("checked numeric operand").clone();
+    if !input
+        .semantics
+        .capabilities
+        .contains(ObjectCapability::NumericEvaluate)
+    {
+        return retain_pending_application(expression, operand, head, 0);
+    }
     let mut current = crate::numeric::NumericEvaluationOperation.compute(
         engine,
         &input,
@@ -521,6 +554,35 @@ fn execute_matrix_unary_application(
         &crate::linear_algebra::UnaryMatrixRequest { operation },
     )?;
     merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
+}
+
+fn execute_matrix_solve_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let [matrix_node, vector_node] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(
+            "MatrixSolve 需要矩阵和向量".into(),
+        ));
+    };
+    let mut matrix = execute_elaborated_structure(engine, matrix_node)?;
+    let mut vector = execute_elaborated_structure(engine, vector_node)?;
+    if !matches!(matrix.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, matrix, "MatrixSolve", 0);
+    }
+    if !matches!(vector.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, vector, "MatrixSolve", 1);
+    }
+    let mut current = BinarySemanticOperation::compute(
+        &crate::linear_algebra::MatrixSolveOperation,
+        engine,
+        matrix.value().unwrap(),
+        vector.value().unwrap(),
+        &expression.object.id,
+    )?;
+    merge_prior_computation(&mut current, &mut matrix);
+    merge_prior_computation(&mut current, &mut vector);
     Ok(current)
 }
 

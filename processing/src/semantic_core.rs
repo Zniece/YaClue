@@ -167,6 +167,7 @@ pub enum OperatorId {
     Taylor,
     Solve,
     MatrixTransform,
+    MatrixSolve,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,6 +349,15 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         capability: CapabilityId::TransformMatrix,
     },
     OperatorDescriptor {
+        id: OperatorId::MatrixSolve,
+        names: &["MatrixSolve", "SolveMatrix"],
+        arities: &[2],
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::TransformMatrix,
+    },
+    OperatorDescriptor {
         id: OperatorId::OdeSolve,
         names: &["OdeSolve"],
         arities: &[1],
@@ -386,13 +396,11 @@ pub fn is_known_operator(name: &str) -> bool {
                 | "FindRoot"
                 | "ImproperIntegral"
                 | "Lagrange"
-                | "MatrixSolve"
                 | "OdeSolve"
                 | "OdeSolveNumeric"
                 | "Plot"
                 | "PolarIntegral"
                 | "PrincipalValueIntegral"
-                | "SolveMatrix"
         )
 }
 
@@ -410,6 +418,9 @@ pub enum SemanticInterpretation {
     Matrix {
         rows: usize,
         columns: usize,
+    },
+    Vector {
+        length: usize,
     },
     SolutionSet {
         variables: Vec<String>,

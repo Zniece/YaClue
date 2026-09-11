@@ -462,6 +462,9 @@ fn dispatch_expression_with_engine(
         || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head }
                 if processing::arithmetic::is_migrated_matrix_unary(head))
+        || matches!(&elaborated.root.form,
+            processing::elaboration::MathematicalForm::Application { head }
+                if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"))
         || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
         || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
@@ -477,7 +480,8 @@ fn dispatch_expression_with_engine(
             processing::elaboration::MathematicalForm::Application { head } if head == "Solve");
         let object_native_matrix = matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head }
-                if processing::arithmetic::is_migrated_matrix_unary(head));
+                if processing::arithmetic::is_migrated_matrix_unary(head)
+                    || matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"));
         if let Some(mut result) = processing::composition::execute_elaborated(
             &mut *engine,
             elaborated,
@@ -1995,10 +1999,7 @@ mod tests {
     #[test]
     fn unified_input_preserves_unlowered_structured_compositions() {
         let mut engine = RustEngineProxy::spawn().unwrap();
-        for expression in [
-            "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
-            "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
-        ] {
+        for expression in ["Factor(DoubleIntegral(x+y,y,0,x,x,0,1))"] {
             let result =
                 process_expression_with_engine(request(expression, true), &mut engine).unwrap();
             assert_eq!(result.kind, "composition", "{expression}");
@@ -2016,6 +2017,21 @@ mod tests {
             assert_eq!(result.steps[0].rule, "held-operator-application");
             assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
         }
+
+        let matrix_solution = process_expression_with_engine(
+            request("N(MatrixSolve({{1,0},{0,1}},{1,2}),10)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(matrix_solution.expression, "N({1,2},10)");
+        assert_eq!(
+            matrix_solution.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(matrix_solution
+            .steps
+            .iter()
+            .any(|step| step.rule == "matrix-solve"));
 
         let solved_set =
             process_expression_with_engine(request("D(x)Solve({x==1},{x})", true), &mut engine)

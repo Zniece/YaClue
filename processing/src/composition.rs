@@ -140,6 +140,9 @@ pub fn execute_elaborated(
         || matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if crate::arithmetic::is_migrated_matrix_unary(head))
+        || matches!(&input.root.form,
+            crate::elaboration::MathematicalForm::Application { head }
+                if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if !is_known_operator(head))
@@ -277,6 +280,7 @@ fn collect_migrated_operator_ids(
             || head == "Taylor"
             || head == "Solve"
             || crate::arithmetic::is_migrated_matrix_unary(head)
+            || matches!(head.as_str(), "MatrixSolve" | "SolveMatrix")
         {
             if let Some(descriptor) = operator_descriptor(head) {
                 output.push(descriptor.id);
@@ -941,6 +945,9 @@ fn apply(
         )),
         CompositionOperator::MatrixTransform => Err(EngineError::InvalidInput(
             "矩阵变换必须通过类型化矩阵对象执行".into(),
+        )),
+        CompositionOperator::MatrixSolve => Err(EngineError::InvalidInput(
+            "线性方程组必须通过类型化矩阵对象执行".into(),
         )),
     }
 }
