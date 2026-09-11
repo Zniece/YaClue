@@ -8,6 +8,7 @@ pub mod algebra;
 pub mod assumptions;
 pub mod binding;
 pub mod composition;
+pub mod derivatives;
 pub mod engine;
 pub mod equations;
 pub mod equivalence;

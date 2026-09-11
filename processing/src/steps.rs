@@ -254,9 +254,7 @@ pub fn derive_steps_with_verbosity(
     var: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expression(expr, "表达式")?;
-    validate_symbol(var, "求导变量")?;
-    steps_from_command(engine, &format!("StepsD'Full({expr}, {var})"), verbosity)
+    crate::derivatives::derivative_steps_with_verbosity(engine, expr, var, 1, verbosity)
 }
 
 /// 对 `expr` 关于 `var` 生成 `order` 阶分步求导过程(步骤按求导轮次拼接)
@@ -276,16 +274,7 @@ pub fn derive_steps_order_with_verbosity(
     order: u32,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expression(expr, "表达式")?;
-    validate_symbol(var, "求导变量")?;
-    if order == 0 {
-        return Err(EngineError::InvalidInput("求导阶数必须 >= 1".into()));
-    }
-    steps_from_command(
-        engine,
-        &format!("StepsD'Full({expr}, {var}, {order})"),
-        verbosity,
-    )
+    crate::derivatives::derivative_steps_with_verbosity(engine, expr, var, order, verbosity)
 }
 
 /// 对 `expr` 关于 `var` 生成分步积分过程

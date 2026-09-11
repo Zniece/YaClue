@@ -431,35 +431,83 @@ fn dispatch_expression_with_engine(
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
             ("D", [variable, expression]) | ("Deriv", [variable, expression]) => {
-                if request.steps {
-                    let steps = processing::steps::derive_steps_order_with_verbosity(
+                let derivative_request = processing::derivatives::DerivativeRequest {
+                    variable: variable.clone(),
+                    order: 1,
+                };
+                let computation = processing::derivatives::derivative_computation(
+                    &mut *engine,
+                    expression,
+                    variable,
+                    1,
+                )
+                .map_err(message)?;
+                let result =
+                    processing::derivatives::derivative_result(&computation, &derivative_request);
+                let output = computation
+                    .subject()
+                    .expect("derivative has an output object");
+                let expression = output.print_source();
+                let tex = processing::input::strip_tex_delimiters(
+                    &engine
+                        .render_tex_batch(std::slice::from_ref(&expression))
+                        .map_err(message)?[0],
+                );
+                let steps = if request.steps {
+                    processing::steps::render_rule_trace(
                         &mut *engine,
-                        expression,
-                        variable,
-                        1,
+                        computation
+                            .trace
+                            .as_ref()
+                            .expect("derivative records a trace"),
                         verbosity,
                     )
-                    .map_err(message)?;
-                    let (expression, tex) = final_step(&steps);
-                    return unified_result("derivative", "导数", expression, tex, steps, &());
-                }
+                    .map_err(message)?
+                } else {
+                    Vec::new()
+                };
+                return unified_result("derivative", "导数", expression, tex, steps, &result);
             }
             ("D", [variable, order, expression]) | ("Deriv", [variable, order, expression]) => {
                 let order = order
                     .parse::<u32>()
                     .map_err(|_| invalid_input("导数阶数必须是非负整数"))?;
-                if request.steps {
-                    let steps = processing::steps::derive_steps_order_with_verbosity(
+                let derivative_request = processing::derivatives::DerivativeRequest {
+                    variable: variable.clone(),
+                    order,
+                };
+                let computation = processing::derivatives::derivative_computation(
+                    &mut *engine,
+                    expression,
+                    variable,
+                    order,
+                )
+                .map_err(message)?;
+                let result =
+                    processing::derivatives::derivative_result(&computation, &derivative_request);
+                let output = computation
+                    .subject()
+                    .expect("derivative has an output object");
+                let expression = output.print_source();
+                let tex = processing::input::strip_tex_delimiters(
+                    &engine
+                        .render_tex_batch(std::slice::from_ref(&expression))
+                        .map_err(message)?[0],
+                );
+                let steps = if request.steps {
+                    processing::steps::render_rule_trace(
                         &mut *engine,
-                        expression,
-                        variable,
-                        order,
+                        computation
+                            .trace
+                            .as_ref()
+                            .expect("derivative records a trace"),
                         verbosity,
                     )
-                    .map_err(message)?;
-                    let (expression, tex) = final_step(&steps);
-                    return unified_result("derivative", "导数", expression, tex, steps, &());
-                }
+                    .map_err(message)?
+                } else {
+                    Vec::new()
+                };
+                return unified_result("derivative", "导数", expression, tex, steps, &result);
             }
             (head @ ("ImproperIntegral" | "PrincipalValueIntegral"), arguments)
                 if matches!(arguments.len(), 4 | 5) =>
