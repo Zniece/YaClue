@@ -535,6 +535,83 @@ pub enum MatrixFactorizationKind {
     Cholesky,
 }
 
+fn signature_requirements(spelling: &str, arity: usize) -> Option<&'static [Requirement]> {
+    use Requirement::*;
+    match (spelling, arity) {
+        ("D" | "Deriv", 2) => Some(&[Variable, Operand]),
+        ("D" | "Deriv", 3) => Some(&[Variable, Order, Operand]),
+        ("Integrate", 2) => Some(&[Variable, Operand]),
+        ("Integrate", 4) => Some(&[Variable, LowerBound, UpperBound, Operand]),
+        ("Limit", 2) => Some(&[Operand, ApproachPoint]),
+        ("Limit", 3) => Some(&[Variable, ApproachPoint, Operand]),
+        ("Limit", 4) => Some(&[Variable, ApproachPoint, Direction, Operand]),
+        ("Taylor", 3) => Some(&[Operand, ApproachPoint, Order]),
+        ("Taylor", 4) => Some(&[Variable, ApproachPoint, Order, Operand]),
+        ("Subst", 3) => Some(&[Variable, Replacement, Operand]),
+        _ => None,
+    }
+}
+
+pub fn partial_application_state(
+    spelling: &str,
+    expected_arity: usize,
+    bound_argument_count: usize,
+) -> Result<PartialApplication, EngineError> {
+    let descriptor = operator_descriptor(spelling)
+        .ok_or_else(|| EngineError::InvalidInput(format!("未登记的偏应用运算符: {spelling}")))?;
+    if bound_argument_count >= expected_arity || !descriptor.arities.contains(&expected_arity) {
+        return Err(EngineError::InvalidInput(format!(
+            "{spelling} 的 {expected_arity} 元签名不能绑定 {bound_argument_count} 个前缀参数"
+        )));
+    }
+    let requirements = signature_requirements(spelling, expected_arity).ok_or_else(|| {
+        EngineError::InvalidInput(format!(
+            "{spelling} 的 {expected_arity} 元签名尚未声明参数槽类型"
+        ))
+    })?;
+    let missing = requirements[bound_argument_count..].to_vec();
+    Ok(PartialApplication {
+        operator: descriptor.id,
+        spelling: spelling.into(),
+        expected_arity,
+        bound_arguments: (0..bound_argument_count)
+            .map(|slot| BoundArgument {
+                slot,
+                path: ExpressionPath::root().argument(slot),
+            })
+            .collect(),
+        slots: requirements
+            .iter()
+            .enumerate()
+            .map(|(slot, requirement)| {
+                if slot < bound_argument_count {
+                    ApplicationSlot::Bound {
+                        slot,
+                        path: ExpressionPath::root().argument(slot),
+                    }
+                } else {
+                    ApplicationSlot::Missing {
+                        slot,
+                        requirement: requirement.clone(),
+                    }
+                }
+            })
+            .collect(),
+        missing,
+        binder_scopes: descriptor
+            .binders
+            .iter()
+            .map(|binder| BinderScope {
+                binder_slot: binder.binder_argument,
+                scope_slot: match binder.scope_argument {
+                    ValueArgument::First => 0,
+                    ValueArgument::Last => expected_arity - 1,
+                },
+            })
+            .collect(),
+    })
+}
+
 pub fn operand_partial_state(
     spelling: &str,
     bound_argument_count: usize,
@@ -554,41 +631,14 @@ pub fn operand_partial_state(
             "{spelling} 不支持绑定 {bound_argument_count} 个参数后等待 operand"
         )));
     }
-    Ok(PartialApplication {
-        operator: descriptor.id,
-        spelling: spelling.into(),
-        expected_arity,
-        bound_arguments: (0..bound_argument_count)
-            .map(|slot| BoundArgument {
-                slot,
-                path: ExpressionPath::root().argument(slot),
-            })
-            .collect(),
-        slots: (0..expected_arity)
-            .map(|slot| {
-                if slot < bound_argument_count {
-                    ApplicationSlot::Bound {
-                        slot,
-                        path: ExpressionPath::root().argument(slot),
-                    }
-                } else {
-                    ApplicationSlot::Missing {
-                        slot,
-                        requirement: Requirement::Operand,
-                    }
-                }
-            })
-            .collect(),
-        missing: vec![Requirement::Operand],
-        binder_scopes: descriptor
-            .binders
-            .iter()
-            .map(|binder| BinderScope {
-                binder_slot: binder.binder_argument,
-                scope_slot: expected_arity - 1,
-            })
-            .collect(),
-    })
+    if signature_requirements(spelling, expected_arity).and_then(|requirements| requirements.last())
+        != Some(&Requirement::Operand)
+    {
+        return Err(EngineError::InvalidInput(format!(
+            "{spelling} 的该签名不是只等待 operand 的部分应用"
+        )));
+    }
+    partial_application_state(spelling, expected_arity, bound_argument_count)
 }
 
 pub fn require_operand_partial<'a>(
@@ -643,50 +693,69 @@ pub fn complete_operand_partial(
         return Err(EngineError::InvalidInput("对象不是部分应用".into()));
     };
     require_operand_partial(partial_object, partial.operator)?;
-    fill_partial_argument(partial_object, operand, Requirement::Operand)
+    fill_next_partial_argument(partial_object, operand)
 }
 
-fn fill_partial_argument(
+pub fn fill_next_partial_argument(
     partial_object: &MathematicalObject,
     argument: &MathematicalObject,
-    requirement: Requirement,
 ) -> Result<MathematicalObject, EngineError> {
     let SemanticInterpretation::PartialApplication(partial) =
         &partial_object.semantics.interpretation
     else {
         return Err(EngineError::InvalidInput("对象不是部分应用".into()));
     };
-    let missing_slot = partial
+    let (missing_slot, requirement) = partial
         .slots
         .iter()
         .find_map(|slot| match slot {
-            ApplicationSlot::Missing {
-                slot,
-                requirement: expected,
-            } if *expected == requirement => Some(*slot),
+            ApplicationSlot::Missing { slot, requirement } => Some((*slot, requirement.clone())),
             _ => None,
         })
         .ok_or_else(|| EngineError::InvalidInput("部分应用没有匹配的缺失参数槽".into()))?;
-    if missing_slot + 1 != partial.expected_arity {
+    if matches!(requirement, Requirement::Variable) {
+        let is_symbol = crate::input::with_parse_env(|env| argument.view(env).atom().is_some());
+        if !is_symbol {
+            return Err(EngineError::InvalidInput("变量参数槽必须填入符号".into()));
+        }
+    }
+    if matches!(requirement, Requirement::Order) && argument.print_source().parse::<u32>().is_err()
+    {
         return Err(EngineError::InvalidInput(
-            "非末尾参数槽填充尚未迁移到通用 AST rebuild".into(),
+            "阶数参数槽必须填入非负整数".into(),
         ));
     }
     let expression = partial_object.append_application_argument(argument)?;
     let mut completed = partial_object.clone();
+    let remaining = partial.missing[1..].to_vec();
+    let interpretation = if remaining.is_empty() {
+        SemanticInterpretation::Application {
+            operator: partial.spelling.clone(),
+        }
+    } else {
+        let mut next = partial.clone();
+        next.bound_arguments.push(BoundArgument {
+            slot: missing_slot,
+            path: ExpressionPath::root().argument(missing_slot),
+        });
+        next.slots[missing_slot] = ApplicationSlot::Bound {
+            slot: missing_slot,
+            path: ExpressionPath::root().argument(missing_slot),
+        };
+        next.missing = remaining.clone();
+        SemanticInterpretation::PartialApplication(next)
+    };
     completed.apply(ObjectDelta {
         expression: Some(expression),
         semantics: Some(SemanticState {
             kind: ValueKind::Unevaluated,
-            interpretation: SemanticInterpretation::Application {
-                operator: partial.spelling.clone(),
-            },
+            interpretation,
             metadata: ResultMetadata::unresolved(
                 crate::semantic::Exactness::Symbolic,
                 crate::protocol::OutcomeReason::AlgorithmUncovered,
             ),
             capabilities: CapabilitySet::symbolic_expression(),
-            requirements: Vec::new(),
+            requirements: remaining,
         }),
         overlay: None,
         normalization: None,
@@ -787,6 +856,10 @@ pub enum Requirement {
     ApproachPoint,
     Direction,
     Interval,
+    Order,
+    LowerBound,
+    UpperBound,
+    Replacement,
     InitialCondition,
     Precision,
     Assumption,
@@ -1338,5 +1411,56 @@ mod tests {
         assert!(completed.semantics.requirements.is_empty());
         assert!(matches!(completed.semantics.interpretation,
             SemanticInterpretation::Application { ref operator } if operator == "D"));
+    }
+
+    #[test]
+    fn fills_a_multi_stage_signature_one_typed_slot_at_a_time() {
+        let state = partial_application_state("Limit", 3, 1).unwrap();
+        let partial = object_from_source(
+            ObjectId(20),
+            "Limit(t)",
+            SemanticState {
+                kind: ValueKind::Unevaluated,
+                interpretation: SemanticInterpretation::PartialApplication(state.clone()),
+                metadata: ResultMetadata::unresolved(
+                    crate::semantic::Exactness::Symbolic,
+                    crate::protocol::OutcomeReason::AlgorithmUncovered,
+                ),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: state.missing,
+            },
+        )
+        .unwrap();
+        let scalar = |id, source| {
+            object_from_source(
+                ObjectId(id),
+                source,
+                SemanticState {
+                    kind: ValueKind::Scalar,
+                    interpretation: SemanticInterpretation::PlainExpression,
+                    metadata: ResultMetadata::solved(
+                        crate::semantic::Exactness::Exact,
+                        crate::protocol::ConditionSet::empty(),
+                    ),
+                    capabilities: CapabilitySet::symbolic_expression(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let with_point = fill_next_partial_argument(&partial, &scalar(21, "0")).unwrap();
+        assert_eq!(with_point.print_source(), "Limit(t)0");
+        assert_eq!(with_point.semantics.requirements, [Requirement::Operand]);
+        assert!(matches!(
+            with_point.semantics.interpretation,
+            SemanticInterpretation::PartialApplication(_)
+        ));
+        let complete = fill_next_partial_argument(&with_point, &scalar(22, "x/t")).unwrap();
+        assert_eq!(complete.print_source(), "Limit(t,0)x/t");
+        assert!(complete.semantics.requirements.is_empty());
+        assert!(matches!(
+            complete.semantics.interpretation,
+            SemanticInterpretation::Application { .. }
+        ));
     }
 }
