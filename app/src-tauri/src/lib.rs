@@ -440,6 +440,61 @@ fn dispatch_expression_with_engine(
             );
         }
     }
+    if matches!(&elaborated.root.form, processing::elaboration::MathematicalForm::Application { head } if matches!(head.as_str(), "D" | "Deriv"))
+        && matches!(elaborated.root.children.len(), 2 | 3)
+    {
+        let variable = elaborated.root.children[0].object.print_source();
+        let (order, operand_index) = if elaborated.root.children.len() == 3 {
+            (
+                elaborated.root.children[1]
+                    .object
+                    .print_source()
+                    .parse::<u32>()
+                    .map_err(|_| invalid_input("导数阶数必须是非负整数"))?,
+                2,
+            )
+        } else {
+            (1, 1)
+        };
+        let expression = elaborated.root.children[operand_index]
+            .object
+            .print_source();
+        let derivative_request = processing::derivatives::DerivativeRequest {
+            variable: variable.clone(),
+            order,
+        };
+        let computation = processing::derivatives::derivative_computation(
+            &mut *engine,
+            &expression,
+            &variable,
+            order,
+        )
+        .map_err(message)?;
+        let result = processing::derivatives::derivative_result(&computation, &derivative_request);
+        let expression = computation
+            .subject()
+            .expect("derivative has an output object")
+            .print_source();
+        let tex = processing::input::strip_tex_delimiters(
+            &engine
+                .render_tex_batch(std::slice::from_ref(&expression))
+                .map_err(message)?[0],
+        );
+        let steps = if request.steps {
+            processing::steps::render_rule_trace(
+                &mut *engine,
+                computation
+                    .trace
+                    .as_ref()
+                    .expect("derivative records a trace"),
+                verbosity,
+            )
+            .map_err(message)?
+        } else {
+            Vec::new()
+        };
+        return unified_result("derivative", "导数", expression, tex, steps, &result);
+    }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
             ("D", [variable, expression]) | ("Deriv", [variable, expression]) => {
