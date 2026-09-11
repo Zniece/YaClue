@@ -22,6 +22,7 @@ pub mod intrinsics;
 pub mod limits;
 pub mod line_integrals;
 pub mod linear_algebra;
+pub mod lowering;
 pub mod multiple_integrals;
 pub mod multivariate;
 pub mod numeric;

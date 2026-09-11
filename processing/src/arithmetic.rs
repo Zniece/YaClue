@@ -221,6 +221,13 @@ pub fn execute_elaborated_structure(
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
+        if let Some(lowered) = crate::lowering::try_lower_application(
+            engine,
+            &expression.object,
+            crate::semantic_core::TraceMode::Detailed,
+        )? {
+            return Ok(lowered);
+        }
         if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate") {
             return execute_calculus_application(engine, expression, head);
         }
