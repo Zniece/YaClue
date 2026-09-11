@@ -40,7 +40,9 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
         crate::elaboration::MathematicalForm::EffectApplication { .. } => true,
         crate::elaboration::MathematicalForm::OpaqueEngineValue { .. } => false,
         crate::elaboration::MathematicalForm::Relation { .. }
-        | crate::elaboration::MathematicalForm::Collection => false,
+        | crate::elaboration::MathematicalForm::Collection => {
+            expression.children.iter().all(can_execute_elaborated_tree)
+        }
         _ => true,
     }
 }
@@ -74,6 +76,13 @@ pub fn execute_elaborated_structure(
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
         }
+    }
+    if matches!(
+        expression.form,
+        crate::elaboration::MathematicalForm::Relation { .. }
+            | crate::elaboration::MathematicalForm::Collection
+    ) {
+        return execute_container(expression, engine);
     }
     if matches!(
         expression.form,
@@ -164,6 +173,140 @@ pub fn execute_elaborated_structure(
         trace.events = child_traces;
     }
     Ok(computation)
+}
+
+fn execute_container(
+    expression: &crate::elaboration::ElaboratedObject,
+    engine: &mut dyn Engine,
+) -> Result<Computation, EngineError> {
+    let mut children = expression
+        .children
+        .iter()
+        .map(|child| execute_elaborated_structure(engine, child))
+        .collect::<Result<Vec<_>, _>>()?;
+    if children
+        .iter()
+        .any(|child| matches!(child.output, ComputationOutput::EffectsOnly))
+    {
+        return Err(EngineError::InvalidInput(
+            "带副作用的动作不能作为关系或集合的成员".into(),
+        ));
+    }
+    let members: Vec<_> = children
+        .iter()
+        .map(|child| {
+            child
+                .subject()
+                .expect("container member owns a mathematical object")
+                .clone()
+        })
+        .collect();
+    let rebuilt = expression.object.rebuild_application_with(&members)?;
+    let conditions = conditions_from_objects(&members)?;
+    let exactness = exactness_from_objects(&members);
+    let no_value = children
+        .iter()
+        .any(|child| matches!(child.output, ComputationOutput::NoValue(_)));
+    let held = children
+        .iter()
+        .any(|child| matches!(child.output, ComputationOutput::Held(_)));
+    let kind = crate::input::with_parse_env(|env| {
+        crate::semantic::analyze_tree(env, &rebuilt).semantic.kind
+    });
+    let (interpretation, rule) = match &expression.form {
+        crate::elaboration::MathematicalForm::Relation { operator } => (
+            SemanticInterpretation::Equation,
+            format!("construct-relation-{operator}"),
+        ),
+        crate::elaboration::MathematicalForm::Collection => {
+            (SemanticInterpretation::List, "construct-collection".into())
+        }
+        _ => unreachable!(),
+    };
+    let metadata = if no_value {
+        metadata_with_conditions(
+            ResultMetadata::no_result(exactness, OutcomeReason::MathematicalAbsence),
+            &conditions,
+        )
+    } else if held {
+        metadata_with_conditions(
+            ResultMetadata::unresolved(exactness, OutcomeReason::AlgorithmUncovered),
+            &conditions,
+        )
+    } else {
+        ResultMetadata::solved(exactness, conditions.clone())
+    };
+    let mut output = expression.object.clone();
+    output.apply(ObjectDelta {
+        expression: Some(rebuilt),
+        semantics: Some(SemanticState {
+            kind: if no_value || held {
+                ValueKind::Unevaluated
+            } else {
+                kind
+            },
+            interpretation,
+            metadata,
+            capabilities: if no_value {
+                CapabilitySet::empty()
+            } else {
+                expression.object.semantics.capabilities
+            },
+            requirements: Vec::new(),
+        }),
+        overlay: None,
+        normalization: (!no_value && !held).then_some(NormalizationMetadata {
+            level: NormalizationLevel::Structural,
+            assumptions: conditions.conditions().to_vec(),
+            mode: NormalizationMode::Safe,
+        }),
+    });
+    let mut events = Vec::new();
+    for child in &mut children {
+        if let Some(trace) = child.trace.take() {
+            events.extend(trace.events);
+        }
+    }
+    events.push(RuleEvent {
+        rule,
+        input: members
+            .first()
+            .map(|member| member.reference(None))
+            .unwrap_or_else(|| expression.object.reference(None)),
+        additional_inputs: members
+            .iter()
+            .skip(1)
+            .map(|member| member.reference(None))
+            .collect(),
+        output: output.reference(None),
+        bindings: Vec::new(),
+        conditions: conditions.conditions().to_vec(),
+        payload: RulePayload::Structural,
+        importance: RuleImportance::Normal,
+        presentation: Some(RulePresentation {
+            expression: output.print_source(),
+            explanation: "用已类型化的成员重建数学容器。".into(),
+            tex_override: None,
+        }),
+    });
+    Ok(Computation {
+        output: if no_value {
+            ComputationOutput::NoValue(output)
+        } else if held {
+            ComputationOutput::Held(output)
+        } else {
+            ComputationOutput::Value(output)
+        },
+        trace: Some(RuleTrace { events }),
+        certificates: children
+            .iter_mut()
+            .flat_map(|child| std::mem::take(&mut child.certificates))
+            .collect(),
+        effects: children
+            .iter_mut()
+            .flat_map(|child| std::mem::take(&mut child.effects))
+            .collect(),
+    })
 }
 
 fn execute_function_application(
@@ -1111,5 +1254,38 @@ mod tests {
             };
             assert!(error.to_string().contains("副作用"), "{source}: {error}");
         }
+    }
+
+    #[test]
+    fn collections_and_relations_rebuild_from_semantic_children() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let list = crate::elaboration::elaborate("{Limit(t,0)(Sin(t)/t),D(x)(x^2)}").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &list).unwrap();
+        assert_eq!(result.value().unwrap().print_source(), "{1,2*x}");
+
+        let matrix = crate::elaboration::elaborate("{{Limit(t,0)(Sin(t)/t),2},{3,4}}").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &matrix).unwrap();
+        assert_eq!(result.value().unwrap().semantics.kind, ValueKind::Matrix);
+        assert_eq!(result.value().unwrap().print_source(), "{{1,2},{3,4}}");
+
+        let relation = crate::elaboration::elaborate("(Limit(t,0)(Sin(t)/t))==1").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &relation).unwrap();
+        assert_eq!(result.value().unwrap().semantics.kind, ValueKind::Equation);
+        assert_eq!(result.value().unwrap().print_source(), "1==1");
+    }
+
+    #[test]
+    fn relation_propagates_no_value_and_rejects_effects() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let absent = crate::elaboration::elaborate("(Limit(x,0)(1/x))==0").unwrap();
+        let result = execute_elaborated_structure(&mut engine, &absent).unwrap();
+        assert!(matches!(result.output, ComputationOutput::NoValue(_)));
+
+        let effect = crate::elaboration::elaborate("(Plot(x,x,0,1))==0").unwrap();
+        let error = match execute_elaborated_structure(&mut engine, &effect) {
+            Ok(_) => panic!("relation should reject effect operand"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("副作用"));
     }
 }

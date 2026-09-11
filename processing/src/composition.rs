@@ -101,10 +101,16 @@ pub fn execute_elaborated(
     if (matches!(
         input.root.form,
         crate::elaboration::MathematicalForm::Structural { .. }
-    ) || (matches!(&input.root.form,
+    ) || (matches!(
+        input.root.form,
+        crate::elaboration::MathematicalForm::Relation { .. }
+            | crate::elaboration::MathematicalForm::Collection
+    ) && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
+        || crate::arithmetic::has_effect_descendant(&input.root)))
+        || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if matches!(head.as_str(), "Limit" | "D" | "Deriv"))
-        && crate::arithmetic::has_migrated_calculus_descendant(&input.root))
+            && crate::arithmetic::has_migrated_calculus_descendant(&input.root))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if !is_known_operator(head))

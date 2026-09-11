@@ -1927,6 +1927,21 @@ mod tests {
         assert_eq!(result.kind, "composition");
         assert_eq!(result.expression, "Sin(1)");
         assert_eq!(result.semantic.kind, ValueKind::Scalar);
+
+        let collection = process_expression_with_engine(
+            request("{Limit(t,0)(Sin(t)/t),D(x)(x^2)}", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(collection.expression, "{1,2*x}");
+
+        let relation = process_expression_with_engine(
+            request("(Limit(t,0)(Sin(t)/t))==1", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(relation.expression, "1==1");
+        assert_eq!(relation.semantic.kind, ValueKind::Equation);
     }
 
     #[test]
