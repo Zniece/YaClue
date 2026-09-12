@@ -153,6 +153,9 @@ pub fn try_lower_improper_integral(
     let steps = verbosity
         .map(|_| {
             vec![Step {
+                kind: crate::steps::StepKind::EquivalentTransformation,
+                before_expr: None,
+                before_tex: None,
                 rule: "intrinsic-gamma-lowering".into(),
                 expr: value.clone(),
                 why: "识别 Euler 型积分核，在成立条件下使用原生 Gamma 对象。".into(),

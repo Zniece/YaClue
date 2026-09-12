@@ -137,6 +137,9 @@ impl SemanticOperation<SumRequest> for SumOperation {
                 ),
             };
             let presentation = Step {
+                kind: crate::steps::StepKind::EquivalentTransformation,
+                before_expr: None,
+                before_tex: None,
                 rule: if held { "hold-sum" } else { "finite-sum" }.into(),
                 expr: if held {
                     held_source.clone()

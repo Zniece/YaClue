@@ -76,7 +76,9 @@ pub fn execute_elaborated(
             computation
                 .trace
                 .as_ref()
-                .map(|trace| crate::steps::render_rule_trace(engine, trace, verbosity))
+                .map(|trace| {
+                    crate::steps::render_rule_trace_in_root(engine, trace, verbosity, &input.root)
+                })
                 .transpose()?
                 .unwrap_or_default()
         } else {
@@ -139,7 +141,9 @@ pub fn execute_elaborated(
         computation
             .trace
             .as_ref()
-            .map(|trace| crate::steps::render_rule_trace(engine, trace, verbosity))
+            .map(|trace| {
+                crate::steps::render_rule_trace_in_root(engine, trace, verbosity, &input.root)
+            })
             .transpose()?
             .unwrap_or_default()
     } else {
@@ -487,6 +491,18 @@ mod tests {
             .steps
             .iter()
             .all(|step| step.rule != "antiderivative-family"));
+        assert_eq!(
+            result.steps.first().unwrap().before_expr.as_deref(),
+            Some("D(x)Integrate(x)x*Exp(x)")
+        );
+        assert!(result
+            .steps
+            .windows(2)
+            .all(|pair| { pair[1].before_expr.as_deref() == Some(pair[0].expr.as_str()) }));
+        assert!(result.steps.iter().all(|step| {
+            step.kind == crate::steps::StepKind::EquivalentTransformation
+                && step.before_tex.as_ref().is_some_and(|tex| !tex.is_empty())
+        }));
     }
 
     #[test]

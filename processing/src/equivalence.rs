@@ -111,6 +111,9 @@ pub struct TransformationCertificate {
 impl TransformationCertificate {
     pub fn project_step(&self, tex: String) -> Step {
         Step {
+            kind: crate::steps::StepKind::EquivalentTransformation,
+            before_expr: Some(self.before.clone()),
+            before_tex: None,
             rule: self.rule.clone(),
             expr: self.after.clone(),
             why: format!("应用经 {:?} 验证的有限变换。", self.verification),
