@@ -315,6 +315,7 @@ pub fn derivative_computation_for_object(
         .into_iter()
         .enumerate()
         .map(|(index, fact)| RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             // Preserve the established rule vocabulary at the compatibility
             // projection boundary.  The trace itself supplies the missing
             // object/revision semantics without inventing display-only names.
@@ -676,6 +677,7 @@ fn held_derivative_of_registered_function(
         normalization: None,
     });
     let event = RuleEvent {
+        class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
         rule: "derivative-known-formal-function".into(),
         input,
         additional_inputs: Vec::new(),
@@ -827,6 +829,7 @@ fn derivative_of_registered_function(
         }),
     });
     let event = RuleEvent {
+        class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
         rule: "derivative-registered-function-chain-rule".into(),
         input: input_ref,
         additional_inputs: Vec::new(),
@@ -1013,6 +1016,7 @@ fn integral_derivative_computation(
     held: bool,
 ) -> Computation {
     let event = RuleEvent {
+        class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
         rule: rule.into(),
         input: input.reference(None),
         additional_inputs: Vec::new(),

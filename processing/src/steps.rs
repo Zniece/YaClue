@@ -7,7 +7,7 @@
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::quadrature::{adaptive_simpson, QuadratureOptions};
-use crate::semantic_core::{RuleImportance, RuleTrace};
+use crate::semantic_core::{RuleEventClass, RuleImportance, RuleTrace};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -135,6 +135,7 @@ pub fn render_rule_trace(
     let events = trace
         .events
         .iter()
+        .filter(|event| event.class == RuleEventClass::EquivalentTransformation)
         .filter(|event| {
             matches!(verbosity, StepVerbosity::Detailed)
                 || matches!(verbosity, StepVerbosity::Standard)

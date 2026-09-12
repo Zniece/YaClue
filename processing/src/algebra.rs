@@ -169,6 +169,7 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             output.activate_representation(representation)?;
         }
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: if result.unresolved {
                 "hold-algebra-transform"
             } else if result.changed {

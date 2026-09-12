@@ -152,6 +152,7 @@ fn lower_euler_gamma(
         }),
     });
     let event = RuleEvent {
+        class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
         rule: "intrinsic-gamma-lowering".into(),
         input: input.reference(None),
         additional_inputs: Vec::new(),

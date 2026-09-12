@@ -1209,6 +1209,7 @@ fn execute_container(
         }
     }
     events.push(RuleEvent {
+        class: crate::semantic_core::RuleEventClass::InternalExecution,
         rule,
         input: members
             .first()
@@ -1379,6 +1380,7 @@ fn execute_function_application(
         "apply-function"
     };
     let event = RuleEvent {
+        class: crate::semantic_core::RuleEventClass::InternalExecution,
         rule: rule.into(),
         input: arguments
             .first()
@@ -1681,6 +1683,7 @@ fn retain_pending_application(
         normalization: None,
     });
     let event = RuleEvent {
+        class: crate::semantic_core::RuleEventClass::InternalExecution,
         rule: if no_value {
             "propagate-no-value"
         } else {
@@ -1839,6 +1842,7 @@ impl BinarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor 
             });
         }
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::InternalExecution,
             rule: match request.operation {
                 ArithmeticOperation::Add => "add",
                 ArithmeticOperation::Subtract => "subtract",
@@ -1953,6 +1957,7 @@ impl UnarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor {
             });
         }
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::InternalExecution,
             rule: "negate".into(),
             input: input.reference(None),
             additional_inputs: Vec::new(),
@@ -2123,6 +2128,7 @@ fn no_value_structure(
         },
     )?;
     let event = RuleEvent {
+        class: crate::semantic_core::RuleEventClass::InternalExecution,
         rule: "propagate-no-value".into(),
         input: left.reference(None),
         additional_inputs: right
@@ -2206,6 +2212,17 @@ mod tests {
         let event = &result.trace.as_ref().unwrap().events[0];
         assert_eq!(event.input.object, ObjectId(1));
         assert_eq!(event.additional_inputs[0].object, ObjectId(2));
+        assert_eq!(
+            event.class,
+            crate::semantic_core::RuleEventClass::InternalExecution
+        );
+        assert!(crate::steps::render_rule_trace(
+            &mut engine,
+            result.trace.as_ref().unwrap(),
+            crate::steps::StepVerbosity::Detailed,
+        )
+        .unwrap()
+        .is_empty());
     }
 
     #[test]
@@ -2344,6 +2361,14 @@ mod tests {
             .events
             .iter()
             .any(|event| event.rule == "apply-function"));
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .filter(|event| event.rule == "apply-function")
+            .all(|event| event.class == crate::semantic_core::RuleEventClass::InternalExecution));
 
         let chain = crate::elaboration::elaborate("D(x)(Sin(Limit(t,0)(Sin(t)/t+x)))").unwrap();
         let result = execute_elaborated_structure(&mut engine, &chain).unwrap();

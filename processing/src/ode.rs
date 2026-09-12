@@ -212,6 +212,7 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
                 .map(|constant| ("constant".into(), constant)),
         );
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: if solved {
                 "solve-ode"
             } else {

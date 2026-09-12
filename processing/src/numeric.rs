@@ -136,6 +136,7 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: if unresolved {
                 "hold-numeric-evaluation"
             } else if no_value {
@@ -285,6 +286,7 @@ impl SemanticOperation<FindRootRequest> for FindRootOperation {
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: if converged {
                 "numeric-root"
             } else {
@@ -425,6 +427,7 @@ impl SemanticOperation<TaylorRequest> for TaylorOperation {
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: if result.unresolved {
                 "hold-taylor"
             } else {

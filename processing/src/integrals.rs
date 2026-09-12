@@ -183,6 +183,7 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
                 let is_family = step.rule == "antiderivative-family";
                 let held_family = unresolved && is_family;
                 RuleEvent {
+                    class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
                     rule: if held_family {
                         "hold-integral".into()
                     } else {
@@ -343,6 +344,7 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
         )?
         .into_iter()
         .map(|step| RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: step.rule,
             input: input.reference(None),
             additional_inputs: Vec::new(),

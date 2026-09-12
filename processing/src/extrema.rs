@@ -320,6 +320,7 @@ fn structured_extrema_output(
     let events = events
         .into_iter()
         .map(|event| RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: event.rule,
             input: input.reference(None),
             additional_inputs: Vec::new(),

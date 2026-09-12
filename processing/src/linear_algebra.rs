@@ -188,6 +188,7 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: format!("matrix-{}", request.operation.name()),
             input: input.reference(None),
             additional_inputs: Vec::new(),
@@ -329,6 +330,7 @@ impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: format!("matrix-{}", request.operation.name()),
             input: left.reference(None),
             additional_inputs: vec![right.reference(None)],
@@ -413,6 +415,7 @@ impl BinarySemanticOperation<crate::semantic_core::ObjectId> for MatrixSolveOper
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: "matrix-solve".into(),
             input: matrix.reference(None),
             additional_inputs: vec![vector.reference(None)],
@@ -604,6 +607,7 @@ impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: rule.into(),
             input: input.reference(None),
             additional_inputs: Vec::new(),
@@ -801,6 +805,7 @@ impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: rule.into(),
             input: input.reference(None),
             additional_inputs: Vec::new(),
@@ -888,6 +893,7 @@ impl SemanticOperation<()> for FactorProjectionOperation {
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: "matrix-factor-projection".into(),
             input: input.reference(None),
             additional_inputs: Vec::new(),

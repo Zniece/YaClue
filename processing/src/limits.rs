@@ -410,6 +410,7 @@ fn limit_rule_events(
                 tex_override: None,
             };
             RuleEvent {
+                class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
                 rule: event.rule.into(),
                 input: input.clone(),
                 additional_inputs: Vec::new(),

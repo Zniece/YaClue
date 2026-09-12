@@ -212,6 +212,7 @@ impl SemanticOperation<SumRequest> for SumOperation {
         let events = steps
             .into_iter()
             .map(|step| RuleEvent {
+                class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
                 rule: step.rule,
                 input: input.reference(None),
                 additional_inputs: Vec::new(),

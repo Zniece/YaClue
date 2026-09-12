@@ -121,6 +121,7 @@ impl SemanticOperation<MultivariateObjectRequest> for MultivariateDifferentialOp
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: "multivariate-differential".into(),
             input: input.reference(None),
             additional_inputs: Vec::new(),

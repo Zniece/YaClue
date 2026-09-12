@@ -144,6 +144,7 @@ impl SemanticOperation<NumericOdeRequest> for NumericOdeOperation {
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: if completed {
                 "numeric-ode-trajectory"
             } else {

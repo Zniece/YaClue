@@ -92,6 +92,7 @@ impl BinarySemanticOperation<SubstitutionRequest> for SubstitutionOperation {
             }),
         });
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: if unresolved {
                 "substitute-into-held-object"
             } else {

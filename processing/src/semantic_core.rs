@@ -2290,6 +2290,7 @@ pub enum RuleImportance {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleEvent {
     pub rule: String,
+    pub class: RuleEventClass,
     pub input: ObjectReference,
     /// Other typed inputs for non-unary rules. `input` remains the primary
     /// subject for compatibility with unary domain traces.
@@ -2992,6 +2993,7 @@ mod tests {
             focus: Some(ExpressionPath::root()),
         };
         let event = |input, output| RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: "test".into(),
             input,
             additional_inputs: Vec::new(),
@@ -3018,6 +3020,7 @@ mod tests {
     #[test]
     fn visible_unary_event_has_replayable_ast_context() {
         let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             rule: "simplify-power".into(),
             input: ObjectReference {
                 object: ObjectId(9),
