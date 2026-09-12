@@ -1353,6 +1353,7 @@ mod tests {
             "D(x)LambertW(Exp(x))",
             "D(x)Beta(x,x^2)",
             "D(x)IncompleteGamma(x^2,x+1)",
+            "D(x)BesselJ(n,Sin(x^2))",
         ] {
             let result =
                 process_expression_with_engine(request(expression, true), &mut engine).unwrap();
@@ -1385,6 +1386,16 @@ mod tests {
         assert!(held.expression.contains("D(x,1)"));
         assert_eq!(
             held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+
+        let varying_order =
+            process_expression_with_engine(request("D(x)BesselJ(x,x^2)", true), &mut engine)
+                .unwrap();
+        assert!(varying_order.expression.contains("D(x,1)"));
+        assert!(varying_order.expression.contains("BesselJ(x,x^2)"));
+        assert_eq!(
+            varying_order.outcome.resolution,
             processing::protocol::ResolutionState::Unresolved
         );
     }

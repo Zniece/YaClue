@@ -364,11 +364,29 @@ struct FunctionPartialDerivative {
 
 type PartialDerivativeBuilder = fn(&[String], usize) -> Option<FunctionPartialDerivative>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FunctionParameterRole {
+    Argument,
+    ContinuousParameter,
+    Order,
+}
+
+impl FunctionParameterRole {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Argument => "argument",
+            Self::ContinuousParameter => "continuous_parameter",
+            Self::Order => "order",
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct FunctionDerivativeRule {
     id: &'static str,
     head: &'static str,
     arity: usize,
+    parameter_roles: &'static [FunctionParameterRole],
     partial_derivative: PartialDerivativeBuilder,
 }
 
@@ -507,6 +525,22 @@ fn incomplete_gamma_partial(
     }
 }
 
+fn bessel_j_partial(
+    arguments: &[String],
+    argument_index: usize,
+) -> Option<FunctionPartialDerivative> {
+    let [order, argument] = arguments else {
+        return None;
+    };
+    (argument_index == 1).then(|| FunctionPartialDerivative {
+        expression: format!("(BesselJ(({order})-1,{argument})-BesselJ(({order})+1,{argument}))/2"),
+        conditions: Vec::new(),
+        // Adjacent orders are the canonical derivative representation; do not
+        // let numeric/special-case engine rules expand half-integer orders.
+        requires_structural_output: true,
+    })
+}
+
 /// Function identities are data in this bounded registry. The dispatcher
 /// owns chain-rule composition; adding Erf, Beta or Bessel derivatives does
 /// not add branches to `DerivativeOperation`.
@@ -515,37 +549,62 @@ const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
         id: "function.gamma.derivative",
         head: "Gamma",
         arity: 1,
+        parameter_roles: &[FunctionParameterRole::Argument],
         partial_derivative: gamma_partial,
     },
     FunctionDerivativeRule {
         id: "function.erf.derivative",
         head: "Erf",
         arity: 1,
+        parameter_roles: &[FunctionParameterRole::Argument],
         partial_derivative: erf_partial,
     },
     FunctionDerivativeRule {
         id: "function.poly-gamma.derivative",
         head: "PolyGamma",
         arity: 2,
+        parameter_roles: &[
+            FunctionParameterRole::Order,
+            FunctionParameterRole::Argument,
+        ],
         partial_derivative: poly_gamma_partial,
     },
     FunctionDerivativeRule {
         id: "function.lambert-w.derivative",
         head: "LambertW",
         arity: 1,
+        parameter_roles: &[FunctionParameterRole::Argument],
         partial_derivative: lambert_w_partial,
     },
     FunctionDerivativeRule {
         id: "function.beta.derivative",
         head: "Beta",
         arity: 2,
+        parameter_roles: &[
+            FunctionParameterRole::ContinuousParameter,
+            FunctionParameterRole::ContinuousParameter,
+        ],
         partial_derivative: beta_partial,
     },
     FunctionDerivativeRule {
         id: "function.incomplete-gamma.derivative",
         head: "IncompleteGamma",
         arity: 2,
+        parameter_roles: &[
+            FunctionParameterRole::Argument,
+            FunctionParameterRole::ContinuousParameter,
+        ],
         partial_derivative: incomplete_gamma_partial,
+    },
+    FunctionDerivativeRule {
+        id: "function.bessel-j.derivative",
+        head: "BesselJ",
+        arity: 2,
+        parameter_roles: &[
+            FunctionParameterRole::Order,
+            FunctionParameterRole::Argument,
+        ],
+        partial_derivative: bessel_j_partial,
     },
 ];
 
@@ -578,6 +637,7 @@ fn derivative_of_registered_function(
     else {
         return Ok(None);
     };
+    debug_assert_eq!(rule.parameter_roles.len(), rule.arity);
     let mut terms = Vec::with_capacity(arguments.len());
     let mut events = Vec::new();
     let mut certificates = Vec::new();
@@ -666,6 +726,14 @@ fn derivative_of_registered_function(
             ("variable".into(), request.variable.clone()),
             ("function".into(), head),
             ("derivative_rule".into(), rule.id.into()),
+            (
+                "parameter_roles".into(),
+                rule.parameter_roles
+                    .iter()
+                    .map(|role| role.label())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
         ],
         conditions: conditions.conditions().to_vec(),
         payload: RulePayload::Rewrite,
@@ -1200,6 +1268,50 @@ mod tests {
         assert!(source.contains("Integrate(s,0,"), "{source}");
         assert!(!source.contains("YaClueIncompleteGammaDerivativeInternal1T"));
         assert!(!source.contains("D("));
+    }
+
+    #[test]
+    fn bessel_j_uses_adjacent_orders_and_preserves_the_order_role() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let expression = crate::elaboration::elaborate("D(x)BesselJ(n,Sin(x^2))").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+        let source = result.value().unwrap().print_source();
+        assert!(source.contains("BesselJ(n-1,Sin(x^2))"), "{source}");
+        assert!(source.contains("BesselJ(n+1,Sin(x^2))"), "{source}");
+        assert!(source.contains("Cos(x^2)"), "{source}");
+        assert!(source.ends_with("*x"), "{source}");
+        assert!(!source.contains("D("), "{source}");
+        assert!(result.trace.as_ref().unwrap().events.iter().any(|event| {
+            event
+                .bindings
+                .iter()
+                .any(|(key, value)| key == "parameter_roles" && value == "order,argument")
+        }));
+
+        let half_order = crate::elaboration::elaborate("D(x)BesselJ(1/2,x)").unwrap();
+        let half_order_result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &half_order).unwrap();
+        let half_order_source = half_order_result.value().unwrap().print_source();
+        assert!(half_order_source.matches("BesselJ(").count() == 2);
+        assert!(!half_order_source.contains("Sin("), "{half_order_source}");
+
+        let varying_order = crate::elaboration::elaborate("D(x)BesselJ(x,x^2)").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &varying_order).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        assert!(result
+            .subject()
+            .unwrap()
+            .print_source()
+            .contains("BesselJ(x,x^2)"));
+    }
+
+    #[test]
+    fn registered_function_descriptors_have_one_role_per_parameter_slot() {
+        for rule in FUNCTION_DERIVATIVE_RULES {
+            assert_eq!(rule.parameter_roles.len(), rule.arity, "{}", rule.id);
+        }
     }
 
     #[test]
