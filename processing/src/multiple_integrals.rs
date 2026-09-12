@@ -8,6 +8,202 @@ use crate::input::{
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MultipleIntegralRequest {
+    Double {
+        inner: (String, String, String),
+        outer: (String, String, String),
+    },
+    Polar {
+        x: String,
+        y: String,
+        radius: String,
+        angle: String,
+        radial: (String, String),
+        angular: (String, String),
+    },
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MultipleIntegralOperation;
+
+impl SemanticOperation<MultipleIntegralRequest> for MultipleIntegralOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &MultipleIntegralRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::IntegrateMultiple)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备多重积分能力".into(),
+            ));
+        }
+        let expression = input.print_source();
+        let (operator, operator_id, value, unresolved, steps, held_source) = match request {
+            MultipleIntegralRequest::Double { inner, outer } => {
+                let result = double_integral_steps_with_verbosity(
+                    engine,
+                    &expression,
+                    IntegralBound {
+                        variable: &inner.0,
+                        lower: &inner.1,
+                        upper: &inner.2,
+                    },
+                    IntegralBound {
+                        variable: &outer.0,
+                        lower: &outer.1,
+                        upper: &outer.2,
+                    },
+                    StepVerbosity::Detailed,
+                )?;
+                let unresolved = result.result.status != IteratedIntegralStatus::Evaluated;
+                let held_source = format!(
+                    "DoubleIntegral({expression},{},{},{},{},{},{})",
+                    inner.0, inner.1, inner.2, outer.0, outer.1, outer.2
+                );
+                (
+                    "DoubleIntegral",
+                    OperatorId::DoubleIntegral,
+                    result.result.value,
+                    unresolved,
+                    result.steps,
+                    held_source,
+                )
+            }
+            MultipleIntegralRequest::Polar {
+                x,
+                y,
+                radius,
+                angle,
+                radial,
+                angular,
+            } => {
+                let result = polar_integral_steps_with_verbosity(
+                    engine,
+                    &expression,
+                    x,
+                    y,
+                    radius,
+                    angle,
+                    PolarRegion {
+                        radial_lower: &radial.0,
+                        radial_upper: &radial.1,
+                        angle_lower: &angular.0,
+                        angle_upper: &angular.1,
+                    },
+                    StepVerbosity::Detailed,
+                )?;
+                let unresolved = result.result.integral.status != IteratedIntegralStatus::Evaluated;
+                let held_source = format!(
+                    "PolarIntegral({expression},{x},{y},{radius},{angle},{},{},{},{})",
+                    radial.0, radial.1, angular.0, angular.1
+                );
+                (
+                    "PolarIntegral",
+                    OperatorId::PolarIntegral,
+                    result.result.integral.value,
+                    unresolved,
+                    result.steps,
+                    held_source,
+                )
+            }
+        };
+        let source = if unresolved { held_source } else { value };
+        let metadata = if unresolved {
+            ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+        } else {
+            ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+        };
+        let mut semantics = SemanticState {
+            kind: if unresolved {
+                ValueKind::Unevaluated
+            } else {
+                crate::input::with_parse_env(|env| {
+                    let parsed = yacas_rs::parser::parse_expression(env, &format!("{source};"))
+                        .expect("multiple integral output parses")
+                        .expect("multiple integral output exists");
+                    crate::semantic::analyze_tree(env, &parsed).semantic.kind
+                })
+            },
+            interpretation: if unresolved {
+                SemanticInterpretation::HeldApplication {
+                    operator: operator.into(),
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata,
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        if unresolved {
+            crate::semantic_core::promote_held_application(
+                operator,
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!unresolved).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(operator_id),
+            }),
+        });
+        let events = steps
+            .into_iter()
+            .map(|step| RuleEvent {
+                rule: step.rule,
+                input: input.reference(None),
+                additional_inputs: Vec::new(),
+                output: output.reference(None),
+                bindings: Vec::new(),
+                conditions: Vec::new(),
+                payload: RulePayload::Structural,
+                importance: match step.importance {
+                    StepImportance::Routine => RuleImportance::Routine,
+                    StepImportance::Normal => RuleImportance::Normal,
+                    StepImportance::Key => RuleImportance::Key,
+                },
+                presentation: Some(RulePresentation {
+                    expression: step.expr,
+                    explanation: step.why,
+                    tex_override: Some(step.tex),
+                }),
+            })
+            .collect();
+        Ok(Computation {
+            output: if unresolved {
+                ComputationOutput::Held(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace { events }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct IntegralBound<'a> {
     pub variable: &'a str,
@@ -891,6 +1087,80 @@ mod tests {
     use super::*;
     use crate::engine::RustEngine;
     use crate::test_support::CountingEngine;
+
+    fn object(source: &str) -> crate::semantic_core::MathematicalObject {
+        object_from_source(
+            crate::semantic_core::ObjectId(81),
+            source,
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn multiple_integral_operation_returns_typed_values_and_held_objects() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let double = MultipleIntegralOperation
+            .compute(
+                &mut engine,
+                &object("x+y+a"),
+                &MultipleIntegralRequest::Double {
+                    inner: ("y".into(), "0".into(), "2".into()),
+                    outer: ("x".into(), "0".into(), "1".into()),
+                },
+            )
+            .unwrap();
+        assert!(matches!(double.output, ComputationOutput::Value(_)));
+        assert_eq!(
+            double.subject().unwrap().id,
+            crate::semantic_core::ObjectId(81)
+        );
+        assert!(double.subject().unwrap().print_source().contains("a"));
+
+        let polar = MultipleIntegralOperation
+            .compute(
+                &mut engine,
+                &object("x^2+y^2"),
+                &MultipleIntegralRequest::Polar {
+                    x: "x".into(),
+                    y: "y".into(),
+                    radius: "r".into(),
+                    angle: "theta".into(),
+                    radial: ("0".into(), "1".into()),
+                    angular: ("0".into(), "2*Pi".into()),
+                },
+            )
+            .unwrap();
+        assert!(matches!(polar.output, ComputationOutput::Value(_)));
+        assert!(polar
+            .trace
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| event.rule == "polar-jacobian"));
+
+        let held = MultipleIntegralOperation
+            .compute(
+                &mut engine,
+                &object("f(x,y)"),
+                &MultipleIntegralRequest::Double {
+                    inner: ("y".into(), "0".into(), "1".into()),
+                    outer: ("x".into(), "0".into(), "1".into()),
+                },
+            )
+            .unwrap();
+        assert!(matches!(held.output, ComputationOutput::Held(_)));
+        assert!(matches!(
+            held.subject().unwrap().semantics.interpretation,
+            SemanticInterpretation::HeldTypedApplication(_)
+        ));
+    }
 
     #[test]
     fn evaluates_rectangular_and_variable_bound_regions() {

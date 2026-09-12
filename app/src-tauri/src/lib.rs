@@ -1,7 +1,6 @@
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::linear_algebra::MatrixOperation;
-use processing::multiple_integrals::{IntegralBound, PolarRegion};
 use processing::ode::InitialCondition;
 use processing::ode_numeric::NumericOdeOptions;
 use processing::plot::SampleOptions;
@@ -223,6 +222,8 @@ fn project_domain_semantic(
         && result.kind != "integral"
         && result.kind != "series"
         && result.kind != "defined_object"
+        && result.kind != "double_integral"
+        && result.kind != "polar_integral"
         && generated.is_empty()
     {
         return Ok(input.clone());
@@ -268,7 +269,7 @@ fn project_domain_semantic(
     .map_err(message)?;
     if matches!(
         result.kind.as_str(),
-        "composition" | "series" | "defined_object"
+        "composition" | "series" | "defined_object" | "double_integral" | "polar_integral"
     ) && result
         .data
         .get("status")
@@ -469,9 +470,9 @@ fn dispatch_expression_with_engine(
                         }
                         OperatorId::Sum
                         | OperatorId::ImproperIntegral
-                        | OperatorId::PrincipalValueIntegral => {
-                            (descriptor.product_kind, descriptor.title)
-                        }
+                        | OperatorId::PrincipalValueIntegral
+                        | OperatorId::DoubleIntegral
+                        | OperatorId::PolarIntegral => (descriptor.product_kind, descriptor.title),
                         OperatorId::Factor | OperatorId::AlgebraTransform
                             if result.status
                                 == processing::composition::CompositionStatus::Completed =>
@@ -495,106 +496,6 @@ fn dispatch_expression_with_engine(
     }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
-            (
-                "DoubleIntegral",
-                [expression, inner_var, inner_from, inner_to, outer_var, outer_from, outer_to],
-            ) => {
-                let inner = IntegralBound {
-                    variable: inner_var,
-                    lower: inner_from,
-                    upper: inner_to,
-                };
-                let outer = IntegralBound {
-                    variable: outer_var,
-                    lower: outer_from,
-                    upper: outer_to,
-                };
-                if request.steps {
-                    let result =
-                        processing::multiple_integrals::double_integral_steps_with_verbosity(
-                            &mut *engine,
-                            expression,
-                            inner,
-                            outer,
-                            verbosity,
-                        )
-                        .map_err(message)?;
-                    return unified_result(
-                        "double_integral",
-                        "二重积分",
-                        result.result.value.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::multiple_integrals::double_integral(
-                    &mut *engine,
-                    expression,
-                    inner,
-                    outer,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "double_integral",
-                    "二重积分",
-                    result.value.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            (
-                "PolarIntegral",
-                [expression, x, y, radius, angle, radial_from, radial_to, angle_from, angle_to],
-            ) => {
-                let region = PolarRegion {
-                    radial_lower: radial_from,
-                    radial_upper: radial_to,
-                    angle_lower: angle_from,
-                    angle_upper: angle_to,
-                };
-                if request.steps {
-                    let result =
-                        processing::multiple_integrals::polar_integral_steps_with_verbosity(
-                            &mut *engine,
-                            expression,
-                            x,
-                            y,
-                            radius,
-                            angle,
-                            region,
-                            verbosity,
-                        )
-                        .map_err(message)?;
-                    return unified_result(
-                        "polar_integral",
-                        "极坐标积分",
-                        result.result.integral.value.clone(),
-                        result.result.integral.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::multiple_integrals::polar_integral(
-                    &mut *engine,
-                    expression,
-                    x,
-                    y,
-                    radius,
-                    angle,
-                    region,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "polar_integral",
-                    "极坐标积分",
-                    result.integral.value.clone(),
-                    result.integral.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
             ("OdeSolveNumeric", [equation, independent, dependent, start, value, end]) => {
                 let end = end
                     .parse::<f64>()
@@ -1253,14 +1154,11 @@ mod tests {
             gaussian_disk.outcome.resolution,
             processing::protocol::ResolutionState::Solved
         );
-        assert_eq!(
-            gaussian_disk.data["result"]["integral"]["status"],
-            "evaluated"
-        );
-        assert!(!gaussian_disk.data["result"]["transformed_integrand"]
-            .as_str()
-            .unwrap()
-            .contains("theta"));
+        assert_eq!(gaussian_disk.data["status"], "completed");
+        assert!(gaussian_disk
+            .steps
+            .iter()
+            .any(|step| step.rule == "polar-transform-integrand"));
 
         let principal_value = process_expression_with_engine(
             request("PrincipalValueIntegral(1/x,x,-1,1,{0})", false),
@@ -1518,7 +1416,7 @@ mod tests {
     #[test]
     fn unified_input_preserves_unlowered_structured_compositions() {
         let mut engine = RustEngineProxy::spawn().unwrap();
-        for expression in ["Factor(DoubleIntegral(x+y,y,0,x,x,0,1))"] {
+        for expression in ["Factor(DoubleIntegral(f(x,y),y,0,x,x,0,1))"] {
             let result =
                 process_expression_with_engine(request(expression, true), &mut engine).unwrap();
             assert_eq!(result.kind, "composition", "{expression}");
@@ -1533,7 +1431,7 @@ mod tests {
                 processing::protocol::ResolutionState::Unresolved,
                 "{expression}"
             );
-            assert_eq!(result.steps[0].rule, "held-operator-application");
+            assert!(!result.steps.is_empty());
             assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
         }
 
@@ -1816,6 +1714,41 @@ mod tests {
             principal.outcome.resolution,
             processing::protocol::ResolutionState::Solved
         );
+    }
+
+    #[test]
+    fn unified_input_routes_multiple_integrals_as_semantic_objects() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let double = process_expression_with_engine(
+            request("DoubleIntegral(x+y,y,0,2,x,0,1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(double.kind, "double_integral");
+        assert_eq!(double.expression, "3");
+        assert!(double.semantic.symbols.is_empty());
+        assert!(double.semantic.bound_symbols.is_empty());
+        assert!(double
+            .steps
+            .iter()
+            .any(|step| step.rule == "iterated-integral-inner"));
+
+        let polar = process_expression_with_engine(
+            request("PolarIntegral(x^2+y^2,x,y,r,theta,0,1,0,2*Pi)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(polar.kind, "polar_integral");
+        assert!(polar.expression.contains("Pi"));
+        assert!(polar.steps.iter().any(|step| step.rule == "polar-jacobian"));
+
+        let composed = process_expression_with_engine(
+            request("D(a)DoubleIntegral(x+y+a,y,0,1,x,0,1)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.expression, "1");
+        assert_eq!(composed.kind, "composition");
     }
 
     #[test]

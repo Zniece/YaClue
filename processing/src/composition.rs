@@ -940,9 +940,10 @@ fn apply(
         CompositionOperator::ImproperIntegral | CompositionOperator::PrincipalValueIntegral => Err(
             EngineError::InvalidInput("定义型积分必须通过类型化数学对象执行".into()),
         ),
-        CompositionOperator::DoubleIntegral
-        | CompositionOperator::PolarIntegral
-        | CompositionOperator::OdeSolveNumeric
+        CompositionOperator::DoubleIntegral | CompositionOperator::PolarIntegral => Err(
+            EngineError::InvalidInput("多重积分必须通过类型化数学对象执行".into()),
+        ),
+        CompositionOperator::OdeSolveNumeric
         | CompositionOperator::FindRoot
         | CompositionOperator::Plot
         | CompositionOperator::Extrema
@@ -1087,6 +1088,31 @@ mod tests {
             .unwrap();
         assert_eq!(result.status, CompositionStatus::Completed);
         assert_eq!(result.value, "0");
+    }
+
+    #[test]
+    fn multiple_integrals_compose_after_scoped_coordinate_evaluation() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected, operator) in [
+            (
+                "D(a)DoubleIntegral(x+y+a,y,0,1,x,0,1)",
+                "1",
+                CompositionOperator::DoubleIntegral,
+            ),
+            (
+                "D(a)PolarIntegral(a,x,y,r,theta,0,1,0,2*Pi)",
+                "Pi",
+                CompositionOperator::PolarIntegral,
+            ),
+        ] {
+            let input = crate::elaboration::elaborate_input(source).unwrap();
+            let result = execute_elaborated(&mut engine, &input, StepVerbosity::Detailed, true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+            assert_eq!(result.value, expected, "{source}");
+            assert!(result.operators.contains(&operator));
+        }
     }
 
     #[test]
@@ -1454,10 +1480,15 @@ mod tests {
     #[test]
     fn structured_operands_remain_held_when_no_lowering_rule_applies() {
         let mut engine = RustEngine::spawn().unwrap();
-        for expression in [
-            "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
-            "D(x)OdeSolveNumeric(y'==y,x,y,0,1,2)",
-        ] {
+        let migrated = "Factor(DoubleIntegral(f(x,y),y,0,x,x,0,1))";
+        let result = execute_steps(&mut engine, migrated, StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert_eq!(result.value, migrated);
+        assert!(!result.steps.is_empty());
+
+        for expression in ["D(x)OdeSolveNumeric(y'==y,x,y,0,1,2)"] {
             let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
                 .unwrap()
                 .unwrap();

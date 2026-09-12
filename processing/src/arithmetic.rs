@@ -92,6 +92,10 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                     matches!(expression.children.len(), 4 | 5)
                         && can_execute_elaborated_tree(&expression.children[0])
                 }
+                ObjectNativeRoute::MultipleIntegral => {
+                    matches!(expression.children.len(), 7 | 9)
+                        && can_execute_elaborated_tree(&expression.children[0])
+                }
             }
         }
         crate::elaboration::MathematicalForm::Application { head } => {
@@ -182,6 +186,9 @@ pub fn execute_elaborated_structure(
                 ObjectNativeRoute::Series => execute_sum_application(engine, expression),
                 ObjectNativeRoute::DefinedIntegral => {
                     execute_defined_integral_application(engine, expression, head)
+                }
+                ObjectNativeRoute::MultipleIntegral => {
+                    execute_multiple_integral_application(engine, expression, head)
                 }
             };
         }
@@ -419,6 +426,48 @@ fn execute_defined_integral_application(
             },
         ),
     )?;
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
+}
+
+fn execute_multiple_integral_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    let source = |index: usize| expression.children[index].object.print_source();
+    let request = match (
+        crate::semantic_core::operator_descriptor(head).map(|item| item.id),
+        expression.children.len(),
+    ) {
+        (Some(OperatorId::DoubleIntegral), 7) => {
+            crate::multiple_integrals::MultipleIntegralRequest::Double {
+                inner: (source(1), source(2), source(3)),
+                outer: (source(4), source(5), source(6)),
+            }
+        }
+        (Some(OperatorId::PolarIntegral), 9) => {
+            crate::multiple_integrals::MultipleIntegralRequest::Polar {
+                x: source(1),
+                y: source(2),
+                radius: source(3),
+                angle: source(4),
+                radial: (source(5), source(6)),
+                angular: (source(7), source(8)),
+            }
+        }
+        _ => return Err(EngineError::InvalidInput(format!("{head} 的参数签名无效"))),
+    };
+    let mut operand = execute_elaborated_structure(engine, &expression.children[0])?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, head, 0);
+    }
+    let input = operand
+        .value()
+        .expect("checked multiple-integral operand")
+        .clone();
+    let mut current =
+        crate::multiple_integrals::MultipleIntegralOperation.compute(engine, &input, &request)?;
     merge_prior_computation(&mut current, &mut operand);
     Ok(current)
 }

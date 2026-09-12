@@ -344,12 +344,12 @@ pub enum ObjectNativeRoute {
     FactorProjection,
     Series,
     DefinedIntegral,
+    MultipleIntegral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingDomain {
-    MultipleIntegral,
     NumericOde,
     NumericRoot,
     Plot,
@@ -951,7 +951,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: DOUBLE_INTEGRAL_BINDERS,
         capability: CapabilityId::IntegrateMultiple,
-        availability: OperatorAvailability::Pending(PendingDomain::MultipleIntegral),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MultipleIntegral),
         product_kind: "double_integral",
         title: "二重积分",
     },
@@ -964,7 +964,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_AND_THIRD_BIND_FIRST,
         capability: CapabilityId::IntegrateMultiple,
-        availability: OperatorAvailability::Pending(PendingDomain::MultipleIntegral),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MultipleIntegral),
         product_kind: "polar_integral",
         title: "极坐标积分",
     },
@@ -1503,6 +1503,7 @@ pub enum ObjectCapability {
     ExpandTaylor,
     SumSeries,
     IntegrateDefined,
+    IntegrateMultiple,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1542,6 +1543,7 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::ExpandTaylor as u8)
                 | (1 << ObjectCapability::SumSeries as u8)
                 | (1 << ObjectCapability::IntegrateDefined as u8)
+                | (1 << ObjectCapability::IntegrateMultiple as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
@@ -2290,17 +2292,10 @@ mod tests {
             .iter()
             .flat_map(|capability| capability.names.iter().copied())
             .collect();
-        let expected_names: BTreeSet<_> = [
-            "DoubleIntegral",
-            "PolarIntegral",
-            "OdeSolveNumeric",
-            "FindRoot",
-            "Plot",
-            "Extrema",
-            "Lagrange",
-        ]
-        .into_iter()
-        .collect();
+        let expected_names: BTreeSet<_> =
+            ["OdeSolveNumeric", "FindRoot", "Plot", "Extrema", "Lagrange"]
+                .into_iter()
+                .collect();
         assert_eq!(generated_names, expected_names);
         assert!(generated
             .iter()
