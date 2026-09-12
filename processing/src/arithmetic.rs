@@ -362,19 +362,20 @@ fn execute_effect_application(
             "Plot 需要表达式、变量和区间上下界".into(),
         ));
     };
-    let operand = execute_elaborated_structure(engine, operand_node)?;
-    let ComputationOutput::Value(input) = operand.output else {
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
         return Err(EngineError::InvalidInput(
             "Plot 的表达式必须先成为可计算的数学值".into(),
         ));
-    };
+    }
+    let input = operand.value().expect("checked plot operand").clone();
     let bound = |node: &crate::elaboration::ElaboratedObject, label: &str| {
         node.object
             .print_source()
             .parse::<f64>()
             .map_err(|_| EngineError::InvalidInput(format!("绘图区间{label}必须是有限数字")))
     };
-    crate::plot::PlotOperation.compute(
+    let mut current = crate::plot::PlotOperation.compute(
         engine,
         &input,
         &crate::plot::PlotRequest {
@@ -382,7 +383,9 @@ fn execute_effect_application(
             range: (bound(min, "下界")?, bound(max, "上界")?),
             options: crate::plot::SampleOptions::default(),
         },
-    )
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
 }
 
 fn execute_sum_application(

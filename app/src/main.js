@@ -216,8 +216,9 @@ function renderSteps(steps) {
 
 function renderPlot(data) {
   const points = data.kind === "numeric_ode"
-    ? data.data.points.map((point) => ({ x: point.independent, y: point.state[0] }))
-    : data.data.points;
+    ? (data.data.sampled_data?.points || data.data.points)
+        .map((point) => ({ x: point.independent, y: point.state[0] }))
+    : (data.data.plot?.sampled?.points || data.data.points);
   plotEl.hidden = false;
   const ratio = window.devicePixelRatio || 1;
   const width = plotEl.clientWidth || 800;
@@ -274,7 +275,10 @@ async function calculate() {
     $("#result-title").textContent = result.title;
     $("#result-kind").textContent = result.kind.replaceAll("_", " ");
     renderSemantic(result.semantic, result.outcome);
-    if (result.kind === "plot" || result.kind === "numeric_ode") renderPlot(result);
+    if (result.kind === "plot") {
+      renderSummary(result);
+      renderPlot(result);
+    } else if (result.kind === "numeric_ode") renderPlot(result);
     else renderSummary(result);
     renderSteps(result.steps || []);
     rawEl.textContent = JSON.stringify(result, null, 2);

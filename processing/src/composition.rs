@@ -124,6 +124,16 @@ pub fn execute_elaborated(
             && (has_native_descendant || has_effect_descendant));
     if root_is_effect {
         let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
+        let steps = if include_steps {
+            computation
+                .trace
+                .as_ref()
+                .map(|trace| crate::steps::render_rule_trace(engine, trace, verbosity))
+                .transpose()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let plot = computation
             .effects
             .into_iter()
@@ -131,11 +141,16 @@ pub fn execute_elaborated(
                 crate::semantic_core::Effect::Plot(plot) => Some(plot),
                 crate::semantic_core::Effect::Ui(_) => None,
             });
+        let value = plot
+            .as_ref()
+            .map(|effect| effect.expression.clone())
+            .unwrap_or_else(|| input.root.object.print_source());
+        let tex = strip_tex_delimiters(&engine.eval(&value)?.tex);
         return Ok(Some(CompositionResult {
             status: CompositionStatus::Completed,
-            value: input.root.object.print_source(),
-            tex: String::new(),
-            steps: Vec::new(),
+            value,
+            tex,
+            steps,
             operators: vec![CompositionOperator::Plot],
             reason: None,
             arbitrary_constants: Vec::new(),

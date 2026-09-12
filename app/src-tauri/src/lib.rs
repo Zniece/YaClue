@@ -197,12 +197,6 @@ fn project_domain_semantic(
     input: &SemanticSummary,
     result: &DispatchExpressionResult,
 ) -> Result<SemanticSummary, ErrorResponse> {
-    if result.data.get("effect_only").and_then(Value::as_bool) == Some(true) {
-        let mut semantic = input.clone();
-        semantic.kind = ValueKind::Unevaluated;
-        semantic.completeness = None;
-        return Ok(semantic);
-    }
     if result
         .data
         .get("status")
@@ -467,6 +461,11 @@ fn dispatch_expression_with_engine(
             let (kind, title) = match (&elaborated.root.form, root_descriptor) {
                 (processing::elaboration::MathematicalForm::Relation { .. }, _) => {
                     ("equation", "方程")
+                }
+                (_, Some(descriptor))
+                    if descriptor.id == processing::semantic_core::OperatorId::Plot =>
+                {
+                    (descriptor.product_kind, descriptor.title)
                 }
                 (_, Some(descriptor)) if !has_native_child => {
                     use processing::semantic_core::OperatorId;
@@ -1766,16 +1765,18 @@ mod tests {
     fn unified_input_exposes_plot_as_a_terminal_structured_effect() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         let result =
-            process_expression_with_engine(request("Plot(Sin(x),x,0,3.14)", false), &mut engine)
+            process_expression_with_engine(request("Plot(D(x)(x^2),x,0,3.14)", true), &mut engine)
                 .unwrap();
         assert_eq!(result.kind, "plot");
-        assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
+        assert_eq!(result.semantic.kind, ValueKind::Expression);
+        assert_eq!(result.expression, "2*x");
         assert_eq!(result.data["effect_only"], true);
-        assert_eq!(result.data["plot"]["expression"], "Sin(x)");
+        assert_eq!(result.data["plot"]["expression"], "2*x");
         assert_eq!(result.data["plot"]["variable"], "x");
         assert!(result.data["plot"]["sampled"]["points"]
             .as_array()
             .is_some_and(|points| !points.is_empty()));
+        assert!(result.steps.iter().any(|step| step.rule == "power-rule"));
 
         for expression in ["Plot(x,x,0,1)+1", "Sin(Plot(x,x,0,1))"] {
             let error =
