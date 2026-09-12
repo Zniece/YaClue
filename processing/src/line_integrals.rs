@@ -5,6 +5,16 @@ use crate::input::{analyze_expression, fresh_internal_symbols, render_one_tex, v
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
+use yacas_rs::value::{spine_refs, ObjectKind};
+
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,6 +32,160 @@ pub struct LineIntegralRequest {
     pub parameter: String,
     pub lower: String,
     pub upper: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct LineIntegralObjectRequest {
+    pub kind: LineIntegralKind,
+    pub coordinates: Vec<String>,
+    pub curve: Vec<String>,
+    pub parameter: String,
+    pub lower: String,
+    pub upper: String,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LineIntegralOperation;
+
+impl SemanticOperation<LineIntegralObjectRequest> for LineIntegralOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &LineIntegralObjectRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::IntegrateLine)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备线积分能力".into(),
+            ));
+        }
+        let legacy = LineIntegralRequest {
+            kind: request.kind,
+            field: object_components(input),
+            coordinates: request.coordinates.clone(),
+            curve: request.curve.clone(),
+            parameter: request.parameter.clone(),
+            lower: request.lower.clone(),
+            upper: request.upper.clone(),
+        };
+        let evaluated = compute_steps_with_verbosity(engine, &legacy, StepVerbosity::Detailed)?;
+        let result = evaluated.result;
+        let source = if result.completed {
+            result.value.clone()
+        } else {
+            format!(
+                "{}({},{},{},{},{},{})",
+                match request.kind {
+                    LineIntegralKind::ScalarArcLength => "ScalarLineIntegral",
+                    LineIntegralKind::VectorWork => "VectorLineIntegral",
+                },
+                input.print_source(),
+                list(&request.coordinates),
+                list(&request.curve),
+                request.parameter,
+                request.lower,
+                request.upper
+            )
+        };
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let metadata = if result.completed {
+            ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+        } else {
+            ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+        };
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(SemanticState {
+                kind: if result.completed {
+                    crate::semantic::analyze_input(&source, "线积分结果")?
+                        .semantic
+                        .kind
+                } else {
+                    ValueKind::Unevaluated
+                },
+                interpretation: if result.completed {
+                    SemanticInterpretation::PlainExpression
+                } else {
+                    SemanticInterpretation::HeldApplication {
+                        operator: "LineIntegral".into(),
+                    }
+                },
+                metadata,
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            }),
+            overlay: None,
+            normalization: result.completed.then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::LineIntegral),
+            }),
+        });
+        let events = evaluated
+            .steps
+            .into_iter()
+            .map(|step| RuleEvent {
+                rule: step.rule,
+                input: input.reference(None),
+                additional_inputs: Vec::new(),
+                output: output.reference(None),
+                bindings: vec![("parameter".into(), request.parameter.clone())],
+                conditions: Vec::new(),
+                payload: RulePayload::Structural,
+                importance: match step.importance {
+                    StepImportance::Routine => RuleImportance::Routine,
+                    StepImportance::Normal => RuleImportance::Normal,
+                    StepImportance::Key => RuleImportance::Key,
+                },
+                presentation: Some(RulePresentation {
+                    expression: step.expr,
+                    explanation: step.why,
+                    tex_override: Some(step.tex),
+                }),
+            })
+            .collect();
+        Ok(Computation {
+            output: if result.completed {
+                ComputationOutput::Value(output)
+            } else {
+                ComputationOutput::Held(output)
+            },
+            trace: Some(RuleTrace { events }),
+            certificates: vec![Certificate {
+                kind: "line_integral".into(),
+                payload: serde_json::to_string(&result)
+                    .map_err(|error| EngineError::Parse(error.to_string()))?,
+            }],
+            effects: Vec::new(),
+        })
+    }
+}
+
+fn object_components(input: &crate::semantic_core::MathematicalObject) -> Vec<String> {
+    let expression = input.raw_expression();
+    let ObjectKind::Sublist(first) = &expression.kind else {
+        return vec![input.print_source()];
+    };
+    let nodes = spine_refs(first).collect::<Vec<_>>();
+    if nodes
+        .first()
+        .and_then(|node| node.atom_string())
+        .is_none_or(|head| head.as_ref() != "List")
+    {
+        return vec![input.print_source()];
+    }
+    crate::input::with_parse_env(|env| {
+        nodes
+            .iter()
+            .skip(1)
+            .map(|node| yacas_rs::printer::infix_print(env, node))
+            .collect()
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]

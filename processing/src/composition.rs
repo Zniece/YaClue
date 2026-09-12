@@ -189,7 +189,7 @@ pub fn execute_elaborated(
     let analysis = computation.certificates.iter().find_map(|certificate| {
         matches!(
             certificate.kind.as_str(),
-            "extrema_analysis" | "lagrange_analysis" | "multivariate_shape"
+            "extrema_analysis" | "lagrange_analysis" | "multivariate_shape" | "line_integral"
         )
         .then(|| serde_json::from_str(&certificate.payload).ok())
         .flatten()
@@ -906,6 +906,34 @@ mod tests {
                 .steps
                 .iter()
                 .any(|step| step.rule == "multivariate-differential"));
+        }
+    }
+
+    #[test]
+    fn line_integrals_use_the_object_pipeline_and_compose() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("ScalarLineIntegral(x,{x,y},{t,0},t,0,1)", "1/2"),
+            ("VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1)", "1"),
+            (
+                "Sin(VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1))",
+                "Sin(1)",
+            ),
+        ] {
+            let result = execute_steps(&mut engine, source, StepVerbosity::Concise)
+                .unwrap_or_else(|error| panic!("{source}: {error}"))
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+            assert_eq!(
+                engine.eval(&result.value).unwrap().expr.to_string(),
+                engine.eval(expected).unwrap().expr.to_string(),
+                "{source}: {}",
+                result.value
+            );
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "line-integral-result"));
         }
     }
 }

@@ -99,6 +99,9 @@ pub fn execute_elaborated_structure(
                 ObjectNativeRoute::MultivariateDifferential => {
                     execute_multivariate_application(engine, expression, head)
                 }
+                ObjectNativeRoute::LineIntegral => {
+                    execute_line_integral_application(engine, expression, head)
+                }
             };
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -614,6 +617,55 @@ fn execute_multivariate_application(
         },
     )?;
     merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
+}
+
+fn execute_line_integral_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    let [field_node, coordinates_node, curve_node, parameter, lower, upper] =
+        expression.children.as_slice()
+    else {
+        return Err(EngineError::InvalidInput(format!(
+            "{head} 需要场、坐标列表、参数曲线、参数和区间"
+        )));
+    };
+    let collection = |node: &crate::elaboration::ElaboratedObject,
+                      label: &str|
+     -> Result<Vec<String>, EngineError> {
+        if !matches!(node.form, crate::elaboration::MathematicalForm::Collection) {
+            return Err(EngineError::InvalidInput(format!("{label}必须是列表")));
+        }
+        Ok(node
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect())
+    };
+    let mut field = execute_elaborated_structure(engine, field_node)?;
+    if !matches!(field.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, field, head, 0);
+    }
+    let input = field.value().expect("checked line-integral field").clone();
+    let mut current = crate::line_integrals::LineIntegralOperation.compute(
+        engine,
+        &input,
+        &crate::line_integrals::LineIntegralObjectRequest {
+            kind: match head {
+                "ScalarLineIntegral" => crate::line_integrals::LineIntegralKind::ScalarArcLength,
+                "VectorLineIntegral" => crate::line_integrals::LineIntegralKind::VectorWork,
+                _ => return Err(EngineError::InvalidInput("未知线积分运算".into())),
+            },
+            coordinates: collection(coordinates_node, "坐标参数")?,
+            curve: collection(curve_node, "参数曲线")?,
+            parameter: parameter.object.print_source(),
+            lower: lower.object.print_source(),
+            upper: upper.object.print_source(),
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut field);
     Ok(current)
 }
 

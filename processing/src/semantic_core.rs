@@ -305,6 +305,7 @@ pub enum OperatorId {
     Extrema,
     Lagrange,
     MultivariateDifferential,
+    LineIntegral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -330,6 +331,7 @@ pub enum CapabilityId {
     RenderPlot,
     AnalyzeExtrema,
     AnalyzeMultivariate,
+    IntegrateLine,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,6 +354,7 @@ pub enum ObjectNativeRoute {
     PlotEffect,
     Extrema,
     MultivariateDifferential,
+    LineIntegral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -730,6 +733,10 @@ const SIG_DIRECTIONAL_DERIVATIVE: &[OperatorSlotSignature] = &[
         ],
     },
 ];
+const SIG_LINE_INTEGRAL: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 6,
+    requirements: &[Operand, Operand, Operand, Variable, LowerBound, UpperBound],
+}];
 
 pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
     OperatorDescriptor {
@@ -1109,6 +1116,19 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MultivariateDifferential,
         product_kind: "multivariate",
         title: "方向导数",
+    },
+    OperatorDescriptor {
+        id: OperatorId::LineIntegral,
+        names: &["ScalarLineIntegral", "VectorLineIntegral"],
+        arities: &[6],
+        slot_signatures: SIG_LINE_INTEGRAL,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::IntegrateLine,
+        route: ObjectNativeRoute::LineIntegral,
+        product_kind: "line_integral",
+        title: "线积分",
     },
 ];
 
@@ -1573,6 +1593,7 @@ pub enum ObjectCapability {
     FindNumericRoot,
     AnalyzeExtrema,
     AnalyzeMultivariate,
+    IntegrateLine,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1617,6 +1638,7 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::FindNumericRoot as u8)
                 | (1 << ObjectCapability::AnalyzeExtrema as u8)
                 | (1 << ObjectCapability::AnalyzeMultivariate as u8)
+                | (1 << ObjectCapability::IntegrateLine as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
@@ -1632,7 +1654,8 @@ impl CapabilitySet {
             (1 << ObjectCapability::SolveEquation as u8)
                 | (1 << ObjectCapability::SolveOde as u8)
                 | (1 << ObjectCapability::SolveNumericOde as u8)
-                | (1 << ObjectCapability::AnalyzeMultivariate as u8),
+                | (1 << ObjectCapability::AnalyzeMultivariate as u8)
+                | (1 << ObjectCapability::IntegrateLine as u8),
         )
     }
     pub const fn matrix() -> Self {
@@ -1644,7 +1667,8 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::MatrixInverse as u8)
                 | (1 << ObjectCapability::MatrixSolve as u8)
                 | (1 << ObjectCapability::MatrixAnalyze as u8)
-                | (1 << ObjectCapability::AnalyzeMultivariate as u8),
+                | (1 << ObjectCapability::AnalyzeMultivariate as u8)
+                | (1 << ObjectCapability::IntegrateLine as u8),
         )
     }
     pub const fn factorization() -> Self {

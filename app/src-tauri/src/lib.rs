@@ -666,6 +666,35 @@ mod tests {
     }
 
     #[test]
+    fn unified_input_exposes_composable_line_integrals() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let line = process_expression_with_engine(
+            request("VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(line.kind, "line_integral");
+        assert_eq!(line.expression, "1");
+        assert_eq!(line.data["analysis"]["integrand_verified"], true);
+        assert!(line
+            .steps
+            .iter()
+            .any(|step| step.rule == "line-integral-pullback"));
+        assert_eq!(
+            line.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+
+        let composed = process_expression_with_engine(
+            request("D(a)(a*ScalarLineIntegral(x,{x,y},{t,0},t,0,1))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.kind, "composition");
+        assert_eq!(composed.expression, "1/2");
+    }
+
+    #[test]
     fn unified_input_accepts_two_argument_limit_with_default_x() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for steps in [true, false] {
