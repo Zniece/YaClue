@@ -144,9 +144,8 @@ fn result_metadata(
         ResultMetadata::unresolved(exactness, OutcomeReason::ConditionInsufficient)
     } else if status == "unsupported" {
         ResultMetadata::unresolved(exactness, OutcomeReason::UnsupportedOperation)
-    } else if status == "divergent" {
-        ResultMetadata::no_result(exactness, OutcomeReason::Divergent)
-    } else if status == "no_value" && result.data["outcome"]["reason"].as_str() == Some("divergent")
+    } else if status == "divergent"
+        || status == "no_value" && result.data["outcome"]["reason"].as_str() == Some("divergent")
     {
         ResultMetadata::no_result(exactness, OutcomeReason::Divergent)
     } else if matches!(
@@ -1325,7 +1324,8 @@ mod tests {
     #[test]
     fn unified_input_preserves_unlowered_structured_compositions() {
         let mut engine = RustEngineProxy::spawn().unwrap();
-        for expression in ["Factor(DoubleIntegral(f(x,y),y,0,x,x,0,1))"] {
+        {
+            let expression = "Factor(DoubleIntegral(f(x,y),y,0,x,x,0,1))";
             let result =
                 process_expression_with_engine(request(expression, true), &mut engine).unwrap();
             assert_eq!(result.kind, "composition", "{expression}");

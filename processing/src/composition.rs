@@ -81,7 +81,7 @@ pub fn is_candidate(call: &RootCall) -> bool {
     call.argument_heads
         .get(value_index)
         .and_then(|head| head.as_deref())
-        .is_some_and(|head| is_known_operator(head))
+        .is_some_and(is_known_operator)
 }
 
 /// Execute a supported nested chain. `None` means the expression contains

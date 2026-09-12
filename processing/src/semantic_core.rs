@@ -1369,10 +1369,10 @@ pub fn operand_partial_state(
     partial_application_state(spelling, expected_arity, bound_argument_count)
 }
 
-pub fn require_operand_partial<'a>(
-    object: &'a MathematicalObject,
+pub fn require_operand_partial(
+    object: &MathematicalObject,
     expected: OperatorId,
-) -> Result<&'a PartialApplication, EngineError> {
+) -> Result<&PartialApplication, EngineError> {
     let SemanticInterpretation::PartialApplication(partial) = &object.semantics.interpretation
     else {
         return Err(EngineError::InvalidInput(

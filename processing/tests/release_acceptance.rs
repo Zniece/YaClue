@@ -22,6 +22,7 @@ use processing::objects::{DefinedObjectStatus, PrimitiveOperation};
 use processing::ode::{solve as solve_ode, InitialCondition, OdeStatus};
 use processing::ode_numeric::{solve_initial_value, NumericOdeOptions, NumericOdeStatus};
 use processing::plot::{sample, SampleOptions, SampleTermination};
+use processing::semantic_core::{ComputationOutput, Effect};
 use processing::steps::{derive_integrals, derive_steps};
 
 fn assert_invalid_input(result: Result<impl Sized, EngineError>) {
@@ -326,4 +327,80 @@ fn plotting_release_contract() {
         (1.0, 0.0),
         &SampleOptions::default(),
     ));
+}
+
+#[test]
+fn migrated_object_pipeline_release_contract() {
+    let mut engine = RustEngine::spawn().expect("engine boot");
+    let execute = |engine: &mut RustEngine, source: &str| {
+        let elaborated = elaborate(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+        assert!(
+            processing::arithmetic::can_execute_elaborated_tree(&elaborated),
+            "object-native tree rejected: {source}"
+        );
+        execute_elaborated_structure(engine, &elaborated)
+            .unwrap_or_else(|error| panic!("{source}: {error}"))
+    };
+
+    for (source, expected) in [
+        ("Sum(k,1,10,k)", "55"),
+        ("ImproperIntegral(1/(1+x^2),x,0,Infinity)", "Pi/2"),
+        ("PrincipalValueIntegral(1/x,x,-1,1,{0})", "0"),
+        ("DoubleIntegral(x+y,y,0,2,x,0,1)", "3"),
+    ] {
+        let result = execute(&mut engine, source);
+        assert!(
+            matches!(result.output, ComputationOutput::Value(_)),
+            "{source}"
+        );
+        assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
+    }
+
+    let polar = execute(&mut engine, "PolarIntegral(x^2+y^2,x,y,r,theta,0,1,0,2*Pi)");
+    assert!(matches!(polar.output, ComputationOutput::Value(_)));
+    assert!(polar.value().unwrap().print_source().contains("Pi"));
+
+    let root = execute(&mut engine, "FindRoot(x^2-2,x,1)");
+    assert!(matches!(root.output, ComputationOutput::Value(_)));
+    assert_eq!(
+        root.value().unwrap().semantics.metadata.exactness,
+        processing::semantic::Exactness::Approximate
+    );
+
+    let numeric_ode = execute(&mut engine, "OdeSolveNumeric(y'==y,x,y,0,1,0.1)");
+    assert!(matches!(numeric_ode.output, ComputationOutput::Value(_)));
+    assert_eq!(
+        numeric_ode.value().unwrap().semantics.kind,
+        processing::semantic::ValueKind::SampledData
+    );
+
+    let plot = execute(&mut engine, "Plot(D(x)(x^2),x,0,1)");
+    assert!(matches!(plot.output, ComputationOutput::EffectsOnly));
+    assert!(plot.subject().is_none());
+    assert!(
+        matches!(plot.effects.as_slice(), [Effect::Plot(effect)] if effect.expression == "2*x")
+    );
+
+    let extrema = execute(&mut engine, "Extrema(Expand((x-1)^2+(y+2)^2),x,y)");
+    assert!(matches!(extrema.output, ComputationOutput::Value(_)));
+    assert_eq!(
+        extrema.value().unwrap().semantics.kind,
+        processing::semantic::ValueKind::SolutionSet
+    );
+    assert!(extrema
+        .certificates
+        .iter()
+        .any(|item| item.kind == "extrema_analysis"));
+
+    let lagrange = execute(&mut engine, "Lagrange(x+y,x^2+y^2-1,x,y)");
+    assert!(matches!(lagrange.output, ComputationOutput::Value(_)));
+    assert!(lagrange
+        .certificates
+        .iter()
+        .any(|item| item.kind == "lagrange_analysis"));
+
+    let absent = execute(&mut engine, "Extrema(x+y,x,y)");
+    assert!(matches!(absent.output, ComputationOutput::NoValue(_)));
+    let held = execute(&mut engine, "Lagrange(x+y,(x^2+y^2)^2,x,y)");
+    assert!(matches!(held.output, ComputationOutput::Held(_)));
 }

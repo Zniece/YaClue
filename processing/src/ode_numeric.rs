@@ -65,19 +65,15 @@ impl SemanticOperation<NumericOdeRequest> for NumericOdeOperation {
                 result
                     .points
                     .iter()
-                    .map(|point| format!(
-                        "{{{},{}}}",
-                        point.independent,
-                        format!(
-                            "{{{}}}",
-                            point
-                                .state
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(",")
-                        )
-                    ))
+                    .map(|point| {
+                        let state = point
+                            .state
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        format!("{{{},{{{state}}}}}", point.independent)
+                    })
                     .collect::<Vec<_>>()
                     .join(",")
             )

@@ -319,7 +319,7 @@ fn root_operator_id(node: &std::rc::Rc<LispObject>) -> Option<crate::semantic_co
     spine_refs(first)
         .next()
         .and_then(|head| head.atom_string())
-        .and_then(|head| crate::semantic_core::operator_descriptor(&head).map(|item| item.id))
+        .and_then(|head| crate::semantic_core::operator_descriptor(head).map(|item| item.id))
 }
 
 fn contains_approximate_number(node: &std::rc::Rc<LispObject>) -> bool {

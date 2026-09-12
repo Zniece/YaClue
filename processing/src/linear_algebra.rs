@@ -153,9 +153,7 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             } else {
                 ResultMetadata::solved(analyzed.semantic.exactness, ConditionSet::empty())
             },
-            capabilities: if held {
-                CapabilitySet::matrix()
-            } else if analyzed.semantic.kind == ValueKind::Matrix {
+            capabilities: if held || analyzed.semantic.kind == ValueKind::Matrix {
                 CapabilitySet::matrix()
             } else {
                 CapabilitySet::symbolic_expression()
