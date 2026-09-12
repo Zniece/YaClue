@@ -506,6 +506,55 @@ mod tests {
     }
 
     #[test]
+    fn nested_domains_project_only_continuous_whole_expressions() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for source in [
+            "D(x)Limit(t,0)(Sin(t)/t+x^2)",
+            "D(x)Integrate(t)(t*x)",
+            "(Limit(t,0)(Sin(t)/t))==1",
+            "Sin(Limit(t,0)(Sin(t)/t))",
+            "{Limit(t,0)(Sin(t)/t),D(x)x^2}",
+        ] {
+            let input = crate::elaboration::elaborate_input(source).unwrap();
+            let initial = input.root.object.print_source();
+            let result = execute_elaborated(&mut engine, &input, StepVerbosity::Detailed, true)
+                .unwrap()
+                .unwrap();
+            assert!(!result.steps.is_empty(), "{source}: {result:#?}");
+            assert_eq!(
+                result.steps[0].before_expr.as_deref(),
+                Some(initial.as_str()),
+                "{source}"
+            );
+            assert!(
+                result
+                    .steps
+                    .windows(2)
+                    .all(|pair| { pair[1].before_expr.as_deref() == Some(pair[0].expr.as_str()) }),
+                "{source}: {:#?}",
+                result.steps
+            );
+            assert_eq!(result.steps.last().unwrap().expr, result.value, "{source}");
+        }
+    }
+
+    #[test]
+    fn arithmetic_simplification_is_shown_inside_the_complete_equation() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(&mut engine, "(y+2^2*y)==Sin(x)", StepVerbosity::Detailed)
+            .unwrap()
+            .unwrap();
+        let power = result
+            .steps
+            .iter()
+            .find(|step| step.rule == "power")
+            .expect("2^2 changes the complete equation");
+        assert_eq!(power.before_expr.as_deref(), Some("y+2^2*y==Sin(x)"));
+        assert_eq!(power.expr, "y+4*y==Sin(x)");
+        assert!(!power.expr.trim().starts_with("4"));
+    }
+
+    #[test]
     fn generated_integral_constants_participate_in_later_operations() {
         let mut engine = RustEngine::spawn().unwrap();
         let repeated = execute_steps(

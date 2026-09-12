@@ -235,8 +235,13 @@ pub fn render_rule_trace_in_root(
                     && event.importance == RuleImportance::Key)
     }) {
         let presentation = event.presentation.as_ref().expect("filtered above");
-        let path = paths
-            .get(&event.output.object)
+        let contextual_object = event
+            .transformation_context()
+            .map(|context| context.root_after.object);
+        let path = contextual_object
+            .as_ref()
+            .and_then(|object| paths.get(object))
+            .or_else(|| paths.get(&event.output.object))
             .or_else(|| paths.get(&event.input.object))
             .cloned()
             .unwrap_or_else(ExpressionPath::root);

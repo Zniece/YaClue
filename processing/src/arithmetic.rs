@@ -48,6 +48,57 @@ pub fn execute_elaborated_structure(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
+    let mut computation = execute_elaborated_node(engine, expression)?;
+    if matches!(
+        expression.form,
+        crate::elaboration::MathematicalForm::Structural { .. }
+    ) && computation
+        .subject()
+        .is_some_and(|result| result.print_source() != expression.object.print_source())
+    {
+        if let Some(event) = computation
+            .trace
+            .as_mut()
+            .and_then(|trace| trace.events.last_mut())
+            .filter(|event| {
+                event.class == crate::semantic_core::RuleEventClass::InternalExecution
+                    && event.output.object == expression.object.id
+            })
+        {
+            event.class = crate::semantic_core::RuleEventClass::EquivalentTransformation;
+            if let Some(presentation) = event.presentation.as_mut() {
+                presentation.explanation = "化简这个子表达式。".into();
+            }
+        }
+    }
+    if let Some(trace) = computation.trace.as_mut() {
+        for event in &mut trace.events {
+            if event.class == crate::semantic_core::RuleEventClass::EquivalentTransformation
+                && event.transformation.is_none()
+            {
+                event.transformation = Some(crate::semantic_core::TransformationContext {
+                    root_before: crate::semantic_core::ObjectReference {
+                        object: expression.object.id,
+                        revision: event.input.revision,
+                        focus: None,
+                    },
+                    root_after: crate::semantic_core::ObjectReference {
+                        object: expression.object.id,
+                        revision: event.output.revision,
+                        focus: None,
+                    },
+                    focus: crate::semantic_core::ExpressionPath::root(),
+                });
+            }
+        }
+    }
+    Ok(computation)
+}
+
+fn execute_elaborated_node(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
     if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
         if let Some(lowered) = crate::lowering::try_lower_application(
             engine,
