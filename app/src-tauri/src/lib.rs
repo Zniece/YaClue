@@ -1,6 +1,5 @@
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
-use processing::linear_algebra::MatrixOperation;
 use processing::protocol::{
     Condition, ConditionSet, Conditionality, OutcomeReason, ResultCompleteness, ResultMetadata,
 };
@@ -436,6 +435,17 @@ fn dispatch_expression_with_engine(
             let has_native_child =
                 processing::arithmetic::has_object_native_descendant(&elaborated.root);
             let (kind, title) = match (&elaborated.root.form, root_descriptor) {
+                (processing::elaboration::MathematicalForm::Structural { operator }, _)
+                    if matches!(operator.as_str(), "+" | "*")
+                        && elaborated.root.children.iter().all(|child| {
+                            matches!(
+                                child.form,
+                                processing::elaboration::MathematicalForm::Collection
+                            )
+                        }) =>
+                {
+                    ("matrix", "线性代数")
+                }
                 (processing::elaboration::MathematicalForm::Relation { .. }, _) => {
                     ("equation", "方程")
                 }
@@ -498,51 +508,25 @@ fn dispatch_expression_with_engine(
         }
     }
     if let Some(call) = call {
-        match (call.head.as_str(), call.arguments.as_slice()) {
-            (head @ ("+" | "*"), [left, right])
-                if call
-                    .argument_heads
-                    .iter()
-                    .all(|head| head.as_deref() == Some("List")) =>
-            {
-                let operation = if head == "+" {
-                    MatrixOperation::Add
-                } else {
-                    MatrixOperation::Multiply
-                };
-                let result =
-                    processing::linear_algebra::compute(&mut *engine, left, operation, Some(right))
-                        .map_err(message)?;
-                return unified_result(
-                    "matrix",
-                    "线性代数",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
+        if let ("=" | "==", [left, right]) = (call.head.as_str(), call.arguments.as_slice()) {
+            let lowered_equation = format!("({left})==({right})");
+            let evaluated = engine.eval(&lowered_equation).map_err(message)?;
+            let mut output = unified_result(
+                "equation",
+                "方程",
+                evaluated.expr.to_string(),
+                processing::input::strip_tex_delimiters(&evaluated.tex),
+                Vec::new(),
+                &serde_json::json!({ "status": "equation" }),
+            )?;
+            if let Value::Object(data) = &mut output.data {
+                data.insert(
+                    "semantic_expression".into(),
+                    Value::String(lowered_equation),
                 );
+                data.insert("arbitrary_constants".into(), Value::Array(Vec::new()));
             }
-            ("=" | "==", [left, right]) => {
-                let lowered_equation = format!("({left})==({right})");
-                let evaluated = engine.eval(&lowered_equation).map_err(message)?;
-                let mut output = unified_result(
-                    "equation",
-                    "方程",
-                    evaluated.expr.to_string(),
-                    processing::input::strip_tex_delimiters(&evaluated.tex),
-                    Vec::new(),
-                    &serde_json::json!({ "status": "equation" }),
-                )?;
-                if let Value::Object(data) = &mut output.data {
-                    data.insert(
-                        "semantic_expression".into(),
-                        Value::String(lowered_equation),
-                    );
-                    data.insert("arbitrary_constants".into(), Value::Array(Vec::new()));
-                }
-                return Ok(output);
-            }
-            _ => {}
+            return Ok(output);
         }
     }
 
