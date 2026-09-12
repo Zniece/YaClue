@@ -198,6 +198,22 @@ pub fn derivative_computation(
     variable: &str,
     order: u32,
 ) -> Result<Computation, EngineError> {
+    derivative_computation_with_catalog(
+        engine,
+        expression,
+        variable,
+        order,
+        &UserFunctionDerivativeCatalog::default(),
+    )
+}
+
+fn derivative_computation_with_catalog(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    order: u32,
+    catalog: &UserFunctionDerivativeCatalog,
+) -> Result<Computation, EngineError> {
     validate_expression(expression, "求导表达式")?;
     let input = object_from_source(
         ObjectId(1),
@@ -213,20 +229,45 @@ pub fn derivative_computation(
             requirements: Vec::new(),
         },
     )?;
-    derivative_computation_for_object(
+    derivative_computation_for_object_with_catalog(
         engine,
         &input,
         &DerivativeRequest {
             variable: variable.into(),
             order,
         },
+        catalog,
     )
+}
+
+pub fn derivative_computation_with_user_catalog(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    order: u32,
+    catalog: &UserFunctionDerivativeCatalog,
+) -> Result<Computation, EngineError> {
+    derivative_computation_with_catalog(engine, expression, variable, order, catalog)
 }
 
 pub fn derivative_computation_for_object(
     engine: &mut dyn Engine,
     operand: &crate::semantic_core::MathematicalObject,
     request: &DerivativeRequest,
+) -> Result<Computation, EngineError> {
+    derivative_computation_for_object_with_catalog(
+        engine,
+        operand,
+        request,
+        &UserFunctionDerivativeCatalog::default(),
+    )
+}
+
+pub fn derivative_computation_for_object_with_catalog(
+    engine: &mut dyn Engine,
+    operand: &crate::semantic_core::MathematicalObject,
+    request: &DerivativeRequest,
+    catalog: &UserFunctionDerivativeCatalog,
 ) -> Result<Computation, EngineError> {
     request.validate()?;
     if !operand
@@ -239,7 +280,8 @@ pub fn derivative_computation_for_object(
     if let Some(computation) = derivative_of_typed_integral(engine, operand, request)? {
         return Ok(computation);
     }
-    if let Some(computation) = derivative_of_registered_function(engine, operand, request)? {
+    if let Some(computation) = derivative_of_registered_function(engine, operand, request, catalog)?
+    {
         return Ok(computation);
     }
     let source = operand.print_source();
@@ -365,10 +407,151 @@ struct FunctionPartialDerivative {
 type PartialDerivativeBuilder = fn(&[String], usize) -> Option<FunctionPartialDerivative>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FunctionParameterRole {
+pub enum FunctionParameterRole {
     Argument,
     ContinuousParameter,
     Order,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserFunctionPartialDerivative {
+    pub expression: String,
+    pub conditions: Vec<Condition>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserFunctionDerivativeRule {
+    pub id: String,
+    pub head: String,
+    pub parameters: Vec<String>,
+    pub parameter_roles: Vec<FunctionParameterRole>,
+    pub partial_derivatives: Vec<Option<UserFunctionPartialDerivative>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UserFunctionDerivativeCatalog {
+    rules: Vec<UserFunctionDerivativeRule>,
+}
+
+impl UserFunctionDerivativeCatalog {
+    pub fn new(rules: Vec<UserFunctionDerivativeRule>) -> Result<Self, EngineError> {
+        let mut signatures = std::collections::BTreeSet::new();
+        let mut ids = std::collections::BTreeSet::new();
+        for rule in &rules {
+            crate::input::validate_symbol(&rule.head, "用户函数名")?;
+            if rule.id.trim().is_empty() {
+                return Err(EngineError::InvalidInput(
+                    "用户函数导数规则 id 不能为空".into(),
+                ));
+            }
+            if !ids.insert(rule.id.as_str()) {
+                return Err(EngineError::InvalidInput(format!(
+                    "用户函数导数规则 id 重复: {}",
+                    rule.id
+                )));
+            }
+            if rule.parameters.is_empty()
+                || rule.parameters.len() != rule.parameter_roles.len()
+                || rule.parameters.len() != rule.partial_derivatives.len()
+            {
+                return Err(EngineError::InvalidInput(format!(
+                    "用户函数 {} 的参数、角色与偏导槽数量必须一致且非空",
+                    rule.head
+                )));
+            }
+            let mut parameters = std::collections::BTreeSet::new();
+            for parameter in &rule.parameters {
+                crate::input::validate_symbol(parameter, "用户函数形式参数")?;
+                if !parameters.insert(parameter) {
+                    return Err(EngineError::InvalidInput(format!(
+                        "用户函数 {} 的形式参数重复",
+                        rule.head
+                    )));
+                }
+            }
+            if !rule.partial_derivatives.iter().any(Option::is_some) {
+                return Err(EngineError::InvalidInput(format!(
+                    "用户函数 {} 至少需要一个偏导规则",
+                    rule.head
+                )));
+            }
+            for partial in rule.partial_derivatives.iter().flatten() {
+                validate_expression(&partial.expression, "用户函数偏导表达式")?;
+                validate_user_template_symbols(
+                    &partial.expression,
+                    &parameters,
+                    "用户函数偏导表达式",
+                )?;
+                for condition in &partial.conditions {
+                    let expression = match condition {
+                        Condition::RealPartPositive { expression }
+                        | Condition::Positive { expression }
+                        | Condition::Negative { expression }
+                        | Condition::NonZero { expression }
+                        | Condition::Real { expression }
+                        | Condition::Integer { expression } => Some(expression.as_str()),
+                        Condition::Unknown { .. } => None,
+                    };
+                    if let Some(expression) = expression {
+                        validate_expression(expression, "用户函数导数条件")?;
+                        validate_user_template_symbols(
+                            expression,
+                            &parameters,
+                            "用户函数导数条件",
+                        )?;
+                    }
+                }
+            }
+            if !signatures.insert((rule.head.as_str(), rule.parameters.len())) {
+                return Err(EngineError::InvalidInput(format!(
+                    "用户函数 {} 的同元数导数规则重复",
+                    rule.head
+                )));
+            }
+            if FUNCTION_DERIVATIVE_RULES
+                .iter()
+                .any(|builtin| builtin.head == rule.head && builtin.arity == rule.parameters.len())
+            {
+                return Err(EngineError::InvalidInput(format!(
+                    "用户函数 {} 不能覆盖内建同元数导数规则",
+                    rule.head
+                )));
+            }
+        }
+        Ok(Self { rules })
+    }
+
+    fn find(&self, head: &str, arity: usize) -> Option<&UserFunctionDerivativeRule> {
+        self.rules
+            .iter()
+            .find(|rule| rule.head == head && rule.parameters.len() == arity)
+    }
+}
+
+fn validate_user_template_symbols(
+    expression: &str,
+    parameters: &std::collections::BTreeSet<&String>,
+    label: &str,
+) -> Result<(), EngineError> {
+    let analysis = crate::binding::analyze(expression)?;
+    let undeclared = analysis
+        .free_symbols
+        .iter()
+        .filter(|symbol| {
+            !parameters
+                .iter()
+                .any(|parameter| parameter.as_str() == symbol.as_str())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if undeclared.is_empty() {
+        Ok(())
+    } else {
+        Err(EngineError::InvalidInput(format!(
+            "{label}含有未声明形式参数: {}",
+            undeclared.join(", ")
+        )))
+    }
 }
 
 impl FunctionParameterRole {
@@ -643,7 +826,9 @@ const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
 fn held_derivative_of_registered_function(
     operand: &crate::semantic_core::MathematicalObject,
     request: &DerivativeRequest,
-    rule: &FunctionDerivativeRule,
+    rule_id: &str,
+    head: &str,
+    parameter_roles: &[FunctionParameterRole],
 ) -> Result<Computation, EngineError> {
     let source = format!(
         "D({},{}){}",
@@ -682,11 +867,11 @@ fn held_derivative_of_registered_function(
         bindings: vec![
             ("variable".into(), request.variable.clone()),
             ("order".into(), request.order.to_string()),
-            ("function".into(), rule.head.into()),
-            ("derivative_rule".into(), rule.id.into()),
+            ("function".into(), head.into()),
+            ("derivative_rule".into(), rule_id.into()),
             (
                 "parameter_roles".into(),
-                rule.parameter_roles
+                parameter_roles
                     .iter()
                     .map(|role| role.label())
                     .collect::<Vec<_>>()
@@ -712,10 +897,140 @@ fn held_derivative_of_registered_function(
     })
 }
 
+enum ResolvedFunctionDerivativeRule<'a> {
+    Builtin(&'static FunctionDerivativeRule),
+    User(&'a UserFunctionDerivativeRule),
+}
+
+impl ResolvedFunctionDerivativeRule<'_> {
+    fn id(&self) -> &str {
+        match self {
+            Self::Builtin(rule) => rule.id,
+            Self::User(rule) => &rule.id,
+        }
+    }
+
+    fn head(&self) -> &str {
+        match self {
+            Self::Builtin(rule) => rule.head,
+            Self::User(rule) => &rule.head,
+        }
+    }
+
+    fn parameter_roles(&self) -> &[FunctionParameterRole] {
+        match self {
+            Self::Builtin(rule) => rule.parameter_roles,
+            Self::User(rule) => &rule.parameter_roles,
+        }
+    }
+
+    fn is_formal_only(&self) -> bool {
+        matches!(self, Self::Builtin(rule) if rule.partial_derivative.is_none())
+    }
+
+    fn partial(
+        &self,
+        arguments: &[String],
+        index: usize,
+    ) -> Result<Option<FunctionPartialDerivative>, EngineError> {
+        match self {
+            Self::Builtin(rule) => Ok(rule
+                .partial_derivative
+                .and_then(|builder| builder(arguments, index))),
+            Self::User(rule) => {
+                let Some(partial) = &rule.partial_derivatives[index] else {
+                    return Ok(None);
+                };
+                Ok(Some(FunctionPartialDerivative {
+                    expression: instantiate_user_template(
+                        &partial.expression,
+                        &rule.parameters,
+                        arguments,
+                    )?,
+                    conditions: partial
+                        .conditions
+                        .iter()
+                        .map(|condition| {
+                            instantiate_user_condition(condition, &rule.parameters, arguments)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    // User rules are semantic declarations; do not expose them
+                    // to mutable definitions in the backing engine session.
+                    requires_structural_output: true,
+                }))
+            }
+        }
+    }
+}
+
+fn instantiate_user_template(
+    template: &str,
+    parameters: &[String],
+    arguments: &[String],
+) -> Result<String, EngineError> {
+    let mut expression = template.to_owned();
+    let occupied = std::iter::once(template)
+        .chain(arguments.iter().map(String::as_str))
+        .collect::<Vec<_>>();
+    let placeholders = parameters
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            for nonce in 0_u32.. {
+                let candidate = format!("YaClueUserDerivativeInternal{index}P{nonce}");
+                if occupied.iter().all(|source| !source.contains(&candidate)) {
+                    return candidate;
+                }
+            }
+            unreachable!()
+        })
+        .collect::<Vec<_>>();
+    for (parameter, placeholder) in parameters.iter().zip(&placeholders) {
+        expression = crate::binding::substitute_free(&expression, parameter, placeholder)?;
+    }
+    for (placeholder, argument) in placeholders.iter().zip(arguments) {
+        expression = crate::binding::substitute_free(&expression, placeholder, argument)?;
+    }
+    Ok(expression)
+}
+
+fn instantiate_user_condition(
+    condition: &Condition,
+    parameters: &[String],
+    arguments: &[String],
+) -> Result<Condition, EngineError> {
+    let instantiate =
+        |expression: &str| instantiate_user_template(expression, parameters, arguments);
+    Ok(match condition {
+        Condition::RealPartPositive { expression } => Condition::RealPartPositive {
+            expression: instantiate(expression)?,
+        },
+        Condition::Positive { expression } => Condition::Positive {
+            expression: instantiate(expression)?,
+        },
+        Condition::Negative { expression } => Condition::Negative {
+            expression: instantiate(expression)?,
+        },
+        Condition::NonZero { expression } => Condition::NonZero {
+            expression: instantiate(expression)?,
+        },
+        Condition::Real { expression } => Condition::Real {
+            expression: instantiate(expression)?,
+        },
+        Condition::Integer { expression } => Condition::Integer {
+            expression: instantiate(expression)?,
+        },
+        Condition::Unknown { description } => Condition::Unknown {
+            description: description.clone(),
+        },
+    })
+}
+
 fn derivative_of_registered_function(
     engine: &mut dyn Engine,
     operand: &crate::semantic_core::MathematicalObject,
     request: &DerivativeRequest,
+    catalog: &UserFunctionDerivativeCatalog,
 ) -> Result<Option<Computation>, EngineError> {
     let function = crate::input::with_parse_env(|env| {
         let view = operand.view(env);
@@ -732,16 +1047,29 @@ fn derivative_of_registered_function(
     let Some((head, arguments)) = function else {
         return Ok(None);
     };
-    let Some(rule) = FUNCTION_DERIVATIVE_RULES
-        .iter()
-        .find(|rule| rule.head == head && rule.arity == arguments.len())
-    else {
+    let rule = catalog
+        .find(&head, arguments.len())
+        .map(ResolvedFunctionDerivativeRule::User)
+        .or_else(|| {
+            FUNCTION_DERIVATIVE_RULES
+                .iter()
+                .find(|rule| rule.head == head && rule.arity == arguments.len())
+                .map(ResolvedFunctionDerivativeRule::Builtin)
+        });
+    let Some(rule) = rule else {
         return Ok(None);
     };
-    debug_assert_eq!(rule.parameter_roles.len(), rule.arity);
-    let Some(partial_derivative) = rule.partial_derivative else {
-        return held_derivative_of_registered_function(operand, request, rule).map(Some);
-    };
+    debug_assert_eq!(rule.parameter_roles().len(), arguments.len());
+    if rule.is_formal_only() {
+        return held_derivative_of_registered_function(
+            operand,
+            request,
+            rule.id(),
+            rule.head(),
+            rule.parameter_roles(),
+        )
+        .map(Some);
+    }
     if request.order != 1 {
         return Ok(None);
     }
@@ -752,12 +1080,13 @@ fn derivative_of_registered_function(
     let mut requires_structural_output = false;
     let mut condition_items = operand.semantics.metadata.conditions.conditions().to_vec();
     for (index, argument) in arguments.iter().enumerate() {
-        let mut inner = derivative_computation(engine, argument, &request.variable, 1)?;
+        let mut inner =
+            derivative_computation_with_catalog(engine, argument, &request.variable, 1, catalog)?;
         let Some(inner_value) = inner.value() else {
             return Ok(None);
         };
         let inner_source = inner_value.print_source();
-        let Some(partial) = partial_derivative(&arguments, index) else {
+        let Some(partial) = rule.partial(&arguments, index)? else {
             // A missing partial marks a discrete or otherwise unsupported slot,
             // not an implicit zero. It is safe to omit only for a constant slot.
             if inner_source != "0" {
@@ -832,10 +1161,10 @@ fn derivative_of_registered_function(
         bindings: vec![
             ("variable".into(), request.variable.clone()),
             ("function".into(), head),
-            ("derivative_rule".into(), rule.id.into()),
+            ("derivative_rule".into(), rule.id().into()),
             (
                 "parameter_roles".into(),
-                rule.parameter_roles
+                rule.parameter_roles()
                     .iter()
                     .map(|role| role.label())
                     .collect::<Vec<_>>()
@@ -1467,6 +1796,117 @@ mod tests {
             source.contains("+1") || source.starts_with("1+"),
             "{source}"
         );
+    }
+
+    #[test]
+    fn user_function_rules_share_the_registered_chain_rule_executor() {
+        let catalog = UserFunctionDerivativeCatalog::new(vec![UserFunctionDerivativeRule {
+            id: "user.f.derivative".into(),
+            head: "UserF".into(),
+            parameters: vec!["u".into(), "v".into()],
+            parameter_roles: vec![
+                FunctionParameterRole::Argument,
+                FunctionParameterRole::Argument,
+            ],
+            partial_derivatives: vec![
+                Some(UserFunctionPartialDerivative {
+                    expression: "2*u".into(),
+                    conditions: vec![Condition::Positive {
+                        expression: "u".into(),
+                    }],
+                }),
+                Some(UserFunctionPartialDerivative {
+                    expression: "Cos(v)".into(),
+                    conditions: Vec::new(),
+                }),
+            ],
+        }])
+        .unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let result =
+            derivative_computation_with_catalog(&mut engine, "UserF(x^2,Sin(x))", "x", 1, &catalog)
+                .unwrap();
+        let source = result.value().unwrap().print_source();
+        assert!(source.contains("2*x^2"), "{source}");
+        assert!(source.contains("2*x"), "{source}");
+        assert!(source.contains("Cos(Sin(x))*Cos(x)"), "{source}");
+        assert!(result
+            .value()
+            .unwrap()
+            .semantics
+            .metadata
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::Positive { expression } if expression == "x^2")));
+        assert!(result.trace.as_ref().unwrap().events.iter().any(|event| {
+            event
+                .bindings
+                .iter()
+                .any(|(key, value)| key == "derivative_rule" && value == "user.f.derivative")
+        }));
+    }
+
+    #[test]
+    fn user_rule_templates_substitute_without_capturing_argument_symbols() {
+        let catalog = UserFunctionDerivativeCatalog::new(vec![UserFunctionDerivativeRule {
+            id: "user.integral-kernel.derivative".into(),
+            head: "IntegralKernel".into(),
+            parameters: vec!["u".into(), "v".into()],
+            parameter_roles: vec![
+                FunctionParameterRole::Argument,
+                FunctionParameterRole::ContinuousParameter,
+            ],
+            partial_derivatives: vec![
+                Some(UserFunctionPartialDerivative {
+                    expression: "Integrate(t,0,u)(t+v)".into(),
+                    conditions: Vec::new(),
+                }),
+                None,
+            ],
+        }])
+        .unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = derivative_computation_with_catalog(
+            &mut engine,
+            "IntegralKernel(x,t)",
+            "x",
+            1,
+            &catalog,
+        )
+        .unwrap();
+        let source = result.value().unwrap().print_source();
+        assert!(source.contains("Integrate(t1,0,x)"), "{source}");
+        let bindings = crate::binding::analyze(&source).unwrap();
+        assert!(bindings.free_symbols.contains(&"t".into()));
+        assert!(bindings.bound_symbols.contains(&"t1".into()));
+    }
+
+    #[test]
+    fn user_function_catalog_rejects_incomplete_signatures() {
+        let rule = UserFunctionDerivativeRule {
+            id: "user.bad".into(),
+            head: "Bad".into(),
+            parameters: vec!["u".into()],
+            parameter_roles: Vec::new(),
+            partial_derivatives: vec![Some(UserFunctionPartialDerivative {
+                expression: "u".into(),
+                conditions: Vec::new(),
+            })],
+        };
+        assert!(UserFunctionDerivativeCatalog::new(vec![rule]).is_err());
+
+        let undeclared = UserFunctionDerivativeRule {
+            id: "user.undeclared".into(),
+            head: "Undeclared".into(),
+            parameters: vec!["u".into()],
+            parameter_roles: vec![FunctionParameterRole::Argument],
+            partial_derivatives: vec![Some(UserFunctionPartialDerivative {
+                expression: "u+hidden".into(),
+                conditions: Vec::new(),
+            })],
+        };
+        assert!(UserFunctionDerivativeCatalog::new(vec![undeclared]).is_err());
     }
 
     #[test]
