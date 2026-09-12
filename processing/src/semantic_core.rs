@@ -2238,6 +2238,48 @@ pub enum RulePayload {
     Structural,
 }
 
+/// Product-independent classification of a trace event.
+///
+/// A trace records everything needed to explain and diagnose execution, while
+/// a mathematical step is a much narrower product projection.  Keeping this
+/// distinction in the semantic protocol prevents renderers from guessing
+/// visibility from rule names or payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleEventClass {
+    /// A mathematical object is replaced by an equivalent representation.
+    EquivalentTransformation,
+    /// A computation reaches a mathematical conclusion that is not an
+    /// equality-preserving rewrite (held, no value, unmet conditions, ...).
+    MathematicalConclusion,
+    /// Provenance required for execution/debugging but never a teaching step.
+    InternalExecution,
+    /// A product effect attached to the ordinary result path.
+    ProductEffect,
+}
+
+impl RuleEventClass {
+    /// Only genuine mathematical transformations participate in a continuous
+    /// before -> after derivation. Conclusions and effects use separate
+    /// product sections; internal execution stays trace-only.
+    pub fn is_transformation_step(self) -> bool {
+        matches!(self, Self::EquivalentTransformation)
+    }
+
+    pub fn is_product_visible(self) -> bool {
+        !matches!(self, Self::InternalExecution)
+    }
+}
+
+/// Identity-based continuity contract for a chain of whole-expression
+/// transformations. Text and TeX are projections and therefore cannot prove
+/// continuity on their own.
+pub fn transformation_chain_is_continuous(events: &[RuleEvent]) -> bool {
+    events
+        .windows(2)
+        .all(|pair| pair[0].output == pair[1].input)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleImportance {
     Routine,
@@ -2877,5 +2919,44 @@ mod tests {
             complete.semantics.interpretation,
             SemanticInterpretation::TypedApplication(_)
         ));
+    }
+
+    #[test]
+    fn mathematical_step_protocol_separates_visibility_from_trace_payload() {
+        assert!(RuleEventClass::EquivalentTransformation.is_transformation_step());
+        assert!(RuleEventClass::MathematicalConclusion.is_product_visible());
+        assert!(RuleEventClass::ProductEffect.is_product_visible());
+        assert!(!RuleEventClass::InternalExecution.is_product_visible());
+        assert!(!RuleEventClass::MathematicalConclusion.is_transformation_step());
+    }
+
+    #[test]
+    fn transformation_continuity_uses_versioned_object_references() {
+        let reference = |revision| ObjectReference {
+            object: ObjectId(7),
+            revision: ObjectRevision(revision),
+            focus: Some(ExpressionPath::root()),
+        };
+        let event = |input, output| RuleEvent {
+            rule: "test".into(),
+            input,
+            additional_inputs: Vec::new(),
+            output,
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Normal,
+            presentation: None,
+        };
+        let continuous = vec![
+            event(reference(0), reference(1)),
+            event(reference(1), reference(2)),
+        ];
+        let discontinuous = vec![
+            event(reference(0), reference(1)),
+            event(reference(0), reference(2)),
+        ];
+        assert!(transformation_chain_is_continuous(&continuous));
+        assert!(!transformation_chain_is_continuous(&discontinuous));
     }
 }
