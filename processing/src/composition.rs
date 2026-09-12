@@ -11,7 +11,7 @@ pub use crate::semantic_core::OperatorId as CompositionOperator;
 use crate::semantic_core::{
     operator_descriptor, ComputationOutput, ObjectCapability, SemanticInterpretation,
 };
-use crate::steps::{Step, StepVerbosity};
+use crate::steps::{ConclusionKind, MathematicalConclusion, Step, StepVerbosity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +28,7 @@ pub struct CompositionResult {
     pub value: String,
     pub tex: String,
     pub steps: Vec<Step>,
+    pub conclusions: Vec<MathematicalConclusion>,
     pub operators: Vec<CompositionOperator>,
     pub reason: Option<String>,
     pub arbitrary_constants: Vec<String>,
@@ -100,9 +101,15 @@ pub fn execute_elaborated(
         let outcome = ResultMetadata::solved(semantic.exactness, ConditionSet::empty());
         return Ok(Some(CompositionResult {
             status: CompositionStatus::Completed,
-            value,
-            tex,
+            value: value.clone(),
+            tex: tex.clone(),
             steps,
+            conclusions: vec![MathematicalConclusion {
+                kind: ConclusionKind::ProductEffect,
+                expression: value.clone(),
+                tex: tex.clone(),
+                message: "在标准数学结果之外附加函数图像。".into(),
+            }],
             operators: vec![CompositionOperator::Plot],
             reason: None,
             arbitrary_constants: Vec::new(),
@@ -165,6 +172,29 @@ pub fn execute_elaborated(
         }
         CompositionStatus::Unresolved => Some("数学对象保持未解析，等待适用能力。".into()),
         _ => None,
+    };
+    let conclusions = match status {
+        CompositionStatus::NoValue => vec![MathematicalConclusion {
+            kind: ConclusionKind::NoValue,
+            expression: value.clone(),
+            tex: tex.clone(),
+            message: reason
+                .clone()
+                .unwrap_or_else(|| "该数学对象没有值。".into()),
+        }],
+        CompositionStatus::Unresolved => vec![MathematicalConclusion {
+            kind: if subject.semantics.metadata.conditions.is_empty() {
+                ConclusionKind::Held
+            } else {
+                ConclusionKind::ConditionsUnmet
+            },
+            expression: value.clone(),
+            tex: tex.clone(),
+            message: reason
+                .clone()
+                .unwrap_or_else(|| "数学对象保持未解析。".into()),
+        }],
+        CompositionStatus::Completed | CompositionStatus::Unsupported => Vec::new(),
     };
     let mut operators = Vec::new();
     collect_migrated_operator_ids(&input.root, &mut operators);
@@ -246,6 +276,7 @@ pub fn execute_elaborated(
         value,
         tex,
         steps,
+        conclusions,
         operators,
         reason,
         arbitrary_constants,
@@ -552,6 +583,32 @@ mod tests {
         assert_eq!(power.before_expr.as_deref(), Some("y+2^2*y==Sin(x)"));
         assert_eq!(power.expr, "y+4*y==Sin(x)");
         assert!(!power.expr.trim().starts_with("4"));
+    }
+
+    #[test]
+    fn terminal_states_are_conclusions_instead_of_equivalence_steps() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("D(x)Limit(t,0)(1/t)", crate::steps::ConclusionKind::NoValue),
+            (
+                "Factor(DoubleIntegral(f(x,y),y,0,x,x,0,1))",
+                crate::steps::ConclusionKind::Held,
+            ),
+            (
+                "Plot(Sin(x),x,-1,1)",
+                crate::steps::ConclusionKind::ProductEffect,
+            ),
+        ] {
+            let result = execute_steps(&mut engine, source, StepVerbosity::Detailed)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.conclusions.len(), 1, "{source}: {result:#?}");
+            assert_eq!(result.conclusions[0].kind, expected, "{source}");
+            assert!(result
+                .steps
+                .iter()
+                .all(|step| step.kind == crate::steps::StepKind::EquivalentTransformation));
+        }
     }
 
     #[test]

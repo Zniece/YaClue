@@ -29,6 +29,25 @@ pub enum StepKind {
     ProductEffect,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConclusionKind {
+    Held,
+    NoValue,
+    ConditionsUnmet,
+    ProductEffect,
+}
+
+/// A terminal product explanation. It is intentionally not a `Step`: no
+/// equality-preserving before/after relation is claimed.
+#[derive(Debug, Clone, Serialize)]
+pub struct MathematicalConclusion {
+    pub kind: ConclusionKind,
+    pub expression: String,
+    pub tex: String,
+    pub message: String,
+}
+
 /// 一步:规则名 + 表达式 + 文案(声明式)+ LaTeX(GUI 渲染用)
 #[derive(Debug, Clone, Serialize)]
 pub struct Step {
