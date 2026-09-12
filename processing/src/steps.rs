@@ -244,6 +244,7 @@ pub fn render_rule_trace_in_root(
     collect_object_paths(root, &ExpressionPath::root(), &mut paths);
     let mut current = root.object.print_source();
     let mut steps = Vec::new();
+    let mut tex_cache = BTreeMap::new();
     for event in trace.events.iter().filter(|event| {
         event.class == RuleEventClass::EquivalentTransformation
             && event.presentation.is_some()
@@ -268,12 +269,14 @@ pub fn render_rule_trace_in_root(
         if after == current {
             continue;
         }
-        let before_tex = render_product_tex(engine, &current);
-        let rendered_after = render_product_tex(engine, &after);
+        let before_tex = render_product_tex_cached(engine, &current, &mut tex_cache);
         let after_tex = if path.segments().is_empty() {
-            presentation.tex_override.clone().unwrap_or(rendered_after)
+            presentation
+                .tex_override
+                .clone()
+                .unwrap_or_else(|| render_product_tex_cached(engine, &after, &mut tex_cache))
         } else {
-            rendered_after
+            render_product_tex_cached(engine, &after, &mut tex_cache)
         };
         steps.push(Step {
             kind: StepKind::EquivalentTransformation,
@@ -304,6 +307,19 @@ fn render_product_tex(engine: &mut dyn Engine, expression: &str) -> String {
         .and_then(|mut rendered| rendered.pop())
         .map(|tex| strip_tex_delimiters(&tex))
         .unwrap_or_else(|| literal_tex(expression))
+}
+
+fn render_product_tex_cached(
+    engine: &mut dyn Engine,
+    expression: &str,
+    cache: &mut BTreeMap<String, String>,
+) -> String {
+    if let Some(tex) = cache.get(expression) {
+        return tex.clone();
+    }
+    let tex = render_product_tex(engine, expression);
+    cache.insert(expression.to_string(), tex.clone());
+    tex
 }
 
 fn collect_object_paths(
