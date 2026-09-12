@@ -96,6 +96,10 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                     matches!(expression.children.len(), 7 | 9)
                         && can_execute_elaborated_tree(&expression.children[0])
                 }
+                ObjectNativeRoute::NumericOde => {
+                    expression.children.len() == 6
+                        && can_execute_elaborated_tree(&expression.children[0])
+                }
             }
         }
         crate::elaboration::MathematicalForm::Application { head } => {
@@ -189,6 +193,9 @@ pub fn execute_elaborated_structure(
                 }
                 ObjectNativeRoute::MultipleIntegral => {
                     execute_multiple_integral_application(engine, expression, head)
+                }
+                ObjectNativeRoute::NumericOde => {
+                    execute_numeric_ode_application(engine, expression)
                 }
             };
         }
@@ -469,6 +476,42 @@ fn execute_multiple_integral_application(
     let mut current =
         crate::multiple_integrals::MultipleIntegralOperation.compute(engine, &input, &request)?;
     merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
+}
+
+fn execute_numeric_ode_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    if expression.children.len() != 6 {
+        return Err(EngineError::InvalidInput(
+            "OdeSolveNumeric 需要方程、自变量、因变量、初值点、初值和终点".into(),
+        ));
+    }
+    let mut equation = execute_elaborated_structure(engine, &expression.children[0])?;
+    if !matches!(equation.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, equation, "OdeSolveNumeric", 0);
+    }
+    let input = equation
+        .value()
+        .expect("checked numeric ODE equation")
+        .clone();
+    let mut current = crate::ode_numeric::NumericOdeOperation.compute(
+        engine,
+        &input,
+        &crate::ode_numeric::NumericOdeRequest {
+            independent: expression.children[1].object.print_source(),
+            dependent: expression.children[2].object.print_source(),
+            start: expression.children[3].object.print_source(),
+            value: expression.children[4].object.print_source(),
+            end: expression.children[5]
+                .object
+                .print_source()
+                .parse::<f64>()
+                .map_err(|_| EngineError::InvalidInput("数值 ODE 终点必须是有限数字".into()))?,
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut equation);
     Ok(current)
 }
 

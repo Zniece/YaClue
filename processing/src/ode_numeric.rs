@@ -5,6 +5,199 @@ use crate::input::{validate_expression, validate_symbol};
 use crate::ode::{self, InitialCondition, MAX_ODE_ORDER};
 use serde::Serialize;
 
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Certificate, Computation, ComputationOutput,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
+    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
+};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumericOdeRequest {
+    pub independent: String,
+    pub dependent: String,
+    pub start: String,
+    pub value: String,
+    pub end: f64,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NumericOdeOperation;
+
+impl SemanticOperation<NumericOdeRequest> for NumericOdeOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &NumericOdeRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::SolveNumericOde)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不是可数值求解的微分方程".into(),
+            ));
+        }
+        let condition = [InitialCondition {
+            derivative_order: 0,
+            point: &request.start,
+            value: &request.value,
+        }];
+        let result = solve_initial_value(
+            engine,
+            &input.print_source(),
+            &request.independent,
+            &request.dependent,
+            &condition,
+            NumericOdeOptions {
+                end: request.end,
+                ..NumericOdeOptions::default()
+            },
+        )?;
+        let completed = result.status == NumericOdeStatus::Completed;
+        let source = if completed {
+            format!(
+                "{{{}}}",
+                result
+                    .points
+                    .iter()
+                    .map(|point| format!(
+                        "{{{},{}}}",
+                        point.independent,
+                        format!(
+                            "{{{}}}",
+                            point
+                                .state
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        )
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        } else {
+            format!(
+                "OdeSolveNumeric({},{},{},{},{},{})",
+                input.print_source(),
+                request.independent,
+                request.dependent,
+                request.start,
+                request.value,
+                request.end
+            )
+        };
+        let metadata = if completed {
+            ResultMetadata::solved(Exactness::Approximate, ConditionSet::empty())
+        } else {
+            ResultMetadata::unresolved(Exactness::Approximate, OutcomeReason::AlgorithmUncovered)
+        };
+        let mut semantics = SemanticState {
+            kind: if completed {
+                ValueKind::SampledData
+            } else {
+                ValueKind::Unevaluated
+            },
+            interpretation: if completed {
+                SemanticInterpretation::NumericTrajectory(crate::semantic_core::SampledTrajectory {
+                    independent: request.independent.clone(),
+                    dependent: request.dependent.clone(),
+                    order: result.order,
+                    points: result
+                        .points
+                        .iter()
+                        .map(|point| crate::semantic_core::SampledPoint {
+                            independent: point.independent.to_string(),
+                            state: point.state.iter().map(ToString::to_string).collect(),
+                        })
+                        .collect(),
+                })
+            } else {
+                SemanticInterpretation::HeldApplication {
+                    operator: "OdeSolveNumeric".into(),
+                }
+            },
+            metadata,
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        if !completed {
+            crate::semantic_core::promote_held_application(
+                "OdeSolveNumeric",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: completed.then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::OdeSolveNumeric),
+            }),
+        });
+        let event = RuleEvent {
+            rule: if completed {
+                "numeric-ode-trajectory"
+            } else {
+                "hold-numeric-ode"
+            }
+            .into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: vec![
+                ("independent".into(), request.independent.clone()),
+                ("dependent".into(), request.dependent.clone()),
+            ],
+            conditions: Vec::new(),
+            payload: RulePayload::Structural,
+            importance: RuleImportance::Key,
+            presentation: Some(RulePresentation {
+                expression: output.print_source(),
+                explanation: if completed {
+                    "在误差与资源预算内生成数值初值问题轨迹。"
+                } else {
+                    "当前方程无法化为受支持的数值初值问题。"
+                }
+                .into(),
+                tex_override: None,
+            }),
+        };
+        Ok(Computation {
+            output: if completed {
+                ComputationOutput::Value(output)
+            } else {
+                ComputationOutput::Held(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: vec![Certificate {
+                kind: "numeric-ode-budget".into(),
+                payload: format!(
+                    "status={:?};accepted={};rejected={};evaluations={};error={}",
+                    result.status,
+                    result.accepted_steps,
+                    result.rejected_steps,
+                    result.evaluations,
+                    result.estimated_error
+                ),
+            }],
+            effects: Vec::new(),
+        })
+    }
+}
+
 pub const MAX_NUMERIC_ODE_STEPS: usize = 20_000;
 pub const MAX_NUMERIC_ODE_EVALUATIONS: usize = 150_000;
 
@@ -484,6 +677,49 @@ fn empty_result(
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+
+    fn equation(source: &str) -> crate::semantic_core::MathematicalObject {
+        object_from_source(
+            crate::semantic_core::ObjectId(66),
+            source,
+            SemanticState {
+                kind: ValueKind::Equation,
+                interpretation: SemanticInterpretation::Equation,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::equation_input(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn numeric_ode_operation_returns_terminal_sampled_data() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = NumericOdeOperation
+            .compute(
+                &mut engine,
+                &equation("y'==y"),
+                &NumericOdeRequest {
+                    independent: "x".into(),
+                    dependent: "y".into(),
+                    start: "0".into(),
+                    value: "1".into(),
+                    end: 0.1,
+                },
+            )
+            .unwrap();
+        let output = result.value().unwrap();
+        assert_eq!(output.id, crate::semantic_core::ObjectId(66));
+        assert_eq!(output.semantics.kind, ValueKind::SampledData);
+        assert_eq!(output.semantics.capabilities, CapabilitySet::empty());
+        assert!(output.print_source().starts_with("{{0,"));
+        assert!(matches!(
+            output.semantics.interpretation,
+            SemanticInterpretation::NumericTrajectory(ref trajectory) if trajectory.points.len() > 1
+        ));
+        assert!(result.certificates[0].payload.contains("evaluations="));
+    }
 
     #[test]
     fn integrates_first_and_second_order_initial_value_problems() {

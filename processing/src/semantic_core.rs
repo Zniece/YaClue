@@ -345,12 +345,12 @@ pub enum ObjectNativeRoute {
     Series,
     DefinedIntegral,
     MultipleIntegral,
+    NumericOde,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingDomain {
-    NumericOde,
     NumericRoot,
     Plot,
     Extrema,
@@ -977,7 +977,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::SolveNumericOde,
-        availability: OperatorAvailability::Pending(PendingDomain::NumericOde),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::NumericOde),
         product_kind: "numeric_ode",
         title: "常微分方程数值解",
     },
@@ -1130,6 +1130,7 @@ pub enum SemanticInterpretation {
         variable: String,
         parameters: Vec<String>,
     },
+    NumericTrajectory(SampledTrajectory),
     /// A valid mathematical application deliberately retained because no
     /// closed-form evaluation is available yet (for example `Integrate`).
     HeldApplication {
@@ -1140,6 +1141,20 @@ pub enum SemanticInterpretation {
     StructuredUnevaluated {
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SampledPoint {
+    pub independent: String,
+    pub state: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SampledTrajectory {
+    pub independent: String,
+    pub dependent: String,
+    pub order: u32,
+    pub points: Vec<SampledPoint>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1504,6 +1519,7 @@ pub enum ObjectCapability {
     SumSeries,
     IntegrateDefined,
     IntegrateMultiple,
+    SolveNumericOde,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1544,11 +1560,16 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::SumSeries as u8)
                 | (1 << ObjectCapability::IntegrateDefined as u8)
                 | (1 << ObjectCapability::IntegrateMultiple as u8)
+                | (1 << ObjectCapability::SolveNumericOde as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
     pub const fn equation_input() -> Self {
-        Self((1 << ObjectCapability::SolveEquation as u8) | (1 << ObjectCapability::SolveOde as u8))
+        Self(
+            (1 << ObjectCapability::SolveEquation as u8)
+                | (1 << ObjectCapability::SolveOde as u8)
+                | (1 << ObjectCapability::SolveNumericOde as u8),
+        )
     }
     pub const fn matrix() -> Self {
         Self(
@@ -2292,10 +2313,9 @@ mod tests {
             .iter()
             .flat_map(|capability| capability.names.iter().copied())
             .collect();
-        let expected_names: BTreeSet<_> =
-            ["OdeSolveNumeric", "FindRoot", "Plot", "Extrema", "Lagrange"]
-                .into_iter()
-                .collect();
+        let expected_names: BTreeSet<_> = ["FindRoot", "Plot", "Extrema", "Lagrange"]
+            .into_iter()
+            .collect();
         assert_eq!(generated_names, expected_names);
         assert!(generated
             .iter()

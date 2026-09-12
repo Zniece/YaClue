@@ -17,6 +17,7 @@ pub enum ValueKind {
     Matrix,
     SolutionSet,
     FunctionFamily,
+    SampledData,
     Unevaluated,
 }
 

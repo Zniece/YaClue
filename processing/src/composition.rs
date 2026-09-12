@@ -45,6 +45,7 @@ pub struct CompositionResult {
     pub held: Option<HeldApplication>,
     pub conditions: ConditionSet,
     pub outcome: Option<ResultMetadata>,
+    pub sampled_data: Option<crate::semantic_core::SampledTrajectory>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -201,6 +202,10 @@ pub fn execute_elaborated(
             held: None,
             conditions: subject.semantics.metadata.conditions.clone(),
             outcome: Some(subject.semantics.metadata.clone()),
+            sampled_data: match &subject.semantics.interpretation {
+                SemanticInterpretation::NumericTrajectory(trajectory) => Some(trajectory.clone()),
+                _ => None,
+            },
         }));
     }
     let mut operations = Vec::new();
@@ -264,6 +269,7 @@ fn execute_collected(
                 held: None,
                 conditions: ConditionSet::empty(),
                 outcome: None,
+                sampled_data: None,
             }));
         }
     };
@@ -300,6 +306,7 @@ fn execute_collected(
                 }),
                 conditions: ConditionSet::empty(),
                 outcome: None,
+                sampled_data: None,
             }));
         }
         return Ok(None);
@@ -371,6 +378,7 @@ fn execute_collected(
         held: None,
         conditions: ConditionSet::empty(),
         outcome: None,
+        sampled_data: None,
     }))
 }
 
@@ -415,6 +423,7 @@ fn execute_limit_then_derivative(
                 held: None,
                 conditions: ConditionSet::empty(),
                 outcome: None,
+                sampled_data: None,
             }));
         }
         ComputationOutput::EffectsOnly => unreachable!("Limit always returns an object"),
@@ -443,6 +452,7 @@ fn execute_limit_then_derivative(
             held: None,
             conditions: limit_object.semantics.metadata.conditions.clone(),
             outcome: Some(limit_object.semantics.metadata.clone()),
+            sampled_data: None,
         }));
     }
     let differentiated =
@@ -486,6 +496,7 @@ fn execute_limit_then_derivative(
         held: None,
         conditions: result_conditions,
         outcome: result_outcome,
+        sampled_data: None,
     }))
 }
 
@@ -943,8 +954,10 @@ fn apply(
         CompositionOperator::DoubleIntegral | CompositionOperator::PolarIntegral => Err(
             EngineError::InvalidInput("多重积分必须通过类型化数学对象执行".into()),
         ),
-        CompositionOperator::OdeSolveNumeric
-        | CompositionOperator::FindRoot
+        CompositionOperator::OdeSolveNumeric => Err(EngineError::InvalidInput(
+            "数值 ODE 必须通过类型化方程对象执行".into(),
+        )),
+        CompositionOperator::FindRoot
         | CompositionOperator::Plot
         | CompositionOperator::Extrema
         | CompositionOperator::Lagrange => Err(EngineError::InvalidInput(
@@ -1488,23 +1501,16 @@ mod tests {
         assert_eq!(result.value, migrated);
         assert!(!result.steps.is_empty());
 
-        for expression in ["D(x)OdeSolveNumeric(y'==y,x,y,0,1,2)"] {
-            let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
-                .unwrap()
-                .unwrap();
-            assert_eq!(result.status, CompositionStatus::Unresolved, "{expression}");
-            assert_eq!(result.value, expression);
-            assert_eq!(result.steps.len(), 1);
-            assert_eq!(result.steps[0].rule, "held-operator-application");
-            let held = result.held.as_ref().unwrap();
-            assert_eq!(held.source, expression);
-            assert!(!held.operand_head.is_empty());
-            assert!(!held.pending_operators.is_empty());
-            assert!(result
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("语义上有效")));
-        }
+        let expression = "D(x)OdeSolveNumeric(y'==y,x,y,0,1,0.1)";
+        let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert!(result.value.starts_with("D(x)"));
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "numeric-ode-trajectory"));
     }
 
     #[test]

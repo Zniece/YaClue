@@ -1,8 +1,6 @@
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::linear_algebra::MatrixOperation;
-use processing::ode::InitialCondition;
-use processing::ode_numeric::NumericOdeOptions;
 use processing::plot::SampleOptions;
 use processing::protocol::{
     Condition, ConditionSet, Conditionality, OutcomeReason, ResultCompleteness, ResultMetadata,
@@ -224,6 +222,7 @@ fn project_domain_semantic(
         && result.kind != "defined_object"
         && result.kind != "double_integral"
         && result.kind != "polar_integral"
+        && result.kind != "numeric_ode"
         && generated.is_empty()
     {
         return Ok(input.clone());
@@ -263,13 +262,19 @@ fn project_domain_semantic(
         match result.kind.as_str() {
             "ode" => Some(ValueKind::SolutionSet),
             "integral" => Some(ValueKind::FunctionFamily),
+            "numeric_ode" => Some(ValueKind::SampledData),
             _ => None,
         },
     )
     .map_err(message)?;
     if matches!(
         result.kind.as_str(),
-        "composition" | "series" | "defined_object" | "double_integral" | "polar_integral"
+        "composition"
+            | "series"
+            | "defined_object"
+            | "double_integral"
+            | "polar_integral"
+            | "numeric_ode"
     ) && result
         .data
         .get("status")
@@ -472,7 +477,10 @@ fn dispatch_expression_with_engine(
                         | OperatorId::ImproperIntegral
                         | OperatorId::PrincipalValueIntegral
                         | OperatorId::DoubleIntegral
-                        | OperatorId::PolarIntegral => (descriptor.product_kind, descriptor.title),
+                        | OperatorId::PolarIntegral
+                        | OperatorId::OdeSolveNumeric => {
+                            (descriptor.product_kind, descriptor.title)
+                        }
                         OperatorId::Factor | OperatorId::AlgebraTransform
                             if result.status
                                 == processing::composition::CompositionStatus::Completed =>
@@ -496,36 +504,6 @@ fn dispatch_expression_with_engine(
     }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
-            ("OdeSolveNumeric", [equation, independent, dependent, start, value, end]) => {
-                let end = end
-                    .parse::<f64>()
-                    .map_err(|_| invalid_input("数值 ODE 的终点必须是有限数字"))?;
-                let condition = [InitialCondition {
-                    derivative_order: 0,
-                    point: start,
-                    value,
-                }];
-                let result = processing::ode_numeric::solve_initial_value(
-                    &mut *engine,
-                    equation,
-                    independent,
-                    dependent,
-                    &condition,
-                    NumericOdeOptions {
-                        end,
-                        ..NumericOdeOptions::default()
-                    },
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "numeric_ode",
-                    "常微分方程数值解",
-                    String::new(),
-                    String::new(),
-                    vec![],
-                    &result,
-                );
-            }
             ("FindRoot", [expression, variable, initial]) => {
                 let initial = initial
                     .parse::<f64>()
@@ -1749,6 +1727,43 @@ mod tests {
         .unwrap();
         assert_eq!(composed.expression, "1");
         assert_eq!(composed.kind, "composition");
+    }
+
+    #[test]
+    fn unified_input_exposes_numeric_ode_as_terminal_sampled_data() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let result = process_expression_with_engine(
+            request("OdeSolveNumeric(y'==y,x,y,0,1,0.1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(result.kind, "numeric_ode");
+        assert_eq!(result.semantic.kind, ValueKind::SampledData);
+        assert_eq!(
+            result.semantic.exactness,
+            processing::semantic::Exactness::Approximate
+        );
+        assert!(result.expression.starts_with("{{0,"));
+        assert_eq!(result.data["sampled_data"]["independent"], "x");
+        assert_eq!(result.data["sampled_data"]["dependent"], "y");
+        assert!(result.data["sampled_data"]["points"]
+            .as_array()
+            .is_some_and(|points| points.len() > 1));
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "numeric-ode-trajectory"));
+
+        let composed = process_expression_with_engine(
+            request("D(x)OdeSolveNumeric(y'==y,x,y,0,1,0.1)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(
+            composed.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(composed.expression.starts_with("D(x)"));
     }
 
     #[test]
