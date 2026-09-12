@@ -130,7 +130,11 @@ pub fn project_result(
         .chain(&output.bound_symbols)
         .cloned()
         .collect();
-    bound.retain(|name| output_names.contains(name));
+    let explicit_bound: BTreeSet<_> = additional_bound_symbols
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    bound.retain(|name| output_names.contains(name) || explicit_bound.contains(name));
     output
         .symbols
         .retain(|name| !bound.contains(name) && !generated.contains(name));

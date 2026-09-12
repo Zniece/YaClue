@@ -1089,6 +1089,7 @@ pub enum SemanticInterpretation {
     },
     FunctionFamily {
         variable: String,
+        dependent: Option<String>,
         parameters: Vec<String>,
     },
     NumericTrajectory(SampledTrajectory),

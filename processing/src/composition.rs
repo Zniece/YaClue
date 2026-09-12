@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::engine::{Engine, EngineError};
 use crate::input::{strip_tex_delimiters, RootCall};
 use crate::protocol::{ConditionSet, ResultMetadata};
+use crate::semantic::SemanticSummary;
 use crate::semantic_core::{
     is_known_operator, operator_descriptor, ComputationOutput, ObjectCapability,
     OperatorDescriptor, SemanticInterpretation,
@@ -33,7 +34,8 @@ pub struct CompositionResult {
     pub arbitrary_constants: Vec<String>,
     pub held: Option<HeldApplication>,
     pub conditions: ConditionSet,
-    pub outcome: Option<ResultMetadata>,
+    pub semantic: SemanticSummary,
+    pub outcome: ResultMetadata,
     pub sampled_data: Option<crate::semantic_core::SampledTrajectory>,
     pub plot: Option<crate::plot::PlotEffect>,
     pub effect_only: bool,
@@ -113,6 +115,8 @@ pub fn execute_elaborated(
             .map(|effect| effect.expression.clone())
             .unwrap_or_else(|| input.root.object.print_source());
         let tex = strip_tex_delimiters(&engine.eval(&value)?.tex);
+        let semantic = crate::semantic::analyze_input(&value, "绘图表达式")?.semantic;
+        let outcome = ResultMetadata::solved(semantic.exactness, ConditionSet::empty());
         return Ok(Some(CompositionResult {
             status: CompositionStatus::Completed,
             value,
@@ -123,7 +127,8 @@ pub fn execute_elaborated(
             arbitrary_constants: Vec::new(),
             held: None,
             conditions: ConditionSet::empty(),
-            outcome: None,
+            semantic,
+            outcome,
             sampled_data: None,
             plot,
             effect_only: true,
@@ -210,6 +215,45 @@ pub fn execute_elaborated(
         .then(|| serde_json::from_str(&certificate.payload).ok())
         .flatten()
     });
+    let mut result_binders = match subject.semantics.kind {
+        crate::semantic::ValueKind::FunctionFamily => input.analyzed.semantic.bound_symbols.clone(),
+        _ => Vec::new(),
+    };
+    let dependent = if let SemanticInterpretation::FunctionFamily {
+        variable,
+        dependent,
+        ..
+    } = &subject.semantics.interpretation
+    {
+        if !result_binders.contains(variable) {
+            result_binders.push(variable.clone());
+        }
+        dependent.as_ref()
+    } else {
+        None
+    };
+    let binder_refs = result_binders
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut semantic = crate::semantic::project_result(
+        &input.analyzed.semantic,
+        &value,
+        &arbitrary_constants,
+        &binder_refs,
+        Some(subject.semantics.kind),
+    )?;
+    semantic.exactness = subject.semantics.metadata.exactness;
+    if subject.semantics.kind == crate::semantic::ValueKind::Unevaluated {
+        semantic.completeness = None;
+    }
+    if let Some(dependent) = dependent {
+        semantic.symbols.retain(|name| name != dependent);
+        semantic
+            .symbol_identities
+            .retain(|identity| identity.name != *dependent);
+    }
+    let outcome = subject.semantics.metadata.clone();
     Ok(Some(CompositionResult {
         status,
         value,
@@ -220,7 +264,8 @@ pub fn execute_elaborated(
         arbitrary_constants,
         held: None,
         conditions: subject.semantics.metadata.conditions.clone(),
-        outcome: Some(subject.semantics.metadata.clone()),
+        semantic,
+        outcome,
         sampled_data: match &subject.semantics.interpretation {
             SemanticInterpretation::NumericTrajectory(trajectory) => Some(trajectory.clone()),
             _ => None,
@@ -798,6 +843,38 @@ mod tests {
             .unwrap();
         assert_eq!(result.status, CompositionStatus::Completed);
         assert_eq!(result.value, "2*x");
+    }
+
+    #[test]
+    fn publishes_final_object_semantics_and_outcome_without_product_reinference() {
+        let mut engine = RustEngine::spawn().unwrap();
+
+        let derivative = execute_steps(&mut engine, "D(x)Sin(x)^2", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(derivative.semantic.symbols, ["x"]);
+        assert!(derivative.semantic.bound_symbols.is_empty());
+        assert_eq!(
+            derivative.outcome.resolution,
+            crate::protocol::ResolutionState::Solved
+        );
+
+        let limit = execute_steps(&mut engine, "Limit(x,0)", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(limit.value, "0");
+        assert!(limit.semantic.symbols.is_empty());
+        assert!(limit.semantic.bound_symbols.is_empty());
+
+        let ode = execute_steps(&mut engine, "OdeSolve(y'==y)", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ode.semantic.kind,
+            crate::semantic::ValueKind::FunctionFamily
+        );
+        assert_eq!(ode.semantic.bound_symbols, ["x"]);
+        assert!(!ode.semantic.symbols.iter().any(|name| name == "y"));
     }
 
     #[test]

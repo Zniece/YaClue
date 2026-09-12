@@ -1,8 +1,8 @@
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
-use processing::protocol::{
-    Condition, ConditionSet, Conditionality, OutcomeReason, ResultCompleteness, ResultMetadata,
-};
+#[cfg(test)]
+use processing::protocol::{Condition, Conditionality};
+use processing::protocol::{OutcomeReason, ResultMetadata};
 use processing::semantic::{SemanticSummary, ValueKind};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
@@ -105,289 +105,27 @@ struct DispatchExpressionResult {
     tex: String,
     steps: Vec<Step>,
     data: Value,
+    semantic: SemanticSummary,
+    outcome: ResultMetadata,
 }
 
-fn unified_result<T: Serialize>(
+fn unified_result(
     kind: &str,
     title: &str,
-    expression: String,
-    tex: String,
-    steps: Vec<Step>,
-    data: &T,
+    result: processing::composition::CompositionResult,
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
+    let data = serde_json::to_value(&result)
+        .map_err(|error| invalid_input(format!("结果序列化失败: {error}")))?;
     Ok(DispatchExpressionResult {
         kind: kind.into(),
         title: title.into(),
-        expression,
-        tex,
-        steps,
-        data: serde_json::to_value(data)
-            .map_err(|error| invalid_input(format!("结果序列化失败: {error}")))?,
+        expression: result.value,
+        tex: result.tex,
+        steps: result.steps,
+        data,
+        semantic: result.semantic,
+        outcome: result.outcome,
     })
-}
-
-fn result_metadata(
-    result: &DispatchExpressionResult,
-    exactness: processing::semantic::Exactness,
-) -> Result<ResultMetadata, ErrorResponse> {
-    let domain = result.data.get("result").unwrap_or(&result.data);
-    let conditions = condition_set_from_value(domain.get("conditions"))?;
-    let status = domain
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("completed");
-    let held_operation = ["Integrate(", "D(", "Deriv(", "Limit(", "Solve("]
-        .iter()
-        .any(|prefix| result.expression.trim_start().starts_with(prefix));
-    let mut metadata = if status == "condition_insufficient" {
-        ResultMetadata::unresolved(exactness, OutcomeReason::ConditionInsufficient)
-    } else if status == "unsupported" {
-        ResultMetadata::unresolved(exactness, OutcomeReason::UnsupportedOperation)
-    } else if status == "divergent"
-        || status == "no_value" && result.data["outcome"]["reason"].as_str() == Some("divergent")
-    {
-        ResultMetadata::no_result(exactness, OutcomeReason::Divergent)
-    } else if matches!(
-        status,
-        "does_not_exist" | "no_solution" | "no_points" | "no_critical_points" | "no_value"
-    ) {
-        ResultMetadata::no_result(exactness, OutcomeReason::MathematicalAbsence)
-    } else if held_operation
-        || status.contains("unresolved")
-        || matches!(status, "inconclusive" | "no_convergence")
-    {
-        ResultMetadata::unresolved(exactness, OutcomeReason::AlgorithmUncovered)
-    } else {
-        ResultMetadata::solved(exactness, conditions.clone())
-    };
-    if !conditions.is_empty() {
-        metadata.conditions = conditions;
-        metadata.conditionality = if metadata.reason == Some(OutcomeReason::ConditionInsufficient) {
-            Conditionality::Insufficient
-        } else {
-            Conditionality::Conditional
-        };
-    }
-    if let Some(completeness) = domain.get("completeness").and_then(Value::as_str) {
-        metadata.completeness = match completeness {
-            "complete" | "parametric" | "periodic" => ResultCompleteness::Complete,
-            "representative" => ResultCompleteness::Representative,
-            _ => ResultCompleteness::Unknown,
-        };
-    }
-    Ok(metadata)
-}
-
-fn arbitrary_constants(result: &DispatchExpressionResult) -> Vec<String> {
-    let domain = result.data.get("result").unwrap_or(&result.data);
-    domain
-        .get("constants")
-        .or_else(|| domain.get("arbitrary_constants"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect()
-}
-
-fn project_domain_semantic(
-    input: &SemanticSummary,
-    result: &DispatchExpressionResult,
-) -> Result<SemanticSummary, ErrorResponse> {
-    if result
-        .data
-        .get("status")
-        .is_some_and(|status| status == "no_value")
-    {
-        let mut semantic = input.clone();
-        semantic.kind = ValueKind::Unevaluated;
-        semantic.completeness = None;
-        return Ok(semantic);
-    }
-    if result.data.get("held").is_some_and(|held| !held.is_null()) {
-        let mut semantic = input.clone();
-        semantic.kind = ValueKind::Unevaluated;
-        semantic.completeness = None;
-        return Ok(semantic);
-    }
-    let generated = arbitrary_constants(result);
-    if result.kind != "ode"
-        && result.kind != "composition"
-        && result.kind != "integral"
-        && result.kind != "series"
-        && result.kind != "defined_object"
-        && result.kind != "double_integral"
-        && result.kind != "polar_integral"
-        && result.kind != "numeric_ode"
-        && result.kind != "numeric_root"
-        && result.kind != "extrema"
-        && result.kind != "lagrange"
-        && generated.is_empty()
-    {
-        return Ok(input.clone());
-    }
-    let semantic_expression = result
-        .data
-        .get("semantic_expression")
-        .and_then(Value::as_str)
-        .unwrap_or(&result.expression);
-    let mut projection_input = input.clone();
-    // Completed composition binders describe consumed operations, not the
-    // free symbols of their result. Function families retain their binder
-    // while generated integration constants remain present.
-    let composition_completed = result.kind == "composition"
-        && result.data.get("status").and_then(Value::as_str) == Some("completed");
-    if composition_completed
-        && generated.is_empty()
-        && projection_input.kind != ValueKind::SolutionSet
-    {
-        projection_input.bound_symbols.clear();
-        for identity in &mut projection_input.symbol_identities {
-            if identity.role == processing::binding::SymbolRole::Bound {
-                identity.role = processing::binding::SymbolRole::Free;
-                identity.binder = None;
-            }
-        }
-    }
-    let mut projected = processing::semantic::project_result(
-        &projection_input,
-        semantic_expression,
-        &generated,
-        if result.kind == "ode" || projection_input.kind == ValueKind::SolutionSet {
-            &["x"]
-        } else {
-            &[]
-        },
-        match result.kind.as_str() {
-            "ode" => Some(ValueKind::SolutionSet),
-            "integral" => Some(ValueKind::FunctionFamily),
-            "numeric_ode" => Some(ValueKind::SampledData),
-            "extrema" | "lagrange" => Some(ValueKind::SolutionSet),
-            _ => None,
-        },
-    )
-    .map_err(message)?;
-    if matches!(
-        result.kind.as_str(),
-        "composition"
-            | "series"
-            | "defined_object"
-            | "double_integral"
-            | "polar_integral"
-            | "numeric_ode"
-            | "extrema"
-            | "lagrange"
-    ) && result
-        .data
-        .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| status.contains("unresolved"))
-    {
-        projected.kind = ValueKind::Unevaluated;
-        projected.completeness = None;
-    }
-    Ok(projected)
-}
-
-fn condition_set_from_value(value: Option<&Value>) -> Result<ConditionSet, ErrorResponse> {
-    let mut conditions = Vec::new();
-    let items = match value {
-        Some(Value::Array(items)) => Some(items),
-        Some(Value::Object(object)) => object.get("conditions").and_then(Value::as_array),
-        _ => None,
-    };
-    if let Some(items) = items {
-        for item in items {
-            collect_conditions(item, &mut conditions);
-        }
-    }
-    ConditionSet::new(conditions).map_err(message)
-}
-
-fn collect_conditions(value: &Value, output: &mut Vec<Condition>) {
-    let Some(object) = value.as_object() else {
-        if let Some(description) = value.as_str() {
-            output.push(Condition::Unknown {
-                description: description.into(),
-            });
-        }
-        return;
-    };
-    if let Some(predicate) = object.get("predicate").and_then(Value::as_str) {
-        let expression = object
-            .get("expression")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        output.push(match predicate {
-            "real_part_positive" => Condition::RealPartPositive { expression },
-            "positive" => Condition::Positive { expression },
-            "negative" => Condition::Negative { expression },
-            "non_zero" => Condition::NonZero { expression },
-            "real" => Condition::Real { expression },
-            "integer" => Condition::Integer { expression },
-            _ => Condition::Unknown {
-                description: object
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or("未知条件")
-                    .into(),
-            },
-        });
-        return;
-    }
-    match object.get("kind").and_then(Value::as_str) {
-        Some("property") => {
-            let expression = object
-                .get("expression")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let condition = match object.get("fact").and_then(Value::as_str) {
-                Some("Positive" | "positive") => Condition::Positive { expression },
-                Some("Negative" | "negative") => Condition::Negative { expression },
-                Some("NonZero" | "non_zero") => Condition::NonZero { expression },
-                Some("Real" | "real") => Condition::Real { expression },
-                Some("Integer" | "integer") => Condition::Integer { expression },
-                _ => Condition::Unknown {
-                    description: value.to_string(),
-                },
-            };
-            output.push(condition);
-        }
-        Some("relation")
-            if object.get("relation").and_then(Value::as_str) == Some("greater_than")
-                && object.get("right").and_then(Value::as_str) == Some("0") =>
-        {
-            let left = object
-                .get("left")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if let Some(expression) = left
-                .strip_prefix("Re(")
-                .and_then(|value| value.strip_suffix(')'))
-            {
-                output.push(Condition::RealPartPositive {
-                    expression: expression.into(),
-                });
-            } else {
-                output.push(Condition::Positive {
-                    expression: left.into(),
-                });
-            }
-        }
-        Some("all") => {
-            if let Some(Value::Array(items)) = object.get("conditions") {
-                for item in items {
-                    collect_conditions(item, output);
-                }
-            }
-        }
-        _ => output.push(Condition::Unknown {
-            description: value.to_string(),
-        }),
-    }
 }
 
 fn dispatch_expression_with_engine(
@@ -486,14 +224,7 @@ fn dispatch_expression_with_engine(
         ) if !has_native_child => ("evaluation", "计算结果"),
         _ => ("composition", "组合运算"),
     };
-    unified_result(
-        kind,
-        title,
-        result.value.clone(),
-        result.tex.clone(),
-        result.steps.clone(),
-        &result,
-    )
+    unified_result(kind, title, result)
 }
 
 pub fn process_expression_with_engine(
@@ -603,49 +334,7 @@ pub fn process_expression_with_engine(
             ),
         });
     }
-    let semantic_input = match analyzed.root_call.as_ref() {
-        Some(call) if call.head == "Limit" && call.arguments.len() == 2 => {
-            processing::semantic::analyze_input(
-                &format!("Limit(x,{}){}", call.arguments[1], call.arguments[0]),
-                "极限表达式",
-            )
-            .map_err(message)?
-            .semantic
-        }
-        Some(call) if call.head == "Limit" && call.arguments.len() == 4 => {
-            processing::semantic::analyze_input(
-                &format!(
-                    "Limit({},{}){}",
-                    call.arguments[0], call.arguments[1], call.arguments[3]
-                ),
-                "极限表达式",
-            )
-            .map_err(message)?
-            .semantic
-        }
-        _ => analyzed.semantic.clone(),
-    };
-    let contains_ode = processing::arithmetic::contains_operator(
-        &elaborated.root,
-        processing::semantic_core::OperatorId::OdeSolve,
-    );
     let result = dispatch_expression_with_engine(request, engine, &elaborated)?;
-    let projected_input = result
-        .data
-        .get("semantic_expression")
-        .and_then(Value::as_str)
-        .map(|expression| processing::semantic::analyze_input(expression, "降低后的表达式"))
-        .transpose()
-        .map_err(message)?;
-    let mut projection_base = projected_input
-        .as_ref()
-        .map(|input| input.semantic.clone())
-        .unwrap_or_else(|| semantic_input.clone());
-    if semantic_input.kind == ValueKind::SolutionSet || contains_ode {
-        projection_base.kind = ValueKind::SolutionSet;
-    }
-    let semantic = project_domain_semantic(&projection_base, &result)?;
-    let outcome = result_metadata(&result, semantic.exactness)?;
     Ok(ProcessExpressionResult {
         kind: result.kind,
         title: result.title,
@@ -653,8 +342,8 @@ pub fn process_expression_with_engine(
         tex: result.tex,
         steps: result.steps,
         data: result.data,
-        semantic,
-        outcome,
+        semantic: result.semantic,
+        outcome: result.outcome,
     })
 }
 
@@ -728,8 +417,8 @@ mod tests {
             process_expression_with_engine(request("D(x)Sin(x)^2", true), &mut engine).unwrap();
         assert_eq!(derivative.kind, "derivative");
         assert!(!derivative.steps.is_empty());
-        assert!(derivative.semantic.symbols.is_empty());
-        assert_eq!(derivative.semantic.bound_symbols, ["x".to_string()]);
+        assert_eq!(derivative.semantic.symbols, ["x"]);
+        assert!(derivative.semantic.bound_symbols.is_empty());
 
         let composed =
             process_expression_with_engine(request("D(x)Integrate(x)x*Exp(x)", true), &mut engine)
@@ -990,7 +679,7 @@ mod tests {
             assert_eq!(result.kind, "limit");
             assert_eq!(result.expression, "0");
             assert_eq!(result.steps.is_empty(), !steps);
-            assert_eq!(result.semantic.bound_symbols, ["x"]);
+            assert!(result.semantic.bound_symbols.is_empty());
             assert!(result.semantic.symbols.is_empty());
             assert_eq!(
                 result.outcome.support,
@@ -1146,7 +835,8 @@ mod tests {
             .symbols
             .iter()
             .any(|name| name.starts_with('y')));
-        assert_eq!(first.semantic.bound_symbols, ["x"]);
+        assert_eq!(first.semantic.symbols, ["x"]);
+        assert!(first.semantic.bound_symbols.is_empty());
         assert!(first.semantic.symbol_identities.iter().any(|identity| {
             identity.name == "C" && identity.role == SymbolRole::ArbitraryConstant
         }));
@@ -1812,62 +1502,6 @@ mod tests {
             absent.outcome.resolution,
             processing::protocol::ResolutionState::NoResult
         );
-    }
-
-    #[test]
-    fn unified_outcome_distinguishes_reasons_and_registered_conditions() {
-        let make = |expression: &str, data: Value| DispatchExpressionResult {
-            kind: "test".into(),
-            title: "test".into(),
-            expression: expression.into(),
-            tex: String::new(),
-            steps: Vec::new(),
-            data,
-        };
-        let unresolved = result_metadata(
-            &make("Integrate(x)f(x)", Value::Null),
-            processing::semantic::Exactness::Unknown,
-        )
-        .unwrap();
-        assert_eq!(
-            unresolved.reason,
-            Some(processing::protocol::OutcomeReason::AlgorithmUncovered)
-        );
-
-        let absent = result_metadata(
-            &make("Undefined", serde_json::json!({"status": "does_not_exist"})),
-            processing::semantic::Exactness::Exact,
-        )
-        .unwrap();
-        assert_eq!(
-            absent.resolution,
-            processing::protocol::ResolutionState::NoResult
-        );
-
-        let conditional = result_metadata(
-            &make(
-                "Gamma(a)",
-                serde_json::json!({
-                    "status": "converged",
-                    "conditions": [{
-                        "kind": "relation",
-                        "left": "Re(a)",
-                        "relation": "greater_than",
-                        "right": "0"
-                    }]
-                }),
-            ),
-            processing::semantic::Exactness::Symbolic,
-        )
-        .unwrap();
-        assert_eq!(
-            conditional.conditionality,
-            processing::protocol::Conditionality::Conditional
-        );
-        assert!(matches!(
-            conditional.conditions.conditions(),
-            [processing::protocol::Condition::RealPartPositive { expression }] if expression == "a"
-        ));
     }
 
     #[test]

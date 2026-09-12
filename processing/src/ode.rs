@@ -160,7 +160,8 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
             },
             interpretation: if solved {
                 SemanticInterpretation::FunctionFamily {
-                    variable: request.dependent.clone(),
+                    variable: request.independent.clone(),
+                    dependent: Some(request.dependent.clone()),
                     parameters: result.constants.clone(),
                 }
             } else {
