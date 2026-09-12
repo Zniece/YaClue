@@ -6,6 +6,7 @@
 //! semantic overlay.  Domains will gradually return `Transition`s and
 //! `RuleEvent`s through this boundary.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -79,6 +80,52 @@ impl OperationSessionAst {
 
 #[allow(dead_code)] // Consumed by the B2 algebra-transform adapters.
 pub(crate) const MAX_STABLE_REPRESENTATIONS: usize = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationCacheKey {
+    pub operation: String,
+    pub assumptions: Vec<String>,
+    pub precision: Option<u32>,
+    pub revision: ObjectRevision,
+    pub representation: RepresentationId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationCacheBudget {
+    pub max_entries: usize,
+    pub max_total_bytes: usize,
+    pub max_entry_bytes: usize,
+}
+
+impl Default for OperationCacheBudget {
+    fn default() -> Self {
+        Self {
+            max_entries: 8,
+            max_total_bytes: 64 * 1024,
+            max_entry_bytes: 16 * 1024,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct CachedOperationResult {
+    pub expression: Rc<LispObject>,
+    pub source: String,
+    pub tex: String,
+}
+
+#[derive(Clone)]
+struct OperationCacheEntry {
+    key: OperationCacheKey,
+    result: CachedOperationResult,
+    bytes: usize,
+}
+
+#[derive(Clone, Default)]
+struct OperationCache {
+    entries: Vec<OperationCacheEntry>,
+    total_bytes: usize,
+}
 
 /// Cumulative normalization strength. A higher level includes the guarantees
 /// of every preceding level.
@@ -1132,6 +1179,7 @@ pub struct MathematicalObject {
     pub overlay: SemanticOverlay,
     pub normalization: Option<NormalizationState>,
     representations: RepresentationSet,
+    operation_cache: Rc<RefCell<Option<OperationCache>>>,
 }
 
 impl MathematicalObject {
@@ -1155,6 +1203,7 @@ impl MathematicalObject {
                 active: RepresentationId(0),
                 next_id: 1,
             },
+            operation_cache: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -1297,6 +1346,80 @@ impl MathematicalObject {
         })
     }
 
+    pub fn operation_cache_key(
+        &self,
+        operation: impl Into<String>,
+        assumptions: Vec<String>,
+        precision: Option<u32>,
+    ) -> OperationCacheKey {
+        OperationCacheKey {
+            operation: operation.into(),
+            assumptions,
+            precision,
+            revision: self.revision,
+            representation: self.active_representation(),
+        }
+    }
+
+    pub(crate) fn cached_operation(
+        &self,
+        key: &OperationCacheKey,
+    ) -> Option<CachedOperationResult> {
+        self.operation_cache
+            .borrow()
+            .as_ref()?
+            .entries
+            .iter()
+            .find(|entry| &entry.key == key)
+            .map(|entry| entry.result.clone())
+    }
+
+    pub(crate) fn cache_operation(
+        &self,
+        key: OperationCacheKey,
+        result: CachedOperationResult,
+        budget: OperationCacheBudget,
+    ) -> bool {
+        let key_bytes = key
+            .operation
+            .len()
+            .saturating_add(key.assumptions.iter().map(String::len).sum::<usize>());
+        let bytes = key_bytes
+            .saturating_add(result.source.len())
+            .saturating_add(result.tex.len());
+        if budget.max_entries == 0
+            || bytes > budget.max_entry_bytes
+            || bytes > budget.max_total_bytes
+        {
+            return false;
+        }
+        let mut storage = self.operation_cache.borrow_mut();
+        let cache = storage.get_or_insert_with(OperationCache::default);
+        if let Some(index) = cache.entries.iter().position(|entry| entry.key == key) {
+            let replaced = cache.entries.remove(index);
+            cache.total_bytes = cache.total_bytes.saturating_sub(replaced.bytes);
+        }
+        while !cache.entries.is_empty()
+            && (cache.entries.len() >= budget.max_entries
+                || cache.total_bytes.saturating_add(bytes) > budget.max_total_bytes)
+        {
+            let evicted = cache.entries.remove(0);
+            cache.total_bytes = cache.total_bytes.saturating_sub(evicted.bytes);
+        }
+        cache.total_bytes = cache.total_bytes.saturating_add(bytes);
+        cache
+            .entries
+            .push(OperationCacheEntry { key, result, bytes });
+        true
+    }
+
+    pub fn cached_operation_count(&self) -> usize {
+        self.operation_cache
+            .borrow()
+            .as_ref()
+            .map_or(0, |cache| cache.entries.len())
+    }
+
     pub fn view<'a>(&'a self, env: &'a Environment) -> ExpressionView<'a> {
         ExpressionView::new(env, &self.expression)
     }
@@ -1393,6 +1516,7 @@ impl MathematicalObject {
             });
         }
         if expression_changed {
+            self.operation_cache = Rc::new(RefCell::new(None));
             self.representations = RepresentationSet {
                 candidates: vec![StableRepresentation {
                     id: RepresentationId(0),
@@ -1845,6 +1969,73 @@ mod tests {
             object.stable_representation_count(),
             MAX_STABLE_REPRESENTATIONS
         );
+    }
+
+    #[test]
+    fn operation_cache_keys_every_semantic_context_and_enforces_budgets() {
+        let mut env = Environment::new();
+        let expression = parse_expression(&mut env, "x+1;").unwrap().unwrap();
+        let metadata = ResultMetadata::solved(
+            crate::semantic::Exactness::Exact,
+            crate::protocol::ConditionSet::empty(),
+        );
+        let object = MathematicalObject::new(
+            ObjectId(33),
+            expression.clone(),
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata,
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        );
+        let key = object.operation_cache_key("Simplify", vec!["x:Positive".into()], Some(20));
+        assert_ne!(
+            key,
+            object.operation_cache_key("Factor", vec!["x:Positive".into()], Some(20))
+        );
+        assert_ne!(
+            key,
+            object.operation_cache_key("Simplify", vec!["x:Real".into()], Some(20))
+        );
+        assert_ne!(
+            key,
+            object.operation_cache_key("Simplify", vec!["x:Positive".into()], Some(50))
+        );
+        let mut later = key.clone();
+        later.revision = ObjectRevision(1);
+        assert_ne!(key, later);
+        later = key.clone();
+        later.representation = RepresentationId(1);
+        assert_ne!(key, later);
+
+        let budget = OperationCacheBudget {
+            max_entries: 2,
+            max_total_bytes: 64,
+            max_entry_bytes: 32,
+        };
+        let result = |source: &str| CachedOperationResult {
+            expression: expression.clone(),
+            source: source.into(),
+            tex: source.into(),
+        };
+        assert!(object.cache_operation(key.clone(), result("x+1"), budget));
+        let second = object.operation_cache_key("Expand", Vec::new(), None);
+        assert!(object.cache_operation(second.clone(), result("x+1"), budget));
+        let third = object.operation_cache_key("Factor", Vec::new(), None);
+        assert!(object.cache_operation(third.clone(), result("x+1"), budget));
+        assert_eq!(object.cached_operation_count(), 2);
+        assert!(object.cached_operation(&key).is_none());
+        assert!(object.cached_operation(&second).is_some());
+        assert!(object.cached_operation(&third).is_some());
+
+        assert!(!object.cache_operation(
+            object.operation_cache_key("oversized", Vec::new(), None),
+            result("an-expression-that-exceeds-the-entry-budget"),
+            budget,
+        ));
+        assert_eq!(object.cached_operation_count(), 2);
     }
 
     #[test]

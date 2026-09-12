@@ -5,10 +5,11 @@ use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId,
-    RepresentationPreference, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
-    SemanticInterpretation, SemanticOperation, SemanticState,
+    object_from_source, CachedOperationResult, CapabilitySet, Computation, ComputationOutput,
+    MathematicalObject, NormalizationLevel, NormalizationMetadata, NormalizationMode,
+    ObjectCapability, ObjectDelta, OperationCacheBudget, OperatorId, RepresentationPreference,
+    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 use serde::Serialize;
 
@@ -61,12 +62,42 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
                 request.kind.name()
             )));
         }
-        let result = transform(
-            engine,
-            &input.print_source(),
-            request.kind,
-            request.variable.as_deref(),
-        )?;
+        let input_source = input.print_source();
+        let mut assumptions = active_assumption_fingerprint(engine)?;
+        assumptions.extend(
+            input
+                .semantics
+                .metadata
+                .conditions
+                .conditions()
+                .iter()
+                .map(|condition| format!("object:{condition:?}")),
+        );
+        assumptions.sort();
+        assumptions.dedup();
+        let operation = match request.variable.as_deref() {
+            Some(variable) => format!("{}:{variable}", request.kind.name()),
+            None => request.kind.name().into(),
+        };
+        let cache_key = input.operation_cache_key(operation, assumptions, None);
+        let cached = input.cached_operation(&cache_key);
+        let result = if let Some(cached) = &cached {
+            TransformResult {
+                operation: request.kind.name().into(),
+                input: input_source.clone(),
+                output: cached.source.clone(),
+                tex: cached.tex.clone(),
+                changed: cached.source != input_source,
+                unresolved: false,
+            }
+        } else {
+            transform(
+                engine,
+                &input_source,
+                request.kind,
+                request.variable.as_deref(),
+            )?
+        };
         let metadata = if result.unresolved {
             ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
         } else {
@@ -91,7 +122,10 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &result.output, semantics.clone())?;
+        let parsed = match cached {
+            Some(cached) => MathematicalObject::new(input.id, cached.expression, semantics.clone()),
+            None => object_from_source(input.id, &result.output, semantics.clone())?,
+        };
         if result.unresolved {
             crate::semantic_core::promote_held_application(
                 request.kind.name(),
@@ -116,6 +150,15 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
                 normalization: None,
             });
         } else {
+            input.cache_operation(
+                cache_key,
+                CachedOperationResult {
+                    expression: parsed.raw_expression(),
+                    source: result.output.clone(),
+                    tex: result.tex.clone(),
+                },
+                OperationCacheBudget::default(),
+            );
             let representation = output
                 .retain_representation(
                     parsed.raw_expression(),
@@ -176,6 +219,17 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             effects: Vec::new(),
         })
     }
+}
+
+fn active_assumption_fingerprint(engine: &mut dyn Engine) -> Result<Vec<String>, EngineError> {
+    let mut fingerprint = crate::assumptions::list_assumptions(engine)?
+        .into_iter()
+        .filter(|assumption| assumption.active)
+        .map(|assumption| format!("{}:{:?}", assumption.symbol, assumption.fact))
+        .collect::<Vec<_>>();
+    fingerprint.sort();
+    fingerprint.dedup();
+    Ok(fingerprint)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -436,5 +490,57 @@ mod tests {
         assert_eq!(output.print_source(), "(x+1)^2");
         assert_eq!(output.revision.0, 2);
         assert_eq!(factored.certificates.len(), 1);
+    }
+
+    #[test]
+    fn transform_cache_avoids_repeating_engine_work_and_separates_assumptions() {
+        let input = object_from_source(
+            ObjectId(34),
+            "Sqrt(x^2)",
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let request = TransformRequest {
+            kind: TransformKind::Simplify,
+            variable: None,
+        };
+        let mut engine = crate::test_support::CountingEngine::spawn();
+
+        engine.reset_counts();
+        let first = TransformOperation
+            .compute(&mut engine, &input, &request)
+            .unwrap();
+        let uncached_calls = engine.eval_calls;
+        assert_eq!(input.cached_operation_count(), 1);
+
+        engine.reset_counts();
+        let second = TransformOperation
+            .compute(&mut engine, &input, &request)
+            .unwrap();
+        assert_eq!(
+            first.value().unwrap().print_source(),
+            second.value().unwrap().print_source()
+        );
+        assert!(engine.eval_calls < uncached_calls);
+
+        crate::assumptions::assume(
+            &mut engine,
+            "x",
+            crate::assumptions::AssumptionFact::Positive,
+        )
+        .unwrap();
+        engine.reset_counts();
+        let assumed = TransformOperation
+            .compute(&mut engine, &input, &request)
+            .unwrap();
+        assert_eq!(assumed.value().unwrap().print_source(), "x");
+        assert_eq!(input.cached_operation_count(), 2);
+        assert!(engine.eval_calls > 1);
     }
 }
