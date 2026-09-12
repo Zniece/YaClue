@@ -6,9 +6,9 @@ use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
-    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId,
+    RepresentationPreference, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use serde::Serialize;
 
@@ -33,9 +33,10 @@ impl TransformKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformRequest {
     pub kind: TransformKind,
+    pub variable: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -52,11 +53,7 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             TransformKind::Factor => ObjectCapability::Factor,
             TransformKind::Expand => ObjectCapability::Expand,
             TransformKind::Simplify | TransformKind::Tidy => ObjectCapability::Simplify,
-            TransformKind::Apart => {
-                return Err(EngineError::InvalidInput(
-                    "Apart 将由带变量参数的独立对象操作迁移".into(),
-                ))
-            }
+            TransformKind::Apart => ObjectCapability::Simplify,
         };
         if !input.semantics.capabilities.contains(capability) {
             return Err(EngineError::InvalidInput(format!(
@@ -64,7 +61,12 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
                 request.kind.name()
             )));
         }
-        let result = transform(engine, &input.print_source(), request.kind, None)?;
+        let result = transform(
+            engine,
+            &input.print_source(),
+            request.kind,
+            request.variable.as_deref(),
+        )?;
         let metadata = if result.unresolved {
             ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
         } else {
@@ -97,20 +99,32 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
                 &mut semantics,
             )?;
         }
-        let mut output = input.clone();
-        output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
-            semantics: Some(semantics),
-            overlay: None,
-            normalization: (!result.unresolved).then_some(NormalizationMetadata {
-                level: NormalizationLevel::Domain,
-                assumptions: Vec::new(),
-                mode: NormalizationMode::Operation(match request.kind {
-                    TransformKind::Factor => OperatorId::Factor,
-                    _ => OperatorId::AlgebraTransform,
-                }),
+        let normalization = NormalizationMetadata {
+            level: NormalizationLevel::Domain,
+            assumptions: Vec::new(),
+            mode: NormalizationMode::Operation(match request.kind {
+                TransformKind::Factor => OperatorId::Factor,
+                _ => OperatorId::AlgebraTransform,
             }),
-        });
+        };
+        let mut output = input.clone();
+        if result.unresolved {
+            output.apply(ObjectDelta {
+                expression: Some(parsed.raw_expression()),
+                semantics: Some(semantics),
+                overlay: None,
+                normalization: None,
+            });
+        } else {
+            let representation = output
+                .retain_representation(
+                    parsed.raw_expression(),
+                    RepresentationPreference::Named(request.kind.name().into()),
+                    Some(normalization),
+                )
+                .expect("stable representation budget always retains the newest candidate");
+            output.activate_representation(representation)?;
+        }
         let event = RuleEvent {
             rule: if result.unresolved {
                 "hold-algebra-transform"
@@ -147,7 +161,18 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             trace: Some(RuleTrace {
                 events: vec![event],
             }),
-            certificates: Vec::new(),
+            certificates: (!result.unresolved)
+                .then(|| crate::semantic_core::Certificate {
+                    kind: "equivalent-representation".into(),
+                    payload: format!(
+                        "operation={};before={};after={}",
+                        request.kind.name(),
+                        result.input,
+                        result.output
+                    ),
+                })
+                .into_iter()
+                .collect(),
             effects: Vec::new(),
         })
     }
@@ -308,6 +333,7 @@ mod tests {
                 &input("(x+1)^2"),
                 &TransformRequest {
                     kind: TransformKind::Expand,
+                    variable: None,
                 },
             )
             .unwrap();
@@ -316,6 +342,35 @@ mod tests {
         assert_eq!(output.revision.0, 1);
         assert_eq!(output.print_source(), "x^2+2*x+1");
         assert!(output.meets_normalization(NormalizationLevel::Domain));
+        assert_eq!(output.stable_representation_count(), 2);
+        assert_eq!(
+            output.representation_preference(output.active_representation()),
+            Some(&RepresentationPreference::Named("Expand".into()))
+        );
+        assert_eq!(solved.certificates.len(), 1);
+        let principal = output
+            .operation_session(Some(crate::semantic_core::RepresentationId(0)))
+            .unwrap();
+        crate::input::with_parse_env(|env| {
+            assert_eq!(principal.view(env).print_source(), "(x+1)^2");
+        });
+
+        let apart = TransformOperation
+            .compute(
+                &mut engine,
+                &input("1/(x^2-1)"),
+                &TransformRequest {
+                    kind: TransformKind::Apart,
+                    variable: Some("x".into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(apart.value().unwrap().stable_representation_count(), 2);
+        equivalent(
+            &mut engine,
+            &apart.value().unwrap().print_source(),
+            "1/(2*(x-1))-1/(2*(x+1))",
+        );
 
         let held = TransformOperation
             .compute(
@@ -323,6 +378,7 @@ mod tests {
                 &input("Sin(x)"),
                 &TransformRequest {
                     kind: TransformKind::Factor,
+                    variable: None,
                 },
             )
             .unwrap();
@@ -331,5 +387,54 @@ mod tests {
             held.subject().unwrap().semantics.interpretation,
             SemanticInterpretation::HeldTypedApplication(_)
         ));
+    }
+
+    #[test]
+    fn equivalent_transforms_switch_between_retained_asts_without_changing_identity() {
+        let input = object_from_source(
+            ObjectId(32),
+            "(x+1)^2",
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let identity = input.identity();
+        let mut engine = RustEngine::spawn().unwrap();
+        let expanded = TransformOperation
+            .compute(
+                &mut engine,
+                &input,
+                &TransformRequest {
+                    kind: TransformKind::Expand,
+                    variable: None,
+                },
+            )
+            .unwrap();
+        let factored = TransformOperation
+            .compute(
+                &mut engine,
+                expanded.value().unwrap(),
+                &TransformRequest {
+                    kind: TransformKind::Factor,
+                    variable: None,
+                },
+            )
+            .unwrap();
+        let output = factored.value().unwrap();
+
+        assert_eq!(output.identity(), identity);
+        assert_eq!(
+            output.active_representation(),
+            crate::semantic_core::RepresentationId(0)
+        );
+        assert_eq!(output.stable_representation_count(), 2);
+        assert_eq!(output.print_source(), "(x+1)^2");
+        assert_eq!(output.revision.0, 2);
+        assert_eq!(factored.certificates.len(), 1);
     }
 }

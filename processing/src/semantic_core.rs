@@ -36,7 +36,7 @@ pub struct ObjectRevision(pub u64);
 pub struct MathematicalIdentity(pub ObjectId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RepresentationId(pub u8);
+pub struct RepresentationId(pub u64);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepresentationPreference {
@@ -58,6 +58,7 @@ struct StableRepresentation {
 struct RepresentationSet {
     candidates: Vec<StableRepresentation>,
     active: RepresentationId,
+    next_id: u64,
 }
 
 /// A bounded, computation-local AST selection. It is deliberately not stored
@@ -1152,6 +1153,7 @@ impl MathematicalObject {
             representations: RepresentationSet {
                 candidates: vec![principal],
                 active: RepresentationId(0),
+                next_id: 1,
             },
         }
     }
@@ -1189,15 +1191,51 @@ impl MathematicalObject {
         preference: RepresentationPreference,
         normalization: Option<NormalizationMetadata>,
     ) -> Option<RepresentationId> {
-        if self.representations.candidates.len() >= MAX_STABLE_REPRESENTATIONS {
-            return None;
+        let duplicate = crate::input::with_parse_env(|env| {
+            let source = ExpressionView::new(env, &expression).print_source();
+            self.representations
+                .candidates
+                .iter()
+                .position(|candidate| {
+                    ExpressionView::new(env, &candidate.expression).print_source() == source
+                })
+        });
+        if let Some(index) = duplicate {
+            let candidate = &mut self.representations.candidates[index];
+            if candidate.id != RepresentationId(0) {
+                candidate.preference = preference;
+            }
+            candidate.normalization = normalization;
+            return Some(candidate.id);
         }
-        let id = RepresentationId(self.representations.candidates.len() as u8);
+        if self.representations.candidates.len() >= MAX_STABLE_REPRESENTATIONS {
+            let eviction = self
+                .representations
+                .candidates
+                .iter()
+                .position(|candidate| {
+                    candidate.id != RepresentationId(0)
+                        && candidate.id != self.representations.active
+                })?;
+            self.representations.candidates.remove(eviction);
+            let id = RepresentationId(self.representations.next_id);
+            self.representations.next_id += 1;
+            self.representations.candidates.push(StableRepresentation {
+                id,
+                preference,
+                expression,
+                overlay: self.overlay.clone(),
+                normalization,
+            });
+            return Some(id);
+        }
+        let id = RepresentationId(self.representations.next_id);
+        self.representations.next_id += 1;
         self.representations.candidates.push(StableRepresentation {
             id,
             preference,
             expression,
-            overlay: SemanticOverlay::default(),
+            overlay: self.overlay.clone(),
             normalization,
         });
         Some(id)
@@ -1215,7 +1253,16 @@ impl MathematicalObject {
             .find(|candidate| candidate.id == id)
             .cloned()
             .ok_or_else(|| EngineError::InvalidInput("未知的对象表示".into()))?;
-        if self.representations.active == id {
+        let already_active = self.representations.active == id
+            && crate::input::with_parse_env(|env| {
+                ExpressionView::new(env, &self.expression).print_source()
+                    == ExpressionView::new(env, &candidate.expression).print_source()
+            });
+        if already_active {
+            self.normalization = candidate.normalization.map(|metadata| NormalizationState {
+                revision: self.revision,
+                metadata,
+            });
             return Ok(());
         }
         self.expression = candidate.expression;
@@ -1358,6 +1405,7 @@ impl MathematicalObject {
                         .map(|state| state.metadata.clone()),
                 }],
                 active: RepresentationId(0),
+                next_id: 1,
             };
         } else if changed {
             if let Some(active) = self
@@ -1756,27 +1804,47 @@ mod tests {
             },
         );
         let original_revision = object.revision;
+        let mut newest = RepresentationId(0);
         for index in 0..5 {
             let expression = parse_expression(&mut env, &format!("Gamma(x)+{index};"))
                 .unwrap()
                 .unwrap();
-            object.retain_representation(
-                expression,
-                RepresentationPreference::Operation(OperatorId::Derivative),
-                None,
-            );
+            newest = object
+                .retain_representation(
+                    expression,
+                    RepresentationPreference::Operation(OperatorId::Derivative),
+                    None,
+                )
+                .unwrap();
         }
         assert_eq!(
             object.stable_representation_count(),
             MAX_STABLE_REPRESENTATIONS
         );
 
-        let session = object.operation_session(Some(RepresentationId(1))).unwrap();
+        let session = object.operation_session(Some(newest)).unwrap();
         assert_eq!(session.identity, object.identity());
         assert_eq!(session.revision, original_revision);
-        assert_eq!(session.view(&env).print_source(), "Gamma(x)+0");
+        assert_eq!(session.view(&env).print_source(), "Gamma(x)+4");
         assert_eq!(object.view(&env).print_source(), "Gamma(x)");
         assert_eq!(object.revision, original_revision);
+
+        object.activate_representation(newest).unwrap();
+        let active_source = object.print_source();
+        let extra = parse_expression(&mut env, "Gamma(x)+99;").unwrap().unwrap();
+        object
+            .retain_representation(
+                extra,
+                RepresentationPreference::Operation(OperatorId::Derivative),
+                None,
+            )
+            .unwrap();
+        assert_eq!(object.print_source(), active_source);
+        assert!(object.operation_session(Some(newest)).is_ok());
+        assert_eq!(
+            object.stable_representation_count(),
+            MAX_STABLE_REPRESENTATIONS
+        );
     }
 
     #[test]

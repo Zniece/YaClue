@@ -42,7 +42,16 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
         crate::elaboration::MathematicalForm::Application { head }
             if is_migrated_transform(head) =>
         {
-            expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
+            match head.as_str() {
+                "Apart" => {
+                    expression.children.len() == 2
+                        && can_execute_elaborated_tree(&expression.children[0])
+                }
+                _ => {
+                    expression.children.len() == 1
+                        && can_execute_elaborated_tree(&expression.children[0])
+                }
+            }
         }
         crate::elaboration::MathematicalForm::Application { head }
             if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix") =>
@@ -100,7 +109,7 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
 }
 
 pub fn is_migrated_transform(head: &str) -> bool {
-    matches!(head, "Simplify" | "Tidy" | "Expand" | "Factor")
+    matches!(head, "Simplify" | "Tidy" | "Expand" | "Factor" | "Apart")
 }
 
 pub fn is_migrated_numeric_evaluation(head: &str) -> bool {
@@ -740,10 +749,10 @@ fn execute_transform_application(
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
-    let [operand_node] = expression.children.as_slice() else {
-        return Err(EngineError::InvalidInput(format!(
-            "{head} 需要一个 operand"
-        )));
+    let (operand_node, variable) = match (head, expression.children.as_slice()) {
+        ("Apart", [operand, variable]) => (operand, Some(variable.object.print_source())),
+        (_, [operand]) => (operand, None),
+        _ => return Err(EngineError::InvalidInput(format!("{head} 参数数量错误"))),
     };
     let mut operand = execute_elaborated_structure(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
@@ -755,12 +764,13 @@ fn execute_transform_application(
         "Tidy" => crate::algebra::TransformKind::Tidy,
         "Expand" => crate::algebra::TransformKind::Expand,
         "Factor" => crate::algebra::TransformKind::Factor,
+        "Apart" => crate::algebra::TransformKind::Apart,
         _ => unreachable!(),
     };
     let mut current = crate::algebra::TransformOperation.compute(
         engine,
         &input,
-        &crate::algebra::TransformRequest { kind },
+        &crate::algebra::TransformRequest { kind, variable },
     )?;
     merge_prior_computation(&mut current, &mut operand);
     Ok(current)
