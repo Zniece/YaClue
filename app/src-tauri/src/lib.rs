@@ -695,6 +695,42 @@ mod tests {
     }
 
     #[test]
+    fn unified_input_exposes_composable_surface_integrals() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let surface = process_expression_with_engine(
+            request(
+                "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,0},{u,v},{0,0},{2,3},Reversed)",
+                true,
+            ),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(surface.kind, "surface_integral");
+        assert_eq!(surface.expression, "-6");
+        assert_eq!(surface.data["analysis"]["normal_verified"], true);
+        assert_eq!(surface.data["analysis"]["integrand_verified"], true);
+        assert!(surface
+            .steps
+            .iter()
+            .any(|step| step.rule == "surface-integral-normal"));
+        assert_eq!(
+            surface.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+
+        let composed = process_expression_with_engine(
+            request(
+                "D(a)(a*ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{2,3}))",
+                false,
+            ),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.kind, "composition");
+        assert_eq!(composed.expression, "6");
+    }
+
+    #[test]
     fn unified_input_accepts_two_argument_limit_with_default_x() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for steps in [true, false] {

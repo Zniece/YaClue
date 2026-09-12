@@ -189,7 +189,11 @@ pub fn execute_elaborated(
     let analysis = computation.certificates.iter().find_map(|certificate| {
         matches!(
             certificate.kind.as_str(),
-            "extrema_analysis" | "lagrange_analysis" | "multivariate_shape" | "line_integral"
+            "extrema_analysis"
+                | "lagrange_analysis"
+                | "multivariate_shape"
+                | "line_integral"
+                | "surface_integral"
         )
         .then(|| serde_json::from_str(&certificate.payload).ok())
         .flatten()
@@ -934,6 +938,44 @@ mod tests {
                 .steps
                 .iter()
                 .any(|step| step.rule == "line-integral-result"));
+        }
+    }
+
+    #[test]
+    fn surface_integrals_use_the_object_pipeline_and_compose() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            (
+                "ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{2,3})",
+                "6",
+            ),
+            (
+                "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,0},{u,v},{0,0},{2,3})",
+                "6",
+            ),
+            (
+                "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,0},{u,v},{0,0},{2,3},Reversed)",
+                "-6",
+            ),
+            (
+                "Sin(ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{2,3}))",
+                "Sin(6)",
+            ),
+        ] {
+            let result = execute_steps(&mut engine, source, StepVerbosity::Concise)
+                .unwrap_or_else(|error| panic!("{source}: {error}"))
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+            assert_eq!(
+                engine.eval(&result.value).unwrap().expr.to_string(),
+                engine.eval(expected).unwrap().expr.to_string(),
+                "{source}: {}",
+                result.value
+            );
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "surface-integral-result"));
         }
     }
 }

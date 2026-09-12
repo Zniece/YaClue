@@ -24,7 +24,7 @@ pub enum LineIntegralKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct LineIntegralRequest {
+struct LineIntegralRequest {
     pub kind: LineIntegralKind,
     pub field: Vec<String>,
     pub coordinates: Vec<String>,
@@ -189,7 +189,7 @@ fn object_components(input: &crate::semantic_core::MathematicalObject) -> Vec<St
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LineIntegralResult {
+struct LineIntegralResult {
     pub kind: LineIntegralKind,
     pub dimension: usize,
     pub curve: Vec<String>,
@@ -204,12 +204,13 @@ pub struct LineIntegralResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LineIntegralStepResult {
+struct LineIntegralStepResult {
     pub result: LineIntegralResult,
     pub steps: Vec<Step>,
 }
 
-pub fn compute(
+#[cfg(test)]
+fn compute(
     engine: &mut dyn Engine,
     request: &LineIntegralRequest,
 ) -> Result<LineIntegralResult, EngineError> {
@@ -217,14 +218,15 @@ pub fn compute(
     evaluate(engine, request, true)
 }
 
-pub fn compute_steps(
+#[cfg(test)]
+fn compute_steps(
     engine: &mut dyn Engine,
     request: &LineIntegralRequest,
 ) -> Result<LineIntegralStepResult, EngineError> {
     compute_steps_with_verbosity(engine, request, StepVerbosity::Detailed)
 }
 
-pub fn compute_steps_with_verbosity(
+fn compute_steps_with_verbosity(
     engine: &mut dyn Engine,
     request: &LineIntegralRequest,
     verbosity: StepVerbosity,

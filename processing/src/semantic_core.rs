@@ -306,6 +306,7 @@ pub enum OperatorId {
     Lagrange,
     MultivariateDifferential,
     LineIntegral,
+    SurfaceIntegral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -332,6 +333,7 @@ pub enum CapabilityId {
     AnalyzeExtrema,
     AnalyzeMultivariate,
     IntegrateLine,
+    IntegrateSurface,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -355,6 +357,7 @@ pub enum ObjectNativeRoute {
     Extrema,
     MultivariateDifferential,
     LineIntegral,
+    SurfaceIntegral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -737,6 +740,24 @@ const SIG_LINE_INTEGRAL: &[OperatorSlotSignature] = &[OperatorSlotSignature {
     arity: 6,
     requirements: &[Operand, Operand, Operand, Variable, LowerBound, UpperBound],
 }];
+const SIG_SURFACE_INTEGRAL: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 6,
+        requirements: &[Operand, Operand, Operand, Operand, Operand, Operand],
+    },
+    OperatorSlotSignature {
+        arity: 7,
+        requirements: &[
+            Operand,
+            Operand,
+            Operand,
+            Operand,
+            Operand,
+            Operand,
+            Requirement::Direction,
+        ],
+    },
+];
 
 pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
     OperatorDescriptor {
@@ -1129,6 +1150,19 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::LineIntegral,
         product_kind: "line_integral",
         title: "线积分",
+    },
+    OperatorDescriptor {
+        id: OperatorId::SurfaceIntegral,
+        names: &["ScalarSurfaceIntegral", "VectorSurfaceIntegral"],
+        arities: &[6, 7],
+        slot_signatures: SIG_SURFACE_INTEGRAL,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::IntegrateSurface,
+        route: ObjectNativeRoute::SurfaceIntegral,
+        product_kind: "surface_integral",
+        title: "曲面积分",
     },
 ];
 
@@ -1594,6 +1628,7 @@ pub enum ObjectCapability {
     AnalyzeExtrema,
     AnalyzeMultivariate,
     IntegrateLine,
+    IntegrateSurface,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1639,6 +1674,7 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::AnalyzeExtrema as u8)
                 | (1 << ObjectCapability::AnalyzeMultivariate as u8)
                 | (1 << ObjectCapability::IntegrateLine as u8)
+                | (1 << ObjectCapability::IntegrateSurface as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
@@ -1655,7 +1691,8 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::SolveOde as u8)
                 | (1 << ObjectCapability::SolveNumericOde as u8)
                 | (1 << ObjectCapability::AnalyzeMultivariate as u8)
-                | (1 << ObjectCapability::IntegrateLine as u8),
+                | (1 << ObjectCapability::IntegrateLine as u8)
+                | (1 << ObjectCapability::IntegrateSurface as u8),
         )
     }
     pub const fn matrix() -> Self {
@@ -1668,7 +1705,8 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::MatrixSolve as u8)
                 | (1 << ObjectCapability::MatrixAnalyze as u8)
                 | (1 << ObjectCapability::AnalyzeMultivariate as u8)
-                | (1 << ObjectCapability::IntegrateLine as u8),
+                | (1 << ObjectCapability::IntegrateLine as u8)
+                | (1 << ObjectCapability::IntegrateSurface as u8),
         )
     }
     pub const fn factorization() -> Self {

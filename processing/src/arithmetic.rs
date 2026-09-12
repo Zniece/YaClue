@@ -102,6 +102,9 @@ pub fn execute_elaborated_structure(
                 ObjectNativeRoute::LineIntegral => {
                     execute_line_integral_application(engine, expression, head)
                 }
+                ObjectNativeRoute::SurfaceIntegral => {
+                    execute_surface_integral_application(engine, expression, head)
+                }
             };
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -663,6 +666,83 @@ fn execute_line_integral_application(
             parameter: parameter.object.print_source(),
             lower: lower.object.print_source(),
             upper: upper.object.print_source(),
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut field);
+    Ok(current)
+}
+
+fn execute_surface_integral_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    if !matches!(expression.children.len(), 6 | 7) {
+        return Err(EngineError::InvalidInput(format!(
+            "{head} 需要场、坐标、曲面、参数、下界和上界列表"
+        )));
+    }
+    let collection = |index: usize, label: &str| -> Result<Vec<String>, EngineError> {
+        let node = &expression.children[index];
+        if !matches!(node.form, crate::elaboration::MathematicalForm::Collection) {
+            return Err(EngineError::InvalidInput(format!("{label}必须是列表")));
+        }
+        Ok(node
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect())
+    };
+    let fixed = |index: usize, length: usize, label: &str| -> Result<Vec<String>, EngineError> {
+        let values = collection(index, label)?;
+        if values.len() != length {
+            return Err(EngineError::InvalidInput(format!(
+                "{label}必须包含 {length} 个分量"
+            )));
+        }
+        Ok(values)
+    };
+    let mut field = execute_elaborated_structure(engine, &expression.children[0])?;
+    if !matches!(field.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, field, head, 0);
+    }
+    let input = field
+        .value()
+        .expect("checked surface-integral field")
+        .clone();
+    let coordinates: [String; 3] = fixed(1, 3, "空间坐标")?.try_into().unwrap();
+    let surface: [String; 3] = fixed(2, 3, "参数曲面")?.try_into().unwrap();
+    let parameters: [String; 2] = fixed(3, 2, "曲面参数")?.try_into().unwrap();
+    let lower: [String; 2] = fixed(4, 2, "参数下界")?.try_into().unwrap();
+    let upper: [String; 2] = fixed(5, 2, "参数上界")?.try_into().unwrap();
+    let orientation = if expression
+        .children
+        .get(6)
+        .is_some_and(|node| node.object.print_source() == "Reversed")
+    {
+        crate::surface_integrals::SurfaceOrientation::Reversed
+    } else {
+        crate::surface_integrals::SurfaceOrientation::ParameterOrder
+    };
+    let mut current = crate::surface_integrals::SurfaceIntegralOperation.compute(
+        engine,
+        &input,
+        &crate::surface_integrals::SurfaceIntegralObjectRequest {
+            kind: match head {
+                "ScalarSurfaceIntegral" => {
+                    crate::surface_integrals::SurfaceIntegralKind::ScalarArea
+                }
+                "VectorSurfaceIntegral" => {
+                    crate::surface_integrals::SurfaceIntegralKind::VectorFlux
+                }
+                _ => return Err(EngineError::InvalidInput("未知曲面积分运算".into())),
+            },
+            orientation,
+            coordinates,
+            surface,
+            parameters,
+            lower,
+            upper,
         },
     )?;
     merge_prior_computation(&mut current, &mut field);

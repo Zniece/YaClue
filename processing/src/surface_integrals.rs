@@ -5,6 +5,16 @@ use crate::input::{analyze_expression, fresh_internal_symbols, render_one_tex, v
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
+use yacas_rs::value::{spine_refs, ObjectKind};
+
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,7 +31,7 @@ pub enum SurfaceOrientation {
 }
 
 #[derive(Debug, Clone)]
-pub struct SurfaceIntegralRequest {
+struct SurfaceIntegralRequest {
     pub kind: SurfaceIntegralKind,
     pub orientation: SurfaceOrientation,
     pub field: Vec<String>,
@@ -32,8 +42,173 @@ pub struct SurfaceIntegralRequest {
     pub upper: [String; 2],
 }
 
+#[derive(Debug, Clone)]
+pub struct SurfaceIntegralObjectRequest {
+    pub kind: SurfaceIntegralKind,
+    pub orientation: SurfaceOrientation,
+    pub coordinates: [String; 3],
+    pub surface: [String; 3],
+    pub parameters: [String; 2],
+    pub lower: [String; 2],
+    pub upper: [String; 2],
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SurfaceIntegralOperation;
+
+impl SemanticOperation<SurfaceIntegralObjectRequest> for SurfaceIntegralOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &SurfaceIntegralObjectRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::IntegrateSurface)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备曲面积分能力".into(),
+            ));
+        }
+        let legacy = SurfaceIntegralRequest {
+            kind: request.kind,
+            orientation: request.orientation,
+            field: object_components(input),
+            coordinates: request.coordinates.clone(),
+            surface: request.surface.clone(),
+            parameters: request.parameters.clone(),
+            lower: request.lower.clone(),
+            upper: request.upper.clone(),
+        };
+        let evaluated = compute_steps_with_verbosity(engine, &legacy, StepVerbosity::Detailed)?;
+        let result = evaluated.result;
+        let source = if result.completed {
+            result.value.clone()
+        } else {
+            format!(
+                "{}({},{},{},{},{},{},{})",
+                match request.kind {
+                    SurfaceIntegralKind::ScalarArea => "ScalarSurfaceIntegral",
+                    SurfaceIntegralKind::VectorFlux => "VectorSurfaceIntegral",
+                },
+                input.print_source(),
+                list(&request.coordinates),
+                list(&request.surface),
+                list(&request.parameters),
+                list(&request.lower),
+                list(&request.upper),
+                match request.orientation {
+                    SurfaceOrientation::ParameterOrder => "ParameterOrder",
+                    SurfaceOrientation::Reversed => "Reversed",
+                }
+            )
+        };
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let metadata = if result.completed {
+            ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+        } else {
+            ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+        };
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(SemanticState {
+                kind: if result.completed {
+                    crate::semantic::analyze_input(&source, "曲面积分结果")?
+                        .semantic
+                        .kind
+                } else {
+                    ValueKind::Unevaluated
+                },
+                interpretation: if result.completed {
+                    SemanticInterpretation::PlainExpression
+                } else {
+                    SemanticInterpretation::HeldApplication {
+                        operator: "SurfaceIntegral".into(),
+                    }
+                },
+                metadata,
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            }),
+            overlay: None,
+            normalization: result.completed.then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::SurfaceIntegral),
+            }),
+        });
+        let events = evaluated
+            .steps
+            .into_iter()
+            .map(|step| RuleEvent {
+                rule: step.rule,
+                input: input.reference(None),
+                additional_inputs: Vec::new(),
+                output: output.reference(None),
+                bindings: request
+                    .parameters
+                    .iter()
+                    .cloned()
+                    .map(|parameter| ("parameter".into(), parameter))
+                    .collect(),
+                conditions: Vec::new(),
+                payload: RulePayload::Structural,
+                importance: match step.importance {
+                    StepImportance::Routine => RuleImportance::Routine,
+                    StepImportance::Normal => RuleImportance::Normal,
+                    StepImportance::Key => RuleImportance::Key,
+                },
+                presentation: Some(RulePresentation {
+                    expression: step.expr,
+                    explanation: step.why,
+                    tex_override: Some(step.tex),
+                }),
+            })
+            .collect();
+        Ok(Computation {
+            output: if result.completed {
+                ComputationOutput::Value(output)
+            } else {
+                ComputationOutput::Held(output)
+            },
+            trace: Some(RuleTrace { events }),
+            certificates: vec![Certificate {
+                kind: "surface_integral".into(),
+                payload: serde_json::to_string(&result)
+                    .map_err(|error| EngineError::Parse(error.to_string()))?,
+            }],
+            effects: Vec::new(),
+        })
+    }
+}
+
+fn object_components(input: &crate::semantic_core::MathematicalObject) -> Vec<String> {
+    let expression = input.raw_expression();
+    let ObjectKind::Sublist(first) = &expression.kind else {
+        return vec![input.print_source()];
+    };
+    let nodes = spine_refs(first).collect::<Vec<_>>();
+    if nodes
+        .first()
+        .and_then(|node| node.atom_string())
+        .is_none_or(|head| head.as_ref() != "List")
+    {
+        return vec![input.print_source()];
+    }
+    crate::input::with_parse_env(|env| {
+        nodes
+            .iter()
+            .skip(1)
+            .map(|node| yacas_rs::printer::infix_print(env, node))
+            .collect()
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
-pub struct SurfaceIntegralResult {
+struct SurfaceIntegralResult {
     pub kind: SurfaceIntegralKind,
     pub orientation: SurfaceOrientation,
     pub surface: [String; 3],
@@ -53,12 +228,13 @@ pub struct SurfaceIntegralResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SurfaceIntegralStepResult {
+struct SurfaceIntegralStepResult {
     pub result: SurfaceIntegralResult,
     pub steps: Vec<Step>,
 }
 
-pub fn compute(
+#[cfg(test)]
+fn compute(
     engine: &mut dyn Engine,
     request: &SurfaceIntegralRequest,
 ) -> Result<SurfaceIntegralResult, EngineError> {
@@ -66,14 +242,15 @@ pub fn compute(
     evaluate(engine, request, true)
 }
 
-pub fn compute_steps(
+#[cfg(test)]
+fn compute_steps(
     engine: &mut dyn Engine,
     request: &SurfaceIntegralRequest,
 ) -> Result<SurfaceIntegralStepResult, EngineError> {
     compute_steps_with_verbosity(engine, request, StepVerbosity::Detailed)
 }
 
-pub fn compute_steps_with_verbosity(
+fn compute_steps_with_verbosity(
     engine: &mut dyn Engine,
     request: &SurfaceIntegralRequest,
     verbosity: StepVerbosity,

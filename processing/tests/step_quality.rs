@@ -1,15 +1,12 @@
+use processing::composition::execute_steps;
 use processing::engine::RustEngine;
 use processing::equations;
 use processing::extrema;
 use processing::limits::{self, LimitDirection};
-use processing::line_integrals::{self, LineIntegralKind, LineIntegralRequest};
 use processing::linear_algebra;
 use processing::multiple_integrals::{self, IntegralBound, PolarRegion};
 use processing::ode;
-use processing::steps::{Step, StepImportance};
-use processing::surface_integrals::{
-    self, SurfaceIntegralKind, SurfaceIntegralRequest, SurfaceOrientation,
-};
+use processing::steps::{Step, StepImportance, StepVerbosity};
 
 fn assert_teaching_steps(domain: &str, steps: &[Step]) {
     assert!(steps.len() >= 2, "{domain} has no explanatory chain");
@@ -145,36 +142,27 @@ fn multivariable_integral_steps_show_complete_formula_chains() {
         .steps,
     );
 
-    let line = LineIntegralRequest {
-        kind: LineIntegralKind::VectorWork,
-        field: vec!["y".into(), "x".into()],
-        coordinates: vec!["x".into(), "y".into()],
-        curve: vec!["t".into(), "t^2".into()],
-        parameter: "t".into(),
-        lower: "0".into(),
-        upper: "1".into(),
-    };
-    let line_steps = line_integrals::compute_steps(&mut engine, &line)
-        .unwrap()
-        .steps;
+    let line_steps = execute_steps(
+        &mut engine,
+        "VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1)",
+        StepVerbosity::Detailed,
+    )
+    .unwrap()
+    .unwrap()
+    .steps;
     assert_teaching_steps("line integral", &line_steps);
     assert!(line_steps
         .iter()
         .any(|step| step.expr.starts_with("Integrate(t,0,1)")));
 
-    let surface = SurfaceIntegralRequest {
-        kind: SurfaceIntegralKind::VectorFlux,
-        orientation: SurfaceOrientation::ParameterOrder,
-        field: vec!["0".into(), "0".into(), "1".into()],
-        coordinates: ["x".into(), "y".into(), "z".into()],
-        surface: ["u".into(), "v".into(), "u+v".into()],
-        parameters: ["u".into(), "v".into()],
-        lower: ["0".into(), "0".into()],
-        upper: ["1".into(), "1".into()],
-    };
-    let surface_steps = surface_integrals::compute_steps(&mut engine, &surface)
-        .unwrap()
-        .steps;
+    let surface_steps = execute_steps(
+        &mut engine,
+        "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,u+v},{u,v},{0,0},{1,1})",
+        StepVerbosity::Detailed,
+    )
+    .unwrap()
+    .unwrap()
+    .steps;
     assert_teaching_steps("surface integral", &surface_steps);
     assert!(surface_steps
         .iter()
