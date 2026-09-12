@@ -957,8 +957,10 @@ fn apply(
         CompositionOperator::OdeSolveNumeric => Err(EngineError::InvalidInput(
             "数值 ODE 必须通过类型化方程对象执行".into(),
         )),
-        CompositionOperator::FindRoot
-        | CompositionOperator::Plot
+        CompositionOperator::FindRoot => Err(EngineError::InvalidInput(
+            "数值求根必须通过类型化数学对象执行".into(),
+        )),
+        CompositionOperator::Plot
         | CompositionOperator::Extrema
         | CompositionOperator::Lagrange => Err(EngineError::InvalidInput(
             "待迁移运算符不能进入旧组合执行器".into(),

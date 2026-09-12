@@ -346,12 +346,12 @@ pub enum ObjectNativeRoute {
     DefinedIntegral,
     MultipleIntegral,
     NumericOde,
+    NumericRoot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingDomain {
-    NumericRoot,
     Plot,
     Extrema,
 }
@@ -990,7 +990,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::FindNumericRoot,
-        availability: OperatorAvailability::Pending(PendingDomain::NumericRoot),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::NumericRoot),
         product_kind: "numeric_root",
         title: "数值根",
     },
@@ -1520,6 +1520,7 @@ pub enum ObjectCapability {
     IntegrateDefined,
     IntegrateMultiple,
     SolveNumericOde,
+    FindNumericRoot,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1561,6 +1562,7 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::IntegrateDefined as u8)
                 | (1 << ObjectCapability::IntegrateMultiple as u8)
                 | (1 << ObjectCapability::SolveNumericOde as u8)
+                | (1 << ObjectCapability::FindNumericRoot as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
@@ -2313,9 +2315,7 @@ mod tests {
             .iter()
             .flat_map(|capability| capability.names.iter().copied())
             .collect();
-        let expected_names: BTreeSet<_> = ["FindRoot", "Plot", "Extrema", "Lagrange"]
-            .into_iter()
-            .collect();
+        let expected_names: BTreeSet<_> = ["Plot", "Extrema", "Lagrange"].into_iter().collect();
         assert_eq!(generated_names, expected_names);
         assert!(generated
             .iter()

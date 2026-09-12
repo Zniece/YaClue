@@ -100,6 +100,10 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                     expression.children.len() == 6
                         && can_execute_elaborated_tree(&expression.children[0])
                 }
+                ObjectNativeRoute::NumericRoot => {
+                    expression.children.len() == 3
+                        && can_execute_elaborated_tree(&expression.children[0])
+                }
             }
         }
         crate::elaboration::MathematicalForm::Application { head } => {
@@ -197,6 +201,7 @@ pub fn execute_elaborated_structure(
                 ObjectNativeRoute::NumericOde => {
                     execute_numeric_ode_application(engine, expression)
                 }
+                ObjectNativeRoute::NumericRoot => execute_find_root_application(engine, expression),
             };
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -512,6 +517,38 @@ fn execute_numeric_ode_application(
         },
     )?;
     merge_prior_computation(&mut current, &mut equation);
+    Ok(current)
+}
+
+fn execute_find_root_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let [operand_node, variable, initial] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(
+            "FindRoot 需要表达式、变量和初值".into(),
+        ));
+    };
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, "FindRoot", 0);
+    }
+    let input = operand.value().expect("checked root operand").clone();
+    let mut current = crate::numeric::FindRootOperation.compute(
+        engine,
+        &input,
+        &crate::numeric::FindRootRequest {
+            variable: variable.object.print_source(),
+            initial: initial
+                .object
+                .print_source()
+                .parse::<f64>()
+                .map_err(|_| EngineError::InvalidInput("数值求根初值必须是有限数字".into()))?,
+            tolerance: 1e-8,
+            bracket: None,
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
     Ok(current)
 }
 

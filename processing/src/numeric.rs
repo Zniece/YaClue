@@ -5,10 +5,10 @@ use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
-    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    object_from_source, CapabilitySet, Certificate, Computation, ComputationOutput,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
+    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use serde::Serialize;
 
@@ -190,6 +190,140 @@ pub struct RootResult {
     pub status: RootStatus,
     pub output: String,
     pub tex: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FindRootRequest {
+    pub variable: String,
+    pub initial: f64,
+    pub tolerance: f64,
+    pub bracket: Option<(f64, f64)>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FindRootOperation;
+
+impl SemanticOperation<FindRootRequest> for FindRootOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &FindRootRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::FindNumericRoot)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备数值求根能力".into(),
+            ));
+        }
+        let result = find_root(
+            engine,
+            &input.print_source(),
+            &request.variable,
+            request.initial,
+            request.tolerance,
+            request.bracket,
+        )?;
+        let converged = result.status == RootStatus::Converged;
+        let output_source = if converged {
+            result.output.clone()
+        } else {
+            format!(
+                "FindRoot({},{},{})",
+                input.print_source(),
+                request.variable,
+                request.initial
+            )
+        };
+        let mut semantics = if converged {
+            SemanticState {
+                kind: crate::semantic::analyze_input(&output_source, "数值根")?
+                    .semantic
+                    .kind,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Approximate, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            }
+        } else {
+            SemanticState {
+                kind: ValueKind::Unevaluated,
+                interpretation: SemanticInterpretation::HeldApplication {
+                    operator: "FindRoot".into(),
+                },
+                metadata: ResultMetadata::unresolved(
+                    Exactness::Approximate,
+                    OutcomeReason::AlgorithmUncovered,
+                ),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            }
+        };
+        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        if !converged {
+            crate::semantic_core::promote_held_application(
+                "FindRoot",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: converged.then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::FindRoot),
+            }),
+        });
+        let event = RuleEvent {
+            rule: if converged {
+                "numeric-root"
+            } else {
+                "hold-numeric-root"
+            }
+            .into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: vec![
+                ("variable".into(), request.variable.clone()),
+                ("initial".into(), request.initial.to_string()),
+                ("tolerance".into(), request.tolerance.to_string()),
+            ],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            presentation: converged.then(|| RulePresentation {
+                expression: result.output,
+                explanation: "从给定初值求得数值根。".into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: if converged {
+                ComputationOutput::Value(output)
+            } else {
+                ComputationOutput::Held(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: vec![Certificate {
+                kind: "numeric_root_attempt".into(),
+                payload: format!(
+                    "status={:?}; initial={}; tolerance={}; bracket={:?}",
+                    result.status, request.initial, request.tolerance, request.bracket
+                ),
+            }],
+            effects: Vec::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -690,5 +824,72 @@ mod tests {
             .print_source()
             .starts_with("Taylor("));
         assert!(held.subject().unwrap().print_source().contains("Sin(1/x)"));
+    }
+
+    #[test]
+    fn object_find_root_returns_an_approximate_value_and_holds_failed_attempts() {
+        let object = |source: &str| {
+            object_from_source(
+                ObjectId(89),
+                source,
+                SemanticState {
+                    kind: ValueKind::Expression,
+                    interpretation: SemanticInterpretation::PlainExpression,
+                    metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                    capabilities: CapabilitySet::symbolic_expression(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let solved = FindRootOperation
+            .compute(
+                &mut engine,
+                &object("x^2-2"),
+                &FindRootRequest {
+                    variable: "x".into(),
+                    initial: 1.0,
+                    tolerance: 1e-10,
+                    bracket: None,
+                },
+            )
+            .unwrap();
+        assert!(matches!(solved.output, ComputationOutput::Value(_)));
+        assert_eq!(solved.value().unwrap().id, ObjectId(89));
+        assert_eq!(
+            solved.value().unwrap().semantics.metadata.exactness,
+            Exactness::Approximate
+        );
+        assert!(solved
+            .value()
+            .unwrap()
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::Differentiate));
+
+        let failed = FindRootOperation
+            .compute(
+                &mut engine,
+                &object("x^2+1"),
+                &FindRootRequest {
+                    variable: "x".into(),
+                    initial: 1.0,
+                    tolerance: 1e-10,
+                    bracket: Some((0.0, 2.0)),
+                },
+            )
+            .unwrap();
+        assert!(matches!(failed.output, ComputationOutput::Held(_)));
+        assert_eq!(
+            failed.subject().unwrap().semantics.metadata.resolution,
+            crate::protocol::ResolutionState::Unresolved
+        );
+        assert!(failed
+            .subject()
+            .unwrap()
+            .print_source()
+            .starts_with("FindRoot("));
+        assert_eq!(failed.certificates[0].kind, "numeric_root_attempt");
     }
 }

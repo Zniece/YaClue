@@ -223,6 +223,7 @@ fn project_domain_semantic(
         && result.kind != "double_integral"
         && result.kind != "polar_integral"
         && result.kind != "numeric_ode"
+        && result.kind != "numeric_root"
         && generated.is_empty()
     {
         return Ok(input.clone());
@@ -478,9 +479,8 @@ fn dispatch_expression_with_engine(
                         | OperatorId::PrincipalValueIntegral
                         | OperatorId::DoubleIntegral
                         | OperatorId::PolarIntegral
-                        | OperatorId::OdeSolveNumeric => {
-                            (descriptor.product_kind, descriptor.title)
-                        }
+                        | OperatorId::OdeSolveNumeric
+                        | OperatorId::FindRoot => (descriptor.product_kind, descriptor.title),
                         OperatorId::Factor | OperatorId::AlgebraTransform
                             if result.status
                                 == processing::composition::CompositionStatus::Completed =>
@@ -504,28 +504,6 @@ fn dispatch_expression_with_engine(
     }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
-            ("FindRoot", [expression, variable, initial]) => {
-                let initial = initial
-                    .parse::<f64>()
-                    .map_err(|_| invalid_input("数值求根初值必须是有限数字"))?;
-                let result = processing::numeric::find_root(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    initial,
-                    1e-8,
-                    None,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "numeric_root",
-                    "数值根",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
             ("Plot", [expression, variable, min, max]) => {
                 let min = min
                     .parse::<f64>()
@@ -1764,6 +1742,38 @@ mod tests {
             processing::protocol::ResolutionState::Unresolved
         );
         assert!(composed.expression.starts_with("D(x)"));
+    }
+
+    #[test]
+    fn unified_input_exposes_find_root_as_a_composable_approximate_scalar() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let root =
+            process_expression_with_engine(request("FindRoot(x^2-2,x,1)", true), &mut engine)
+                .unwrap();
+        assert_eq!(root.kind, "numeric_root");
+        assert_eq!(root.semantic.kind, ValueKind::Scalar);
+        assert_eq!(
+            root.outcome.exactness,
+            processing::semantic::Exactness::Approximate
+        );
+        assert_eq!(
+            root.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+        assert!(root.steps.iter().any(|step| step.rule == "numeric-root"));
+
+        let composed = process_expression_with_engine(
+            request("N(FindRoot(x^2-2,x,1),12)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.kind, "composition");
+        assert_eq!(composed.semantic.kind, ValueKind::Scalar);
+
+        let differentiated =
+            process_expression_with_engine(request("D(x)FindRoot(x^2-2,x,1)", false), &mut engine)
+                .unwrap();
+        assert_eq!(differentiated.expression, "0");
     }
 
     #[test]
