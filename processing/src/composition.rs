@@ -737,10 +737,14 @@ mod tests {
         assert_eq!(result.status, CompositionStatus::Unresolved);
         assert!(result.value.starts_with("D("), "{result:#?}");
         assert!(result.value.contains("Factor("), "{result:#?}");
+        assert!(result.steps.iter().all(|step| {
+            step.kind == crate::steps::StepKind::EquivalentTransformation
+                && step.before_expr.is_some()
+        }));
         assert!(result
-            .steps
+            .conclusions
             .iter()
-            .any(|step| step.rule == "hold-algebra-transform"));
+            .any(|conclusion| conclusion.kind == crate::steps::ConclusionKind::Held));
         assert!(!result.value.contains("FWatom"), "{result:#?}");
     }
 

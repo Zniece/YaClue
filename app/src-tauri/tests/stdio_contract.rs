@@ -50,12 +50,26 @@ fn json_lines_is_persistent_structured_and_recovers_after_bad_input() {
     assert_eq!(rows[0]["outcome"], rows[1]["outcome"]);
     assert!(rows[0]["steps"].as_array().unwrap().is_empty());
     assert!(!rows[1]["steps"].as_array().unwrap().is_empty());
+    let steps = rows[1]["steps"].as_array().unwrap();
+    assert!(steps.iter().all(|step| {
+        step["kind"] == "equivalent_transformation"
+            && step["before_expr"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+            && step["before_tex"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+    }));
+    assert!(steps
+        .windows(2)
+        .all(|pair| pair[1]["before_expr"] == pair[0]["expr"]));
     assert_eq!(rows[2]["expression"], "2*x");
     assert_eq!(rows[3]["error"]["code"], "invalid_input");
     assert_eq!(rows[4]["outcome"]["resolution"], "unresolved");
     assert_eq!(rows[4]["status"], "unresolved");
     assert_eq!(rows[4]["semantic"]["kind"], "unevaluated");
     assert_eq!(rows[5]["outcome"]["resolution"], "no_result");
+    assert_eq!(rows[5]["conclusions"][0]["kind"], "no_value");
     assert_eq!(rows[6]["effect_only"], true);
     assert_eq!(rows[7]["analysis"], json!([2]));
     assert_eq!(rows[8]["analysis"]["integrand_verified"], true);

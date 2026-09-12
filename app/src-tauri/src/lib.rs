@@ -1675,10 +1675,12 @@ mod tests {
             extrema.analysis.as_ref().unwrap()["critical_points"][0]["gradient_verified"],
             true
         );
-        assert!(extrema
-            .steps
-            .iter()
-            .any(|step| step.rule == "extrema-classify"));
+        assert!(extrema.steps.iter().all(|step| {
+            step.before_expr
+                .as_deref()
+                .is_some_and(|before| !before.is_empty())
+                && !step.expr.is_empty()
+        }));
 
         let lagrange = process_expression_with_engine(
             request("Lagrange(x+y,x^2+y^2-1,x,y)", true),

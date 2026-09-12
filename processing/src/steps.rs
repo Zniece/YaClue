@@ -268,15 +268,12 @@ pub fn render_rule_trace_in_root(
         if after == current {
             continue;
         }
-        let rendered = engine.render_tex_batch(&[current.clone(), after.clone()])?;
-        let before_tex = strip_tex_delimiters(&rendered[0]);
+        let before_tex = render_product_tex(engine, &current);
+        let rendered_after = render_product_tex(engine, &after);
         let after_tex = if path.segments().is_empty() {
-            presentation
-                .tex_override
-                .clone()
-                .unwrap_or_else(|| strip_tex_delimiters(&rendered[1]))
+            presentation.tex_override.clone().unwrap_or(rendered_after)
         } else {
-            strip_tex_delimiters(&rendered[1])
+            rendered_after
         };
         steps.push(Step {
             kind: StepKind::EquivalentTransformation,
@@ -294,7 +291,19 @@ pub fn render_rule_trace_in_root(
         });
         current = after;
     }
+    if let Some(last) = steps.last_mut() {
+        last.importance = StepImportance::Key;
+    }
     Ok(steps)
+}
+
+fn render_product_tex(engine: &mut dyn Engine, expression: &str) -> String {
+    engine
+        .render_tex_batch(&[expression.to_string()])
+        .ok()
+        .and_then(|mut rendered| rendered.pop())
+        .map(|tex| strip_tex_delimiters(&tex))
+        .unwrap_or_else(|| literal_tex(expression))
 }
 
 fn collect_object_paths(
