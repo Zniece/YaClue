@@ -1,5 +1,5 @@
-//! Bounded, inside-out dispatch for teaching chains made from a small set of
-//! product operations. This is an execution protocol, not a second CAS AST.
+//! Bounded, inside-out execution of elaborated mathematical objects. This is
+//! an execution protocol over the shared AST, not a second CAS AST.
 
 use serde::Serialize;
 
@@ -67,9 +67,9 @@ pub fn is_candidate(call: &RootCall) -> bool {
         .is_some_and(is_known_operator)
 }
 
-/// Execute a supported nested chain. `None` means the expression contains
-/// fewer than two registered operations, so callers can retain their existing
-/// single-operation fast path.
+/// Parse and execute a complete mathematical input through the object-native
+/// path. The `Option` remains for source compatibility; successful complete
+/// inputs now always return `Some`.
 pub fn execute_steps(
     engine: &mut dyn Engine,
     expression: &str,
@@ -85,27 +85,10 @@ pub fn execute_elaborated(
     verbosity: StepVerbosity,
     include_steps: bool,
 ) -> Result<Option<CompositionResult>, EngineError> {
-    let has_native_descendant = crate::arithmetic::has_object_native_descendant(&input.root);
-    let has_effect_descendant = crate::arithmetic::has_effect_descendant(&input.root);
-    let root_is_native = matches!(&input.root.form,
-        crate::elaboration::MathematicalForm::Application { head }
-            if crate::semantic_core::is_object_native_operator(head));
     let root_is_effect = matches!(
         input.root.form,
         crate::elaboration::MathematicalForm::EffectApplication { .. }
     );
-    let structural_context = matches!(
-        input.root.form,
-        crate::elaboration::MathematicalForm::Structural { .. }
-    ) || (matches!(
-        input.root.form,
-        crate::elaboration::MathematicalForm::Relation { .. }
-            | crate::elaboration::MathematicalForm::Collection
-    ) && (has_native_descendant || has_effect_descendant))
-        || (matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if !is_known_operator(head))
-            && (has_native_descendant || has_effect_descendant));
     if root_is_effect {
         let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
         let steps = if include_steps {
@@ -147,108 +130,105 @@ pub fn execute_elaborated(
             analysis: None,
         }));
     }
-    if structural_context || root_is_native {
-        let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
-        let subject = computation
-            .subject()
-            .expect("structural computation always owns a mathematical object");
-        let value = subject.print_source();
-        let status = match computation.output {
-            ComputationOutput::Held(_) => CompositionStatus::Unresolved,
-            ComputationOutput::NoValue(_) => CompositionStatus::NoValue,
-            ComputationOutput::Value(_) => CompositionStatus::Completed,
-            ComputationOutput::EffectsOnly => {
-                unreachable!("calculus and structures are mathematical")
-            }
-        };
-        let tex = if matches!(
-            status,
-            CompositionStatus::Unresolved | CompositionStatus::NoValue
-        ) {
-            tex_code(&value)
-        } else {
-            strip_tex_delimiters(&engine.eval(&value)?.tex)
-        };
-        let steps = if include_steps {
-            computation
-                .trace
-                .as_ref()
-                .map(|trace| crate::steps::render_rule_trace(engine, trace, verbosity))
-                .transpose()?
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let reason = match status {
-            CompositionStatus::NoValue => Some("内层数学结论不存在，外层运算未执行。".into()),
-            CompositionStatus::Unresolved
-                if matches!(&input.root.form,
+    let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
+    let subject = computation
+        .subject()
+        .expect("mathematical computation always owns an object");
+    let value = subject.print_source();
+    let status = match computation.output {
+        ComputationOutput::Held(_) => CompositionStatus::Unresolved,
+        ComputationOutput::NoValue(_) => CompositionStatus::NoValue,
+        ComputationOutput::Value(_) => CompositionStatus::Completed,
+        ComputationOutput::EffectsOnly => {
+            unreachable!("calculus and structures are mathematical")
+        }
+    };
+    let tex = if matches!(
+        status,
+        CompositionStatus::Unresolved | CompositionStatus::NoValue
+    ) {
+        tex_code(&value)
+    } else {
+        strip_tex_delimiters(&engine.eval(&value)?.tex)
+    };
+    let steps = if include_steps {
+        computation
+            .trace
+            .as_ref()
+            .map(|trace| crate::steps::render_rule_trace(engine, trace, verbosity))
+            .transpose()?
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let reason = match status {
+        CompositionStatus::NoValue => Some("内层数学结论不存在，外层运算未执行。".into()),
+        CompositionStatus::Unresolved
+            if matches!(&input.root.form,
                     crate::elaboration::MathematicalForm::Application { head }
                         if operator_descriptor(head)
                             .is_some_and(|descriptor| descriptor.id == CompositionOperator::Derivative))
-                    && !subject
-                        .semantics
-                        .capabilities
-                        .contains(ObjectCapability::Differentiate) =>
-            {
-                Some("内层结果属于不可求导的扩展实数，外层求导保持未解析。".into())
-            }
-            CompositionStatus::Unresolved => Some("数学对象保持未解析，等待适用能力。".into()),
-            _ => None,
-        };
-        let mut operators = Vec::new();
-        collect_migrated_operator_ids(&input.root, &mut operators);
-        let present_symbols = crate::input::with_parse_env(|env| {
-            let semantic = crate::semantic::analyze_tree(env, &subject.raw_expression()).semantic;
-            semantic
-                .symbols
-                .into_iter()
-                .chain(semantic.constants)
-                .collect::<Vec<_>>()
-        });
-        let arbitrary_constants = computation
-            .trace
-            .as_ref()
+                && !subject
+                    .semantics
+                    .capabilities
+                    .contains(ObjectCapability::Differentiate) =>
+        {
+            Some("内层结果属于不可求导的扩展实数，外层求导保持未解析。".into())
+        }
+        CompositionStatus::Unresolved => Some("数学对象保持未解析，等待适用能力。".into()),
+        _ => None,
+    };
+    let mut operators = Vec::new();
+    collect_migrated_operator_ids(&input.root, &mut operators);
+    let present_symbols = crate::input::with_parse_env(|env| {
+        let semantic = crate::semantic::analyze_tree(env, &subject.raw_expression()).semantic;
+        semantic
+            .symbols
             .into_iter()
-            .flat_map(|trace| &trace.events)
-            .flat_map(|event| &event.bindings)
-            .filter(|(name, value)| name == "constant" && present_symbols.contains(value))
-            .map(|(_, value)| value.clone())
-            .fold(Vec::new(), |mut constants, value| {
-                if !constants.contains(&value) {
-                    constants.push(value);
-                }
-                constants
-            });
-        let analysis = computation.certificates.iter().find_map(|certificate| {
-            matches!(
-                certificate.kind.as_str(),
-                "extrema_analysis" | "lagrange_analysis"
-            )
-            .then(|| serde_json::from_str(&certificate.payload).ok())
-            .flatten()
+            .chain(semantic.constants)
+            .collect::<Vec<_>>()
+    });
+    let arbitrary_constants = computation
+        .trace
+        .as_ref()
+        .into_iter()
+        .flat_map(|trace| &trace.events)
+        .flat_map(|event| &event.bindings)
+        .filter(|(name, value)| name == "constant" && present_symbols.contains(value))
+        .map(|(_, value)| value.clone())
+        .fold(Vec::new(), |mut constants, value| {
+            if !constants.contains(&value) {
+                constants.push(value);
+            }
+            constants
         });
-        return Ok(Some(CompositionResult {
-            status,
-            value,
-            tex,
-            steps,
-            operators,
-            reason,
-            arbitrary_constants,
-            held: None,
-            conditions: subject.semantics.metadata.conditions.clone(),
-            outcome: Some(subject.semantics.metadata.clone()),
-            sampled_data: match &subject.semantics.interpretation {
-                SemanticInterpretation::NumericTrajectory(trajectory) => Some(trajectory.clone()),
-                _ => None,
-            },
-            plot: None,
-            effect_only: false,
-            analysis,
-        }));
-    }
-    Ok(None)
+    let analysis = computation.certificates.iter().find_map(|certificate| {
+        matches!(
+            certificate.kind.as_str(),
+            "extrema_analysis" | "lagrange_analysis"
+        )
+        .then(|| serde_json::from_str(&certificate.payload).ok())
+        .flatten()
+    });
+    Ok(Some(CompositionResult {
+        status,
+        value,
+        tex,
+        steps,
+        operators,
+        reason,
+        arbitrary_constants,
+        held: None,
+        conditions: subject.semantics.metadata.conditions.clone(),
+        outcome: Some(subject.semantics.metadata.clone()),
+        sampled_data: match &subject.semantics.interpretation {
+            SemanticInterpretation::NumericTrajectory(trajectory) => Some(trajectory.clone()),
+            _ => None,
+        },
+        plot: None,
+        effect_only: false,
+        analysis,
+    }))
 }
 
 fn collect_migrated_operator_ids(
@@ -357,6 +337,25 @@ mod tests {
             .unwrap();
         assert_eq!(result.status, CompositionStatus::Completed);
         assert!(result.value.contains("f(0)"));
+    }
+
+    #[test]
+    fn executes_every_complete_plain_input_through_the_object_pipeline() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("Gamma(3)", "2"),
+            ("x^2==1", "x^2==1"),
+            ("{1,Sin(x)}", "{1,Sin(x)}"),
+            ("x", "x"),
+            ("3", "3"),
+        ] {
+            let input = crate::elaboration::elaborate_input(source).unwrap();
+            let result = execute_elaborated(&mut engine, &input, StepVerbosity::Standard, false)
+                .unwrap()
+                .expect("every complete mathematical input has an object-native exit");
+            assert_eq!(result.value.replace(' ', ""), expected, "{source}");
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+        }
     }
 
     #[test]

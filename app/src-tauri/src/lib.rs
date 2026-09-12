@@ -395,149 +395,104 @@ fn dispatch_expression_with_engine(
     engine: &mut RustEngineProxy,
     elaborated: &processing::elaboration::ElaboratedInput,
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
-    let analyzed = &elaborated.analyzed;
-    let call = &analyzed.root_call;
     let verbosity = parse_verbosity(&request.verbosity)?;
-    if matches!(
-        elaborated.root.form,
-        processing::elaboration::MathematicalForm::Structural { .. }
-    ) || matches!(
-        elaborated.root.form,
-        processing::elaboration::MathematicalForm::EffectApplication { .. }
-    ) || matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head }
-                if processing::semantic_core::is_object_native_operator(head))
-        || processing::arithmetic::has_object_native_descendant(&elaborated.root)
-        || processing::arithmetic::has_effect_descendant(&elaborated.root)
-        || call
-            .as_ref()
-            .is_some_and(processing::composition::is_candidate)
-    {
-        let root_descriptor = match &elaborated.root.form {
-            processing::elaboration::MathematicalForm::Application { head }
-            | processing::elaboration::MathematicalForm::EffectApplication { head } => {
-                processing::semantic_core::operator_descriptor(head)
-                    .filter(|_| processing::semantic_core::is_object_native_operator(head))
-            }
-            _ => None,
-        };
-        if let Some(mut result) = processing::composition::execute_elaborated(
-            &mut *engine,
-            elaborated,
-            verbosity,
-            request.steps,
-        )
-        .map_err(message)?
+    let root_descriptor = match &elaborated.root.form {
+        processing::elaboration::MathematicalForm::Application { head }
+        | processing::elaboration::MathematicalForm::EffectApplication { head } => {
+            processing::semantic_core::operator_descriptor(head)
+                .filter(|_| processing::semantic_core::is_object_native_operator(head))
+        }
+        _ => None,
+    };
+    let Some(mut result) = processing::composition::execute_elaborated(
+        &mut *engine,
+        elaborated,
+        verbosity,
+        request.steps,
+    )
+    .map_err(message)?
+    else {
+        return Err(ErrorResponse {
+            code: ErrorCode::Internal,
+            message: "完整数学输入未产生结构化计算结果".into(),
+            retryable: false,
+        });
+    };
+    if !request.steps {
+        result.steps.clear();
+    }
+    let has_native_child = processing::arithmetic::has_object_native_descendant(&elaborated.root);
+    let (kind, title) = match (&elaborated.root.form, root_descriptor) {
+        (processing::elaboration::MathematicalForm::Structural { operator }, _)
+            if matches!(operator.as_str(), "+" | "*")
+                && elaborated.root.children.iter().all(|child| {
+                    matches!(
+                        child.form,
+                        processing::elaboration::MathematicalForm::Collection
+                    )
+                }) =>
         {
-            if !request.steps {
-                result.steps.clear();
-            }
-            let has_native_child =
-                processing::arithmetic::has_object_native_descendant(&elaborated.root);
-            let (kind, title) = match (&elaborated.root.form, root_descriptor) {
-                (processing::elaboration::MathematicalForm::Structural { operator }, _)
-                    if matches!(operator.as_str(), "+" | "*")
-                        && elaborated.root.children.iter().all(|child| {
-                            matches!(
-                                child.form,
-                                processing::elaboration::MathematicalForm::Collection
-                            )
-                        }) =>
-                {
-                    ("matrix", "线性代数")
-                }
-                (processing::elaboration::MathematicalForm::Relation { .. }, _) => {
-                    ("equation", "方程")
-                }
-                (_, Some(descriptor))
-                    if descriptor.id == processing::semantic_core::OperatorId::Plot =>
+            ("matrix", "线性代数")
+        }
+        (processing::elaboration::MathematicalForm::Relation { .. }, _) => ("equation", "方程"),
+        (_, Some(descriptor)) if descriptor.id == processing::semantic_core::OperatorId::Plot => {
+            (descriptor.product_kind, descriptor.title)
+        }
+        (_, Some(descriptor))
+            if matches!(
+                descriptor.id,
+                processing::semantic_core::OperatorId::Extrema
+                    | processing::semantic_core::OperatorId::Lagrange
+            ) =>
+        {
+            (descriptor.product_kind, descriptor.title)
+        }
+        (_, Some(descriptor)) if !has_native_child => {
+            use processing::semantic_core::OperatorId;
+            match descriptor.id {
+                OperatorId::Derivative
+                | OperatorId::Limit
+                | OperatorId::Integral
+                | OperatorId::Solve
+                | OperatorId::OdeSolve
+                | OperatorId::MatrixTransform
+                | OperatorId::MatrixSolve
+                | OperatorId::MatrixAnalyze
+                | OperatorId::MatrixDecompose
+                | OperatorId::FactorProjection => (descriptor.product_kind, descriptor.title),
+                OperatorId::Sum
+                | OperatorId::ImproperIntegral
+                | OperatorId::PrincipalValueIntegral
+                | OperatorId::DoubleIntegral
+                | OperatorId::PolarIntegral
+                | OperatorId::OdeSolveNumeric
+                | OperatorId::FindRoot
+                | OperatorId::Plot => (descriptor.product_kind, descriptor.title),
+                OperatorId::Factor | OperatorId::AlgebraTransform
+                    if result.status == processing::composition::CompositionStatus::Completed =>
                 {
                     (descriptor.product_kind, descriptor.title)
-                }
-                (_, Some(descriptor))
-                    if matches!(
-                        descriptor.id,
-                        processing::semantic_core::OperatorId::Extrema
-                            | processing::semantic_core::OperatorId::Lagrange
-                    ) =>
-                {
-                    (descriptor.product_kind, descriptor.title)
-                }
-                (_, Some(descriptor)) if !has_native_child => {
-                    use processing::semantic_core::OperatorId;
-                    match descriptor.id {
-                        OperatorId::Derivative
-                        | OperatorId::Limit
-                        | OperatorId::Integral
-                        | OperatorId::Solve
-                        | OperatorId::OdeSolve
-                        | OperatorId::MatrixTransform
-                        | OperatorId::MatrixSolve
-                        | OperatorId::MatrixAnalyze
-                        | OperatorId::MatrixDecompose
-                        | OperatorId::FactorProjection => {
-                            (descriptor.product_kind, descriptor.title)
-                        }
-                        OperatorId::Sum
-                        | OperatorId::ImproperIntegral
-                        | OperatorId::PrincipalValueIntegral
-                        | OperatorId::DoubleIntegral
-                        | OperatorId::PolarIntegral
-                        | OperatorId::OdeSolveNumeric
-                        | OperatorId::FindRoot
-                        | OperatorId::Plot => (descriptor.product_kind, descriptor.title),
-                        OperatorId::Factor | OperatorId::AlgebraTransform
-                            if result.status
-                                == processing::composition::CompositionStatus::Completed =>
-                        {
-                            (descriptor.product_kind, descriptor.title)
-                        }
-                        _ => ("composition", "组合运算"),
-                    }
                 }
                 _ => ("composition", "组合运算"),
-            };
-            return unified_result(
-                kind,
-                title,
-                result.value.clone(),
-                result.tex.clone(),
-                result.steps.clone(),
-                &result,
-            );
-        }
-    }
-    if let Some(call) = call {
-        if let ("=" | "==", [left, right]) = (call.head.as_str(), call.arguments.as_slice()) {
-            let lowered_equation = format!("({left})==({right})");
-            let evaluated = engine.eval(&lowered_equation).map_err(message)?;
-            let mut output = unified_result(
-                "equation",
-                "方程",
-                evaluated.expr.to_string(),
-                processing::input::strip_tex_delimiters(&evaluated.tex),
-                Vec::new(),
-                &serde_json::json!({ "status": "equation" }),
-            )?;
-            if let Value::Object(data) = &mut output.data {
-                data.insert(
-                    "semantic_expression".into(),
-                    Value::String(lowered_equation),
-                );
-                data.insert("arbitrary_constants".into(), Value::Array(Vec::new()));
             }
-            return Ok(output);
         }
-    }
-
-    let evaluated = engine.eval(&request.expression).map_err(message)?;
+        (
+            processing::elaboration::MathematicalForm::Number
+            | processing::elaboration::MathematicalForm::Symbol
+            | processing::elaboration::MathematicalForm::Collection
+            | processing::elaboration::MathematicalForm::OpaqueEngineValue { .. }
+            | processing::elaboration::MathematicalForm::Application { .. },
+            None,
+        ) if !has_native_child => ("evaluation", "计算结果"),
+        _ => ("composition", "组合运算"),
+    };
     unified_result(
-        "evaluation",
-        "计算结果",
-        evaluated.expr.to_string(),
-        evaluated.tex.trim_matches('$').to_string(),
-        vec![],
-        &(),
+        kind,
+        title,
+        result.value.clone(),
+        result.tex.clone(),
+        result.steps.clone(),
+        &result,
     )
 }
 
@@ -1005,6 +960,25 @@ mod tests {
             divergent.outcome.reason,
             Some(processing::protocol::OutcomeReason::Divergent)
         );
+    }
+
+    #[test]
+    fn unified_plain_inputs_expose_the_structured_computation_exit() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for (source, kind, expected) in [
+            ("Gamma(3)", "evaluation", "2"),
+            ("x^2==1", "equation", "x^2==1"),
+            ("{1,Sin(x)}", "evaluation", "{1,Sin(x)}"),
+            ("3", "evaluation", "3"),
+        ] {
+            let result = process_expression_with_engine(request(source, false), &mut engine)
+                .unwrap_or_else(|error| panic!("{source}: {}", error.message));
+            assert_eq!(result.kind, kind, "{source}");
+            assert_eq!(result.expression.replace(' ', ""), expected, "{source}");
+            assert_eq!(result.data["status"], "completed", "{source}");
+            assert_eq!(result.data["effect_only"], false, "{source}");
+            assert_eq!(result.data["outcome"]["resolution"], "solved", "{source}");
+        }
     }
 
     #[test]

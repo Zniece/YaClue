@@ -1213,7 +1213,12 @@ fn execute_function_application(
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         }
-    } else if crate::derivatives::preserves_registered_function_identity(head, arguments.len()) {
+    } else if crate::derivatives::preserves_registered_function_identity(head, arguments.len())
+        && !arguments.iter().all(|argument| {
+            argument.semantics.kind == ValueKind::Scalar
+                && argument.semantics.metadata.resolution == ResolutionState::Solved
+        })
+    {
         output = crate::semantic_core::MathematicalObject::new(
             expression.object.id,
             rebuilt.clone(),
