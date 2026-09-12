@@ -12,10 +12,173 @@ use crate::objects::{
     ComponentStatus, DefinedObjectKind, DefinedObjectResult, DefinedObjectStatus, ObjectComponent,
     PrimitiveOperation,
 };
-use crate::protocol::{Condition, ConditionSet};
+use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
+};
 use crate::steps::{render_events, StepEvent, StepImportance, StepVerbosity};
 
 const MAX_SINGULAR_POINTS: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefinedIntegralOperationKind {
+    Improper,
+    PrincipalValue,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DefinedIntegralOperation;
+
+impl SemanticOperation<(DefinedIntegralOperationKind, ImproperIntegralRequest)>
+    for DefinedIntegralOperation
+{
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &(DefinedIntegralOperationKind, ImproperIntegralRequest),
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::IntegrateDefined)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备定义型积分能力".into(),
+            ));
+        }
+        let (kind, template) = request;
+        let mut request = template.clone();
+        request.expression = input.print_source();
+        let result = match kind {
+            DefinedIntegralOperationKind::Improper => {
+                evaluate(engine, &request, Some(StepVerbosity::Detailed))?
+            }
+            DefinedIntegralOperationKind::PrincipalValue => {
+                principal_value(engine, &request, Some(StepVerbosity::Detailed))?
+            }
+        };
+        let (metadata, held, no_value) = match result.status {
+            DefinedObjectStatus::Converged => (
+                ResultMetadata::solved(Exactness::Symbolic, result.conditions.clone()),
+                false,
+                false,
+            ),
+            DefinedObjectStatus::Unresolved => (
+                ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered),
+                true,
+                false,
+            ),
+            DefinedObjectStatus::Divergent => (
+                ResultMetadata::no_result(Exactness::Symbolic, OutcomeReason::Divergent),
+                false,
+                true,
+            ),
+        };
+        let source = if no_value {
+            result.source.clone()
+        } else {
+            result.value.clone()
+        };
+        let operator = match kind {
+            DefinedIntegralOperationKind::Improper => "ImproperIntegral",
+            DefinedIntegralOperationKind::PrincipalValue => "PrincipalValueIntegral",
+        };
+        let mut semantics = SemanticState {
+            kind: if held || no_value {
+                ValueKind::Unevaluated
+            } else {
+                crate::input::with_parse_env(|env| {
+                    let parsed = yacas_rs::parser::parse_expression(env, &format!("{source};"))
+                        .expect("defined integral output parses")
+                        .expect("defined integral output exists");
+                    crate::semantic::analyze_tree(env, &parsed).semantic.kind
+                })
+            },
+            interpretation: if held {
+                SemanticInterpretation::HeldApplication {
+                    operator: operator.into(),
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata,
+            capabilities: if no_value {
+                CapabilitySet::empty()
+            } else {
+                CapabilitySet::symbolic_expression()
+            },
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        if held {
+            crate::semantic_core::promote_held_application(
+                operator,
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!held && !no_value).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: result.conditions.conditions().to_vec(),
+                mode: NormalizationMode::Operation(match kind {
+                    DefinedIntegralOperationKind::Improper => OperatorId::ImproperIntegral,
+                    DefinedIntegralOperationKind::PrincipalValue => {
+                        OperatorId::PrincipalValueIntegral
+                    }
+                }),
+            }),
+        });
+        let events = result
+            .steps
+            .into_iter()
+            .map(|step| RuleEvent {
+                rule: step.rule,
+                input: input.reference(None),
+                additional_inputs: Vec::new(),
+                output: output.reference(None),
+                bindings: vec![
+                    ("variable".into(), request.variable.clone()),
+                    ("lower".into(), request.lower.clone()),
+                    ("upper".into(), request.upper.clone()),
+                ],
+                conditions: result.conditions.conditions().to_vec(),
+                payload: RulePayload::Structural,
+                importance: match step.importance {
+                    StepImportance::Routine => RuleImportance::Routine,
+                    StepImportance::Normal => RuleImportance::Normal,
+                    StepImportance::Key => RuleImportance::Key,
+                },
+                presentation: Some(RulePresentation {
+                    expression: step.expr,
+                    explanation: step.why,
+                    tex_override: Some(step.tex),
+                }),
+            })
+            .collect();
+        Ok(Computation {
+            output: if no_value {
+                ComputationOutput::NoValue(output)
+            } else if held {
+                ComputationOutput::Held(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace { events }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImproperIntegralRequest {
@@ -629,6 +792,67 @@ fn convert_condition(condition: &LimitCondition, output: &mut Vec<Condition>) {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+
+    fn object(source: &str) -> crate::semantic_core::MathematicalObject {
+        object_from_source(
+            crate::semantic_core::ObjectId(73),
+            source,
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn defined_integral_operation_preserves_value_absence_and_identity() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let converged = DefinedIntegralOperation
+            .compute(
+                &mut engine,
+                &object("Exp(-x)"),
+                &(
+                    DefinedIntegralOperationKind::Improper,
+                    request("", "0", "Infinity", &[]),
+                ),
+            )
+            .unwrap();
+        assert!(matches!(converged.output, ComputationOutput::Value(_)));
+        assert_eq!(converged.subject().unwrap().print_source(), "1");
+        assert_eq!(
+            converged.subject().unwrap().id,
+            crate::semantic_core::ObjectId(73)
+        );
+
+        let divergent = DefinedIntegralOperation
+            .compute(
+                &mut engine,
+                &object("1/x"),
+                &(
+                    DefinedIntegralOperationKind::Improper,
+                    request("", "-1", "1", &["0"]),
+                ),
+            )
+            .unwrap();
+        assert!(matches!(divergent.output, ComputationOutput::NoValue(_)));
+
+        let principal = DefinedIntegralOperation
+            .compute(
+                &mut engine,
+                &object("1/x"),
+                &(
+                    DefinedIntegralOperationKind::PrincipalValue,
+                    request("", "-1", "1", &["0"]),
+                ),
+            )
+            .unwrap();
+        assert!(matches!(principal.output, ComputationOutput::Value(_)));
+        assert_eq!(principal.subject().unwrap().print_source(), "0");
+    }
 
     fn request(
         expression: &str,

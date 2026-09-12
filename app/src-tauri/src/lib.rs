@@ -1,6 +1,5 @@
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
-use processing::improper_integrals::ImproperIntegralRequest;
 use processing::linear_algebra::MatrixOperation;
 use processing::multiple_integrals::{IntegralBound, PolarRegion};
 use processing::ode::InitialCondition;
@@ -223,6 +222,7 @@ fn project_domain_semantic(
         && result.kind != "composition"
         && result.kind != "integral"
         && result.kind != "series"
+        && result.kind != "defined_object"
         && generated.is_empty()
     {
         return Ok(input.clone());
@@ -266,12 +266,14 @@ fn project_domain_semantic(
         },
     )
     .map_err(message)?;
-    if matches!(result.kind.as_str(), "composition" | "series")
-        && result
-            .data
-            .get("status")
-            .and_then(Value::as_str)
-            .is_some_and(|status| status.contains("unresolved"))
+    if matches!(
+        result.kind.as_str(),
+        "composition" | "series" | "defined_object"
+    ) && result
+        .data
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.contains("unresolved"))
     {
         projected.kind = ValueKind::Unevaluated;
         projected.completeness = None;
@@ -379,14 +381,6 @@ fn collect_conditions(value: &Value, output: &mut Vec<Condition>) {
     }
 }
 
-fn list_or_single(expression: &str, label: &str) -> Result<Vec<String>, ErrorResponse> {
-    let call = processing::input::root_call(expression, label).map_err(message)?;
-    Ok(match call {
-        Some(call) if call.head == "List" => call.arguments,
-        _ => vec![expression.to_string()],
-    })
-}
-
 fn lower_composable_operand(
     engine: &mut RustEngineProxy,
     expression: &str,
@@ -473,7 +467,11 @@ fn dispatch_expression_with_engine(
                         | OperatorId::FactorProjection => {
                             (descriptor.product_kind, descriptor.title)
                         }
-                        OperatorId::Sum => (descriptor.product_kind, descriptor.title),
+                        OperatorId::Sum
+                        | OperatorId::ImproperIntegral
+                        | OperatorId::PrincipalValueIntegral => {
+                            (descriptor.product_kind, descriptor.title)
+                        }
                         OperatorId::Factor | OperatorId::AlgebraTransform
                             if result.status
                                 == processing::composition::CompositionStatus::Completed =>
@@ -497,71 +495,6 @@ fn dispatch_expression_with_engine(
     }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
-            (head @ ("ImproperIntegral" | "PrincipalValueIntegral"), arguments)
-                if matches!(arguments.len(), 4 | 5) =>
-            {
-                let expression = &arguments[0];
-                let variable = &arguments[1];
-                let lower = &arguments[2];
-                let upper = &arguments[3];
-                let points = if arguments.len() == 5 {
-                    list_or_single(&arguments[4], "奇点列表")?
-                } else {
-                    Vec::new()
-                };
-                let object_request = ImproperIntegralRequest {
-                    expression: expression.clone(),
-                    variable: variable.clone(),
-                    lower: lower.clone(),
-                    upper: upper.clone(),
-                    singular_points: points,
-                };
-                let step_verbosity = request.steps.then_some(verbosity);
-                if head == "ImproperIntegral" {
-                    if let Some(lowered) = processing::intrinsics::try_lower_improper_integral(
-                        &mut *engine,
-                        &object_request,
-                        step_verbosity,
-                    )
-                    .map_err(message)?
-                    {
-                        return unified_result(
-                            "intrinsic",
-                            "原生特殊函数",
-                            lowered.value.clone(),
-                            lowered.tex.clone(),
-                            lowered.steps.clone(),
-                            &lowered,
-                        );
-                    }
-                }
-                let result = if head == "PrincipalValueIntegral" {
-                    processing::improper_integrals::principal_value(
-                        &mut *engine,
-                        &object_request,
-                        step_verbosity,
-                    )
-                } else {
-                    processing::improper_integrals::evaluate(
-                        &mut *engine,
-                        &object_request,
-                        step_verbosity,
-                    )
-                }
-                .map_err(message)?;
-                return unified_result(
-                    "defined_object",
-                    if head == "PrincipalValueIntegral" {
-                        "Cauchy 主值"
-                    } else {
-                        "反常积分"
-                    },
-                    result.value.clone(),
-                    result.tex.clone(),
-                    result.steps.clone(),
-                    &result,
-                );
-            }
             (
                 "DoubleIntegral",
                 [expression, inner_var, inner_from, inner_to, outer_var, outer_from, outer_to],
@@ -1234,10 +1167,10 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(explicit_gamma.kind, "intrinsic");
+        assert_eq!(explicit_gamma.kind, "defined_object");
         assert!(explicit_gamma.expression.contains("Gamma"));
         assert_eq!(explicit_gamma.semantic.symbols, ["a".to_string()]);
-        assert_eq!(explicit_gamma.semantic.bound_symbols, ["t".to_string()]);
+        assert!(explicit_gamma.semantic.bound_symbols.is_empty());
         assert_eq!(
             explicit_gamma.outcome.conditionality,
             processing::protocol::Conditionality::Conditional
@@ -1844,6 +1777,45 @@ mod tests {
             processing::protocol::ResolutionState::Unresolved
         );
         assert!(held.expression.starts_with("Sum("));
+    }
+
+    #[test]
+    fn unified_input_routes_defined_integrals_as_semantic_objects() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let converged = process_expression_with_engine(
+            request("ImproperIntegral(1/(1+x^2),x,0,Infinity)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(converged.kind, "defined_object");
+        assert!(converged.expression.contains("Pi"));
+        assert_eq!(converged.semantic.kind, ValueKind::Scalar);
+        assert!(!converged.steps.is_empty());
+        assert!(converged
+            .steps
+            .iter()
+            .any(|step| step.rule.starts_with("object-")));
+
+        let divergent = process_expression_with_engine(
+            request("ImproperIntegral(1/x,x,-1,1,{0})", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(
+            divergent.outcome.reason,
+            Some(processing::protocol::OutcomeReason::Divergent)
+        );
+
+        let principal = process_expression_with_engine(
+            request("PrincipalValueIntegral(1/x,x,-1,1,{0})", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(principal.expression, "0");
+        assert_eq!(
+            principal.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
     }
 
     #[test]

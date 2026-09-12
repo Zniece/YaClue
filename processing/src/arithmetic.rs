@@ -88,6 +88,10 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                     expression.children.len() == 4
                         && can_execute_elaborated_tree(&expression.children[3])
                 }
+                ObjectNativeRoute::DefinedIntegral => {
+                    matches!(expression.children.len(), 4 | 5)
+                        && can_execute_elaborated_tree(&expression.children[0])
+                }
             }
         }
         crate::elaboration::MathematicalForm::Application { head } => {
@@ -176,6 +180,9 @@ pub fn execute_elaborated_structure(
                     execute_matrix_solve_application(engine, expression)
                 }
                 ObjectNativeRoute::Series => execute_sum_application(engine, expression),
+                ObjectNativeRoute::DefinedIntegral => {
+                    execute_defined_integral_application(engine, expression, head)
+                }
             };
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -353,6 +360,66 @@ fn execute_sum_application(
         },
     )?;
     merge_prior_computation(&mut current, &mut term);
+    Ok(current)
+}
+
+fn execute_defined_integral_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    if !matches!(expression.children.len(), 4 | 5) {
+        return Err(EngineError::InvalidInput(format!(
+            "{head} 需要被积式、变量、积分上下限及可选奇点"
+        )));
+    }
+    let operand_node = &expression.children[0];
+    let singular_points = expression.children.get(4).map_or_else(Vec::new, |points| {
+        if matches!(
+            points.form,
+            crate::elaboration::MathematicalForm::Collection
+        ) {
+            points
+                .children
+                .iter()
+                .map(|point| point.object.print_source())
+                .collect()
+        } else {
+            vec![points.object.print_source()]
+        }
+    });
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, head, 0);
+    }
+    let input = operand
+        .value()
+        .expect("checked defined-integral operand")
+        .clone();
+    let kind = match crate::semantic_core::operator_descriptor(head).map(|item| item.id) {
+        Some(OperatorId::ImproperIntegral) => {
+            crate::improper_integrals::DefinedIntegralOperationKind::Improper
+        }
+        Some(OperatorId::PrincipalValueIntegral) => {
+            crate::improper_integrals::DefinedIntegralOperationKind::PrincipalValue
+        }
+        _ => return Err(EngineError::InvalidInput("未知定义型积分运算".into())),
+    };
+    let mut current = crate::improper_integrals::DefinedIntegralOperation.compute(
+        engine,
+        &input,
+        &(
+            kind,
+            crate::improper_integrals::ImproperIntegralRequest {
+                expression: String::new(),
+                variable: expression.children[1].object.print_source(),
+                lower: expression.children[2].object.print_source(),
+                upper: expression.children[3].object.print_source(),
+                singular_points,
+            },
+        ),
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
     Ok(current)
 }
 

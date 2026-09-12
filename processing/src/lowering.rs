@@ -32,13 +32,22 @@ pub struct LoweringRuleDescriptor {
 /// Rules are added only when their object-native implementation is ready.
 /// Ordering is explicit and bounded; unrelated operator recognizers are never
 /// visited.
-pub const LOWERING_RULES: &[LoweringRuleDescriptor] = &[LoweringRuleDescriptor {
-    id: "integral.euler_gamma",
-    source_operator: OperatorId::Integral,
-    priority: 100,
-    minimum_normalization: NormalizationLevel::Structural,
-    execute: lower_euler_gamma,
-}];
+pub const LOWERING_RULES: &[LoweringRuleDescriptor] = &[
+    LoweringRuleDescriptor {
+        id: "integral.euler_gamma",
+        source_operator: OperatorId::Integral,
+        priority: 100,
+        minimum_normalization: NormalizationLevel::Structural,
+        execute: lower_euler_gamma,
+    },
+    LoweringRuleDescriptor {
+        id: "improper_integral.euler_gamma",
+        source_operator: OperatorId::ImproperIntegral,
+        priority: 100,
+        minimum_normalization: NormalizationLevel::Structural,
+        execute: lower_euler_gamma,
+    },
+];
 
 pub fn try_lower_application(
     engine: &mut dyn Engine,

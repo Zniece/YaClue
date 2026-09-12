@@ -343,12 +343,12 @@ pub enum ObjectNativeRoute {
     MatrixSolve,
     FactorProjection,
     Series,
+    DefinedIntegral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingDomain {
-    DefinedIntegral,
     MultipleIntegral,
     NumericOde,
     NumericRoot,
@@ -925,7 +925,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::IntegrateDefined,
-        availability: OperatorAvailability::Pending(PendingDomain::DefinedIntegral),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::DefinedIntegral),
         product_kind: "defined_object",
         title: "反常积分",
     },
@@ -938,7 +938,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::IntegrateDefined,
-        availability: OperatorAvailability::Pending(PendingDomain::DefinedIntegral),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::DefinedIntegral),
         product_kind: "defined_object",
         title: "Cauchy 主值",
     },
@@ -1502,6 +1502,7 @@ pub enum ObjectCapability {
     Plot,
     ExpandTaylor,
     SumSeries,
+    IntegrateDefined,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1540,6 +1541,7 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::Plot as u8)
                 | (1 << ObjectCapability::ExpandTaylor as u8)
                 | (1 << ObjectCapability::SumSeries as u8)
+                | (1 << ObjectCapability::IntegrateDefined as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
@@ -2289,8 +2291,6 @@ mod tests {
             .flat_map(|capability| capability.names.iter().copied())
             .collect();
         let expected_names: BTreeSet<_> = [
-            "ImproperIntegral",
-            "PrincipalValueIntegral",
             "DoubleIntegral",
             "PolarIntegral",
             "OdeSolveNumeric",

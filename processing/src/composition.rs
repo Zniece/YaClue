@@ -937,9 +937,10 @@ fn apply(
         CompositionOperator::Sum => Err(EngineError::InvalidInput(
             "求和必须通过类型化数学对象执行".into(),
         )),
-        CompositionOperator::ImproperIntegral
-        | CompositionOperator::PrincipalValueIntegral
-        | CompositionOperator::DoubleIntegral
+        CompositionOperator::ImproperIntegral | CompositionOperator::PrincipalValueIntegral => Err(
+            EngineError::InvalidInput("定义型积分必须通过类型化数学对象执行".into()),
+        ),
+        CompositionOperator::DoubleIntegral
         | CompositionOperator::PolarIntegral
         | CompositionOperator::OdeSolveNumeric
         | CompositionOperator::FindRoot
@@ -1049,6 +1050,43 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(result.status, CompositionStatus::NoValue);
+    }
+
+    #[test]
+    fn defined_integrals_compose_without_principal_value_fallback() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let gamma = crate::elaboration::elaborate_input(
+            "D(x)ImproperIntegral(t^(x-1)*Exp(-t),t,0,Infinity)",
+        )
+        .unwrap();
+        let result = execute_elaborated(&mut engine, &gamma, StepVerbosity::Detailed, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.value, "Gamma(x)*PolyGamma(0,x)");
+        assert!(result
+            .operators
+            .contains(&CompositionOperator::ImproperIntegral));
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "intrinsic-gamma-lowering"));
+
+        let ordinary =
+            crate::elaboration::elaborate_input("D(x)ImproperIntegral(1/t,t,-1,1,{0})").unwrap();
+        let result = execute_elaborated(&mut engine, &ordinary, StepVerbosity::Detailed, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::NoValue);
+
+        let principal =
+            crate::elaboration::elaborate_input("D(x)PrincipalValueIntegral(x/t,t,-1,1,{0})")
+                .unwrap();
+        let result = execute_elaborated(&mut engine, &principal, StepVerbosity::Detailed, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.value, "0");
     }
 
     #[test]
