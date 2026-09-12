@@ -1398,6 +1398,16 @@ mod tests {
             varying_order.outcome.resolution,
             processing::protocol::ResolutionState::Unresolved
         );
+
+        let without_trace =
+            process_expression_with_engine(request("D(x)Beta(Sin(x),x^2)", false), &mut engine)
+                .unwrap();
+        assert!(without_trace.steps.is_empty());
+        assert!(!without_trace.expression.contains("D("));
+        assert_eq!(
+            without_trace.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
     }
 
     #[test]

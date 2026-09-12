@@ -22,7 +22,10 @@ use processing::objects::{DefinedObjectStatus, PrimitiveOperation};
 use processing::ode::{solve as solve_ode, InitialCondition, OdeStatus};
 use processing::ode_numeric::{solve_initial_value, NumericOdeOptions, NumericOdeStatus};
 use processing::plot::{sample, SampleOptions, SampleTermination};
-use processing::semantic_core::{ComputationOutput, Effect};
+use processing::protocol::{Condition, ResolutionState};
+use processing::semantic_core::{
+    ComputationOutput, Effect, NormalizationLevel, OperatorId, SemanticInterpretation,
+};
 use processing::steps::{derive_integrals, derive_steps};
 
 fn assert_invalid_input(result: Result<impl Sized, EngineError>) {
@@ -77,6 +80,84 @@ fn calculus_release_contract() {
         "unsupported integrals must remain visibly unevaluated"
     );
     assert_invalid_input(derive_steps(&mut engine, "x^2", "x;Echo(1)"));
+}
+
+#[test]
+fn special_function_derivative_release_contract() {
+    let mut engine = RustEngine::spawn().expect("engine boot");
+
+    let closed = elaborate("D(x)IncompleteGamma(x^2,x+1)").unwrap();
+    let input = &closed.children[1].object;
+    let computation = execute_elaborated_structure(&mut engine, &closed).unwrap();
+    let output = computation.value().expect("closed derivative value");
+    assert_eq!(output.id, input.id);
+    assert!(output.revision.0 > input.revision.0);
+    assert_eq!(
+        output.normalization.as_ref().unwrap().metadata.level,
+        NormalizationLevel::Domain
+    );
+    assert!(output.print_source().contains("Integrate("));
+    assert!(output
+        .semantics
+        .metadata
+        .conditions
+        .conditions()
+        .iter()
+        .any(|condition| matches!(condition, Condition::RealPartPositive { expression } if expression == "x+1")));
+    assert!(computation
+        .trace
+        .as_ref()
+        .unwrap()
+        .events
+        .iter()
+        .any(|event| {
+            event.rule == "derivative-registered-function-chain-rule"
+                && event.input.object == input.id
+                && event.output.object == output.id
+        }));
+
+    let before = input.operation_cache_key(
+        format!("{:?}:x:1", OperatorId::Derivative),
+        Vec::new(),
+        None,
+    );
+    let after = output.operation_cache_key(
+        format!("{:?}:x:1", OperatorId::Derivative),
+        Vec::new(),
+        None,
+    );
+    assert_ne!(
+        before, after,
+        "object revision must invalidate operation keys"
+    );
+
+    let formal = elaborate("D(x)HypergeometricPFQ({a,b},{c},Sin(x))").unwrap();
+    let formal_input = &formal.children[1].object;
+    let formal_result = execute_elaborated_structure(&mut engine, &formal).unwrap();
+    assert!(matches!(formal_result.output, ComputationOutput::Held(_)));
+    let held = formal_result.subject().unwrap();
+    assert_eq!(held.id, formal_input.id);
+    assert!(held.revision.0 > formal_input.revision.0);
+    assert_eq!(
+        held.semantics.metadata.resolution,
+        ResolutionState::Unresolved
+    );
+    assert!(matches!(
+        held.semantics.interpretation,
+        SemanticInterpretation::HeldTypedApplication(ref application)
+            if application.operator == OperatorId::Derivative
+    ));
+    assert!(formal_result
+        .trace
+        .as_ref()
+        .unwrap()
+        .events
+        .iter()
+        .any(|event| {
+            event.rule == "derivative-known-formal-function"
+                && event.input.object == formal_input.id
+                && event.output.object == held.id
+        }));
 }
 
 #[test]

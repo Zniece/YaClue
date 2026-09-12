@@ -79,6 +79,22 @@ fn main() {
             .expect("long composition"),
         );
     });
+    let closed_special_derivative = measure(|| {
+        black_box(
+            execute_steps(&mut engine, "D(x)Beta(Sin(x),x^2)", StepVerbosity::Concise)
+                .expect("closed special derivative"),
+        );
+    });
+    let formal_special_derivative = measure(|| {
+        black_box(
+            execute_steps(
+                &mut engine,
+                "1+D(x)HypergeometricPFQ({a,b},{c},Sin(x))",
+                StepVerbosity::Concise,
+            )
+            .expect("formal special derivative"),
+        );
+    });
 
     println!("persistent release medians ({SAMPLES} samples)");
     println!("direct_gamma_ns={}", direct.as_nanos());
@@ -86,4 +102,12 @@ fn main() {
     println!("simple_equivalent_ns={}", equivalent_form.as_nanos());
     println!("recognition_miss_ns={}", recognition_miss.as_nanos());
     println!("long_composition_ns={}", long_chain.as_nanos());
+    println!(
+        "closed_special_derivative_ns={}",
+        closed_special_derivative.as_nanos()
+    );
+    println!(
+        "formal_special_derivative_ns={}",
+        formal_special_derivative.as_nanos()
+    );
 }
