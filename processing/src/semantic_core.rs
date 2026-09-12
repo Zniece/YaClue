@@ -351,16 +351,6 @@ pub enum ObjectNativeRoute {
     Extrema,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingDomain {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperatorAvailability {
-    ObjectNative(ObjectNativeRoute),
-    Pending(PendingDomain),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplicationForm {
     Call,
@@ -489,7 +479,7 @@ pub struct OperatorDescriptor {
     pub value_argument: ValueArgument,
     pub binders: &'static [BinderDescriptor],
     pub capability: CapabilityId,
-    pub availability: OperatorAvailability,
+    pub route: ObjectNativeRoute,
     pub product_kind: &'static str,
     pub title: &'static str,
 }
@@ -689,7 +679,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::Differentiate,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Calculus),
+        route: ObjectNativeRoute::Calculus,
         product_kind: "derivative",
         title: "导数",
     },
@@ -702,7 +692,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::Factor,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::AlgebraTransform),
+        route: ObjectNativeRoute::AlgebraTransform,
         product_kind: "algebra",
         title: "代数变换",
     },
@@ -715,7 +705,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::TransformAlgebra,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::AlgebraTransform),
+        route: ObjectNativeRoute::AlgebraTransform,
         product_kind: "algebra",
         title: "代数变换",
     },
@@ -728,7 +718,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::TransformAlgebra,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::AlgebraTransform),
+        route: ObjectNativeRoute::AlgebraTransform,
         product_kind: "algebra",
         title: "部分分式分解",
     },
@@ -741,7 +731,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::Integrate,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Calculus),
+        route: ObjectNativeRoute::Calculus,
         product_kind: "integral",
         title: "积分",
     },
@@ -754,7 +744,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::Last,
         binders: NO_BINDERS,
         capability: CapabilityId::Substitute,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Substitute),
+        route: ObjectNativeRoute::Substitute,
         product_kind: "substitution",
         title: "变量替换",
     },
@@ -767,7 +757,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::EvaluateLimit,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Calculus),
+        route: ObjectNativeRoute::Calculus,
         product_kind: "limit",
         title: "极限",
     },
@@ -780,7 +770,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::ExpandTaylor,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Taylor),
+        route: ObjectNativeRoute::Taylor,
         product_kind: "taylor",
         title: "Taylor 多项式",
     },
@@ -793,7 +783,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::SolveEquation,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::EquationSolve),
+        route: ObjectNativeRoute::EquationSolve,
         product_kind: "equation",
         title: "方程",
     },
@@ -806,7 +796,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::TransformMatrix,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MatrixUnary),
+        route: ObjectNativeRoute::MatrixUnary,
         product_kind: "matrix",
         title: "线性代数",
     },
@@ -819,7 +809,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::TransformMatrix,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MatrixSolve),
+        route: ObjectNativeRoute::MatrixSolve,
         product_kind: "matrix",
         title: "线性方程组",
     },
@@ -840,7 +830,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::AnalyzeMatrix,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MatrixUnary),
+        route: ObjectNativeRoute::MatrixUnary,
         product_kind: "matrix",
         title: "线性代数",
     },
@@ -859,7 +849,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::AnalyzeMatrix,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MatrixUnary),
+        route: ObjectNativeRoute::MatrixUnary,
         product_kind: "matrix",
         title: "线性代数",
     },
@@ -872,7 +862,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::AnalyzeMatrix,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::FactorProjection),
+        route: ObjectNativeRoute::FactorProjection,
         product_kind: "matrix",
         title: "矩阵因子",
     },
@@ -885,7 +875,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::SolveOde,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::OdeSolve),
+        route: ObjectNativeRoute::OdeSolve,
         product_kind: "ode",
         title: "常微分方程",
     },
@@ -898,7 +888,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::Approximate,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Approximate),
+        route: ObjectNativeRoute::Approximate,
         product_kind: "numeric",
         title: "数值近似",
     },
@@ -911,7 +901,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::SumSeries,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Series),
+        route: ObjectNativeRoute::Series,
         product_kind: "series",
         title: "级数",
     },
@@ -924,7 +914,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::IntegrateDefined,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::DefinedIntegral),
+        route: ObjectNativeRoute::DefinedIntegral,
         product_kind: "defined_object",
         title: "反常积分",
     },
@@ -937,7 +927,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::IntegrateDefined,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::DefinedIntegral),
+        route: ObjectNativeRoute::DefinedIntegral,
         product_kind: "defined_object",
         title: "Cauchy 主值",
     },
@@ -950,7 +940,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: DOUBLE_INTEGRAL_BINDERS,
         capability: CapabilityId::IntegrateMultiple,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MultipleIntegral),
+        route: ObjectNativeRoute::MultipleIntegral,
         product_kind: "double_integral",
         title: "二重积分",
     },
@@ -963,7 +953,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_AND_THIRD_BIND_FIRST,
         capability: CapabilityId::IntegrateMultiple,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MultipleIntegral),
+        route: ObjectNativeRoute::MultipleIntegral,
         product_kind: "polar_integral",
         title: "极坐标积分",
     },
@@ -976,7 +966,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::SolveNumericOde,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::NumericOde),
+        route: ObjectNativeRoute::NumericOde,
         product_kind: "numeric_ode",
         title: "常微分方程数值解",
     },
@@ -989,7 +979,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::FindNumericRoot,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::NumericRoot),
+        route: ObjectNativeRoute::NumericRoot,
         product_kind: "numeric_root",
         title: "数值根",
     },
@@ -1002,7 +992,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::RenderPlot,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::PlotEffect),
+        route: ObjectNativeRoute::PlotEffect,
         product_kind: "plot",
         title: "函数图像",
     },
@@ -1015,7 +1005,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_AND_THIRD_BIND_FIRST,
         capability: CapabilityId::AnalyzeExtrema,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Extrema),
+        route: ObjectNativeRoute::Extrema,
         product_kind: "extrema",
         title: "无约束极值",
     },
@@ -1028,7 +1018,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: LAGRANGE_BINDERS,
         capability: CapabilityId::AnalyzeExtrema,
-        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Extrema),
+        route: ObjectNativeRoute::Extrema,
         product_kind: "lagrange",
         title: "约束极值",
     },
@@ -1045,39 +1035,11 @@ pub fn is_known_operator(name: &str) -> bool {
 }
 
 pub fn object_native_route(name: &str) -> Option<ObjectNativeRoute> {
-    match operator_descriptor(name)?.availability {
-        OperatorAvailability::ObjectNative(route) => Some(route),
-        OperatorAvailability::Pending(_) => None,
-    }
+    Some(operator_descriptor(name)?.route)
 }
 
 pub fn is_object_native_operator(name: &str) -> bool {
     object_native_route(name).is_some()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RemainingOperatorCapability {
-    pub operator: OperatorId,
-    pub names: Vec<&'static str>,
-    pub capability: CapabilityId,
-    pub domain: PendingDomain,
-}
-
-pub fn remaining_operator_capabilities() -> Vec<RemainingOperatorCapability> {
-    OPERATOR_DESCRIPTORS
-        .iter()
-        .filter_map(|descriptor| {
-            let OperatorAvailability::Pending(domain) = descriptor.availability else {
-                return None;
-            };
-            Some(RemainingOperatorCapability {
-                operator: descriptor.id,
-                names: descriptor.names.to_vec(),
-                capability: descriptor.capability,
-                domain,
-            })
-        })
-        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2302,29 +2264,10 @@ mod tests {
                 }
             }
 
-            if let OperatorAvailability::ObjectNative(route) = descriptor.availability {
-                for name in descriptor.names {
-                    assert_eq!(object_native_route(name), Some(route));
-                }
+            for name in descriptor.names {
+                assert_eq!(object_native_route(name), Some(descriptor.route));
             }
         }
-    }
-
-    #[test]
-    fn remaining_capabilities_are_generated_from_pending_descriptors() {
-        let generated = remaining_operator_capabilities();
-        let generated_names: BTreeSet<_> = generated
-            .iter()
-            .flat_map(|capability| capability.names.iter().copied())
-            .collect();
-        let expected_names: BTreeSet<_> = BTreeSet::new();
-        assert_eq!(generated_names, expected_names);
-        assert!(generated
-            .iter()
-            .all(|capability| capability.names.iter().all(|name| matches!(
-                operator_descriptor(name).unwrap().availability,
-                OperatorAvailability::Pending(domain) if domain == capability.domain
-            ))));
     }
 
     #[test]

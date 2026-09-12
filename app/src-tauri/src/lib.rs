@@ -391,33 +391,6 @@ fn collect_conditions(value: &Value, output: &mut Vec<Condition>) {
     }
 }
 
-fn lower_composable_operand(
-    engine: &mut RustEngineProxy,
-    expression: &str,
-    verbosity: StepVerbosity,
-) -> Result<(String, Vec<Step>, Vec<String>), ErrorResponse> {
-    let call = processing::input::root_call(expression, "方程操作数").map_err(message)?;
-    if !call
-        .as_ref()
-        .is_some_and(processing::composition::is_candidate)
-    {
-        return Ok((expression.into(), Vec::new(), Vec::new()));
-    }
-    let Some(result) =
-        processing::composition::execute_steps(engine, expression, verbosity).map_err(message)?
-    else {
-        return Ok((expression.into(), Vec::new(), Vec::new()));
-    };
-    if result.status == processing::composition::CompositionStatus::Unsupported {
-        return Err(invalid_input(
-            result
-                .reason
-                .unwrap_or_else(|| "方程中的组合运算不受支持".into()),
-        ));
-    }
-    Ok((result.value, result.steps, result.arbitrary_constants))
-}
-
 fn dispatch_expression_with_engine(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
@@ -550,12 +523,6 @@ fn dispatch_expression_with_engine(
                 );
             }
             ("=" | "==", [left, right]) => {
-                let (left, mut lowering_steps, mut generated_constants) =
-                    lower_composable_operand(engine, left, verbosity)?;
-                let (right, right_steps, right_constants) =
-                    lower_composable_operand(engine, right, verbosity)?;
-                lowering_steps.extend(right_steps);
-                generated_constants.extend(right_constants);
                 let lowered_equation = format!("({left})==({right})");
                 let evaluated = engine.eval(&lowered_equation).map_err(message)?;
                 let mut output = unified_result(
@@ -563,11 +530,7 @@ fn dispatch_expression_with_engine(
                     "方程",
                     evaluated.expr.to_string(),
                     processing::input::strip_tex_delimiters(&evaluated.tex),
-                    if request.steps {
-                        lowering_steps
-                    } else {
-                        Vec::new()
-                    },
+                    Vec::new(),
                     &serde_json::json!({ "status": "equation" }),
                 )?;
                 if let Value::Object(data) = &mut output.data {
@@ -575,12 +538,7 @@ fn dispatch_expression_with_engine(
                         "semantic_expression".into(),
                         Value::String(lowered_equation),
                     );
-                    data.insert(
-                        "arbitrary_constants".into(),
-                        serde_json::to_value(generated_constants).map_err(|error| {
-                            invalid_input(format!("任意常数序列化失败: {error}"))
-                        })?,
-                    );
+                    data.insert("arbitrary_constants".into(), Value::Array(Vec::new()));
                 }
                 return Ok(output);
             }

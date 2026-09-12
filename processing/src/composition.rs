@@ -759,12 +759,6 @@ fn collect_operations_elaborated(
     let Some(signature) = operator_descriptor(head) else {
         return Ok((Ok(expression.object.print_source()), Some(head.clone())));
     };
-    if matches!(
-        signature.availability,
-        crate::semantic_core::OperatorAvailability::Pending(_)
-    ) {
-        return Ok((Ok(expression.object.print_source()), Some(head.clone())));
-    }
     if !signature.arities.contains(&expression.children.len()) {
         return Ok((
             Err(format!(
