@@ -356,7 +356,12 @@ pub fn derivative_computation_for_object(
     })
 }
 
-type PartialDerivativeBuilder = fn(&[String], usize) -> Option<String>;
+struct FunctionPartialDerivative {
+    expression: String,
+    conditions: Vec<Condition>,
+}
+
+type PartialDerivativeBuilder = fn(&[String], usize) -> Option<FunctionPartialDerivative>;
 
 #[derive(Clone, Copy)]
 struct FunctionDerivativeRule {
@@ -366,22 +371,91 @@ struct FunctionDerivativeRule {
     partial_derivative: PartialDerivativeBuilder,
 }
 
-fn gamma_partial(arguments: &[String], argument_index: usize) -> Option<String> {
+fn gamma_partial(arguments: &[String], argument_index: usize) -> Option<FunctionPartialDerivative> {
     (argument_index == 0).then(|| {
         let argument = &arguments[0];
-        format!("Gamma({argument})*PolyGamma(0,{argument})")
+        FunctionPartialDerivative {
+            expression: format!("Gamma({argument})*PolyGamma(0,{argument})"),
+            conditions: Vec::new(),
+        }
+    })
+}
+
+fn erf_partial(arguments: &[String], argument_index: usize) -> Option<FunctionPartialDerivative> {
+    (argument_index == 0).then(|| FunctionPartialDerivative {
+        expression: format!("2*Exp(-(({})^2))/Sqrt(Pi)", arguments[0]),
+        conditions: Vec::new(),
+    })
+}
+
+fn poly_gamma_partial(
+    arguments: &[String],
+    argument_index: usize,
+) -> Option<FunctionPartialDerivative> {
+    let order = &arguments[0];
+    let conditions = if order.parse::<u64>().is_ok() {
+        Vec::new()
+    } else {
+        vec![
+            Condition::Integer {
+                expression: order.clone(),
+            },
+            Condition::Unknown {
+                description: format!("PolyGamma 阶数 {order} 必须非负"),
+            },
+        ]
+    };
+    (argument_index == 1).then(|| FunctionPartialDerivative {
+        expression: format!("PolyGamma(({order})+1,{})", arguments[1]),
+        conditions,
+    })
+}
+
+fn lambert_w_partial(
+    arguments: &[String],
+    argument_index: usize,
+) -> Option<FunctionPartialDerivative> {
+    (argument_index == 0).then(|| {
+        let function = format!("LambertW({})", arguments[0]);
+        FunctionPartialDerivative {
+            // This equivalent form is regular at zero, unlike W(z)/(z(1+W(z))).
+            expression: format!("1/(Exp({function})*(1+{function}))"),
+            conditions: vec![Condition::NonZero {
+                expression: format!("1+{function}"),
+            }],
+        }
     })
 }
 
 /// Function identities are data in this bounded registry. The dispatcher
 /// owns chain-rule composition; adding Erf, Beta or Bessel derivatives does
 /// not add branches to `DerivativeOperation`.
-const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[FunctionDerivativeRule {
-    id: "function.gamma.derivative",
-    head: "Gamma",
-    arity: 1,
-    partial_derivative: gamma_partial,
-}];
+const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
+    FunctionDerivativeRule {
+        id: "function.gamma.derivative",
+        head: "Gamma",
+        arity: 1,
+        partial_derivative: gamma_partial,
+    },
+    FunctionDerivativeRule {
+        id: "function.erf.derivative",
+        head: "Erf",
+        arity: 1,
+        partial_derivative: erf_partial,
+    },
+    FunctionDerivativeRule {
+        id: "function.poly-gamma.derivative",
+        head: "PolyGamma",
+        arity: 2,
+        partial_derivative: poly_gamma_partial,
+    },
+    FunctionDerivativeRule {
+        id: "function.lambert-w.derivative",
+        head: "LambertW",
+        arity: 1,
+        partial_derivative: lambert_w_partial,
+    },
+];
 
 fn derivative_of_registered_function(
     engine: &mut dyn Engine,
@@ -418,20 +492,26 @@ fn derivative_of_registered_function(
     let mut effects = Vec::new();
     let mut condition_items = operand.semantics.metadata.conditions.conditions().to_vec();
     for (index, argument) in arguments.iter().enumerate() {
-        let Some(partial) = (rule.partial_derivative)(&arguments, index) else {
-            continue;
-        };
         let mut inner = derivative_computation(engine, argument, &request.variable, 1)?;
         let Some(inner_value) = inner.value() else {
             return Ok(None);
         };
         let inner_source = inner_value.print_source();
+        let Some(partial) = (rule.partial_derivative)(&arguments, index) else {
+            // A missing partial marks a discrete or otherwise unsupported slot,
+            // not an implicit zero. It is safe to omit only for a constant slot.
+            if inner_source != "0" {
+                return Ok(None);
+            }
+            continue;
+        };
         if inner_source != "0" {
             terms.push(if inner_source == "1" {
-                partial
+                partial.expression.clone()
             } else {
-                format!("({partial})*({inner_source})")
+                format!("({})*({inner_source})", partial.expression)
             });
+            condition_items.extend(partial.conditions);
         }
         condition_items.extend(
             inner_value
@@ -457,6 +537,7 @@ fn derivative_of_registered_function(
     } else {
         terms.join("+")
     };
+    let source = engine.eval_expr(&source)?.to_string();
     let conditions = ConditionSet::new(condition_items)?;
     let mut output = operand.clone();
     let semantics = SemanticState {
@@ -891,6 +972,77 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(rules.contains(&"intrinsic-gamma-lowering"));
         assert!(rules.contains(&"derivative-registered-function-chain-rule"));
+    }
+
+    #[test]
+    fn differentiates_registered_single_active_argument_special_functions() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let cases = [
+            ("D(x)Erf(x^2)", "function.erf.derivative"),
+            ("D(x)PolyGamma(2,Sin(x))", "function.poly-gamma.derivative"),
+            ("D(x)LambertW(Exp(x))", "function.lambert-w.derivative"),
+        ];
+
+        for (source, rule_id) in cases {
+            let elaborated = crate::elaboration::elaborate(source).unwrap();
+            let result =
+                crate::arithmetic::execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+            let value = result.value().expect(source);
+            assert!(
+                !value.print_source().contains("D("),
+                "{source}: {}",
+                value.print_source()
+            );
+            assert!(result.trace.as_ref().unwrap().events.iter().any(|event| {
+                event.rule == "derivative-registered-function-chain-rule"
+                    && event
+                        .bindings
+                        .iter()
+                        .any(|(key, value)| key == "derivative_rule" && value == rule_id)
+            }));
+        }
+    }
+
+    #[test]
+    fn special_function_rules_preserve_conditions_and_reject_varying_discrete_slots() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let lambert = crate::elaboration::elaborate("D(x)LambertW(x)").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &lambert).unwrap();
+        assert!(result
+            .value()
+            .unwrap()
+            .semantics
+            .metadata
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::NonZero { expression } if expression.contains("1+LambertW(x)"))));
+
+        let poly_gamma = crate::elaboration::elaborate("D(x)PolyGamma(n,x)").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &poly_gamma).unwrap();
+        assert!(result
+            .value()
+            .unwrap()
+            .semantics
+            .metadata
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::Integer { expression } if expression == "n")));
+
+        let varying_order = crate::elaboration::elaborate("D(x)PolyGamma(x,x)").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &varying_order).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .all(|event| event.rule != "derivative-registered-function-chain-rule"));
     }
 
     #[test]

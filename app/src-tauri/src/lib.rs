@@ -1345,6 +1345,35 @@ mod tests {
     }
 
     #[test]
+    fn unified_input_exposes_registered_special_function_derivatives() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for expression in [
+            "D(x)Erf(x^2)",
+            "D(x)PolyGamma(2,Sin(x))",
+            "D(x)LambertW(Exp(x))",
+        ] {
+            let result =
+                process_expression_with_engine(request(expression, true), &mut engine).unwrap();
+            assert_eq!(result.kind, "derivative", "{expression}");
+            assert!(!result.expression.contains("D("), "{expression}");
+            assert_eq!(result.semantic.kind, ValueKind::Expression, "{expression}");
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "derivative-registered-function-chain-rule"));
+        }
+
+        let held = process_expression_with_engine(request("D(x)PolyGamma(x,x)", true), &mut engine)
+            .unwrap();
+        assert_eq!(held.kind, "derivative");
+        assert!(held.expression.contains("D(x,1)"));
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+    }
+
+    #[test]
     fn unified_input_exposes_typed_partials_and_reclassifies_final_symbols() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for (expression, operator) in [("D(x)", "derivative"), ("Integrate(x)", "integral")] {
