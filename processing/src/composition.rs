@@ -24,8 +24,6 @@ use crate::steps::{
 const MAX_COMPOSITION_DEPTH: usize = 16;
 const DEFAULT_PRECISION: u32 = 10;
 
-pub use crate::semantic_core::OPERATOR_DESCRIPTORS as OPERATOR_SIGNATURES;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompositionStatus {
@@ -99,59 +97,24 @@ pub fn execute_elaborated(
     verbosity: StepVerbosity,
     include_steps: bool,
 ) -> Result<Option<CompositionResult>, EngineError> {
-    if (matches!(
+    let has_native_descendant = crate::arithmetic::has_object_native_descendant(&input.root);
+    let has_effect_descendant = crate::arithmetic::has_effect_descendant(&input.root);
+    let root_is_native = matches!(&input.root.form,
+        crate::elaboration::MathematicalForm::Application { head }
+            if crate::semantic_core::is_object_native_operator(head));
+    let structural_context = matches!(
         input.root.form,
         crate::elaboration::MathematicalForm::Structural { .. }
     ) || (matches!(
         input.root.form,
         crate::elaboration::MathematicalForm::Relation { .. }
             | crate::elaboration::MathematicalForm::Collection
-    ) && !crate::arithmetic::has_migrated_taylor_descendant(&input.root)
-        && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
-            || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
-            || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
-            || crate::arithmetic::has_effect_descendant(&input.root)))
-        || matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
-        || (matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if crate::arithmetic::is_migrated_transform(head))
-            && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
-                || crate::arithmetic::has_migrated_transform_descendant(&input.root)
-                || crate::arithmetic::has_migrated_substitution_descendant(&input.root)
-                || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
-                || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
-                || crate::arithmetic::has_migrated_solve_descendant(&input.root)))
-        || matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head } if head == "Subst")
-        || matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if crate::arithmetic::is_migrated_numeric_evaluation(head))
-        || matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head } if head == "Taylor")
-        || matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head } if head == "Solve")
-        || matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if crate::arithmetic::is_migrated_matrix_unary(head))
-        || matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if crate::arithmetic::is_migrated_factor_projection(head))
-        || matches!(&input.root.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"))
+    ) && (has_native_descendant || has_effect_descendant))
         || (matches!(&input.root.form,
             crate::elaboration::MathematicalForm::Application { head }
                 if !is_known_operator(head))
-            && (crate::arithmetic::has_migrated_calculus_descendant(&input.root)
-                || crate::arithmetic::has_migrated_transform_descendant(&input.root)
-                || crate::arithmetic::has_migrated_substitution_descendant(&input.root)
-                || crate::arithmetic::has_migrated_numeric_descendant(&input.root)
-                || crate::arithmetic::has_migrated_taylor_descendant(&input.root)
-                || crate::arithmetic::has_migrated_solve_descendant(&input.root)
-                || crate::arithmetic::has_migrated_factor_projection_descendant(&input.root)
-                || crate::arithmetic::has_effect_descendant(&input.root))))
+            && (has_native_descendant || has_effect_descendant));
+    if (structural_context || root_is_native)
         && crate::arithmetic::can_execute_elaborated_tree(&input.root)
     {
         let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
@@ -190,7 +153,8 @@ pub fn execute_elaborated(
             CompositionStatus::Unresolved
                 if matches!(&input.root.form,
                     crate::elaboration::MathematicalForm::Application { head }
-                        if matches!(head.as_str(), "D" | "Deriv"))
+                        if operator_descriptor(head)
+                            .is_some_and(|descriptor| descriptor.id == CompositionOperator::Derivative))
                     && !subject
                         .semantics
                         .capabilities
@@ -263,17 +227,7 @@ fn collect_migrated_operator_ids(
         collect_migrated_operator_ids(child, output);
     }
     if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
-        if matches!(
-            head.as_str(),
-            "Limit" | "D" | "Deriv" | "Integrate" | "Subst"
-        ) || crate::arithmetic::is_migrated_transform(head)
-            || crate::arithmetic::is_migrated_numeric_evaluation(head)
-            || head == "Taylor"
-            || head == "Solve"
-            || crate::arithmetic::is_migrated_matrix_unary(head)
-            || crate::arithmetic::is_migrated_factor_projection(head)
-            || matches!(head.as_str(), "MatrixSolve" | "SolveMatrix")
-        {
+        if crate::semantic_core::is_object_native_operator(head) {
             if let Some(descriptor) = operator_descriptor(head) {
                 output.push(descriptor.id);
             }
@@ -706,6 +660,12 @@ fn collect_operations_elaborated(
     let Some(signature) = operator_descriptor(head) else {
         return Ok((Ok(expression.object.print_source()), Some(head.clone())));
     };
+    if matches!(
+        signature.availability,
+        crate::semantic_core::OperatorAvailability::Pending(_)
+    ) {
+        return Ok((Ok(expression.object.print_source()), Some(head.clone())));
+    }
     if !signature.arities.contains(&expression.children.len()) {
         return Ok((
             Err(format!(
@@ -963,6 +923,18 @@ fn apply(
         CompositionOperator::FactorProjection => Err(EngineError::InvalidInput(
             "分解因子必须通过类型化分解对象提取".into(),
         )),
+        CompositionOperator::Sum
+        | CompositionOperator::ImproperIntegral
+        | CompositionOperator::PrincipalValueIntegral
+        | CompositionOperator::DoubleIntegral
+        | CompositionOperator::PolarIntegral
+        | CompositionOperator::OdeSolveNumeric
+        | CompositionOperator::FindRoot
+        | CompositionOperator::Plot
+        | CompositionOperator::Extrema
+        | CompositionOperator::Lagrange => Err(EngineError::InvalidInput(
+            "待迁移运算符不能进入旧组合执行器".into(),
+        )),
     }
 }
 
@@ -997,17 +969,17 @@ mod tests {
     use crate::engine::RustEngine;
 
     #[test]
-    fn declares_a_small_stable_signature_table() {
-        assert!(OPERATOR_SIGNATURES
+    fn consumes_the_shared_operator_registry() {
+        assert!(crate::semantic_core::OPERATOR_DESCRIPTORS
             .iter()
             .any(|item| item.names.contains(&"D")));
-        assert!(OPERATOR_SIGNATURES
+        assert!(crate::semantic_core::OPERATOR_DESCRIPTORS
             .iter()
             .any(|item| item.names.contains(&"Integrate")));
-        assert!(OPERATOR_SIGNATURES
+        assert!(crate::semantic_core::OPERATOR_DESCRIPTORS
             .iter()
             .any(|item| item.names.contains(&"Subst")));
-        assert!(OPERATOR_SIGNATURES
+        assert!(crate::semantic_core::OPERATOR_DESCRIPTORS
             .iter()
             .any(|item| item.names.contains(&"N")));
     }

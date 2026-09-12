@@ -294,9 +294,20 @@ pub enum OperatorId {
     MatrixAnalyze,
     MatrixDecompose,
     FactorProjection,
+    Sum,
+    ImproperIntegral,
+    PrincipalValueIntegral,
+    DoubleIntegral,
+    PolarIntegral,
+    OdeSolveNumeric,
+    FindRoot,
+    Plot,
+    Extrema,
+    Lagrange,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CapabilityId {
     Differentiate,
     Factor,
@@ -310,6 +321,45 @@ pub enum CapabilityId {
     SolveEquation,
     TransformMatrix,
     AnalyzeMatrix,
+    SumSeries,
+    IntegrateDefined,
+    IntegrateMultiple,
+    SolveNumericOde,
+    FindNumericRoot,
+    RenderPlot,
+    AnalyzeExtrema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectNativeRoute {
+    Calculus,
+    AlgebraTransform,
+    Substitute,
+    Approximate,
+    Taylor,
+    EquationSolve,
+    OdeSolve,
+    MatrixUnary,
+    MatrixSolve,
+    FactorProjection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingDomain {
+    Series,
+    DefinedIntegral,
+    MultipleIntegral,
+    NumericOde,
+    NumericRoot,
+    Plot,
+    Extrema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperatorAvailability {
+    ObjectNative(ObjectNativeRoute),
+    Pending(PendingDomain),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,7 +379,14 @@ pub enum ValueArgument {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BinderDescriptor {
     pub binder_argument: usize,
-    pub scope_argument: ValueArgument,
+    pub scope_argument: ScopeArgument,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeArgument {
+    First,
+    Last,
+    Index(usize),
 }
 
 /// A bound argument is addressed in the retained application AST, rather
@@ -428,10 +485,20 @@ pub struct OperatorDescriptor {
     pub id: OperatorId,
     pub names: &'static [&'static str],
     pub arities: &'static [usize],
+    pub slot_signatures: &'static [OperatorSlotSignature],
     pub forms: &'static [ApplicationForm],
     pub value_argument: ValueArgument,
     pub binders: &'static [BinderDescriptor],
     pub capability: CapabilityId,
+    pub availability: OperatorAvailability,
+    pub product_kind: &'static str,
+    pub title: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperatorSlotSignature {
+    pub arity: usize,
+    pub requirements: &'static [Requirement],
 }
 
 const CALL: &[ApplicationForm] = &[ApplicationForm::Call];
@@ -443,11 +510,174 @@ const BODIED_AND_CONVENTIONAL: &[ApplicationForm] = &[
 const NO_BINDERS: &[BinderDescriptor] = &[];
 const FIRST_ARGUMENT_BINDS_LAST: &[BinderDescriptor] = &[BinderDescriptor {
     binder_argument: 0,
-    scope_argument: ValueArgument::Last,
+    scope_argument: ScopeArgument::Last,
 }];
 const SECOND_ARGUMENT_BINDS_FIRST: &[BinderDescriptor] = &[BinderDescriptor {
     binder_argument: 1,
-    scope_argument: ValueArgument::First,
+    scope_argument: ScopeArgument::First,
+}];
+const SECOND_AND_THIRD_BIND_FIRST: &[BinderDescriptor] = &[
+    BinderDescriptor {
+        binder_argument: 1,
+        scope_argument: ScopeArgument::First,
+    },
+    BinderDescriptor {
+        binder_argument: 2,
+        scope_argument: ScopeArgument::First,
+    },
+];
+const DOUBLE_INTEGRAL_BINDERS: &[BinderDescriptor] = &[
+    BinderDescriptor {
+        binder_argument: 1,
+        scope_argument: ScopeArgument::First,
+    },
+    BinderDescriptor {
+        binder_argument: 4,
+        scope_argument: ScopeArgument::First,
+    },
+];
+const LAGRANGE_BINDERS: &[BinderDescriptor] = &[
+    BinderDescriptor {
+        binder_argument: 2,
+        scope_argument: ScopeArgument::First,
+    },
+    BinderDescriptor {
+        binder_argument: 2,
+        scope_argument: ScopeArgument::Index(1),
+    },
+    BinderDescriptor {
+        binder_argument: 3,
+        scope_argument: ScopeArgument::First,
+    },
+    BinderDescriptor {
+        binder_argument: 3,
+        scope_argument: ScopeArgument::Index(1),
+    },
+];
+
+use Requirement::{
+    ApproachPoint, Direction, LowerBound, Operand, Order, Replacement, UpperBound, Variable,
+};
+
+const SIG_D: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 2,
+        requirements: &[Variable, Operand],
+    },
+    OperatorSlotSignature {
+        arity: 3,
+        requirements: &[Variable, Order, Operand],
+    },
+];
+const SIG_UNARY: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 1,
+    requirements: &[Operand],
+}];
+const SIG_BINARY: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 2,
+    requirements: &[Operand, Operand],
+}];
+const SIG_INTEGRAL: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 2,
+        requirements: &[Variable, Operand],
+    },
+    OperatorSlotSignature {
+        arity: 4,
+        requirements: &[Variable, LowerBound, UpperBound, Operand],
+    },
+];
+const SIG_SUBST: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 3,
+    requirements: &[Variable, Replacement, Operand],
+}];
+const SIG_LIMIT: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 2,
+        requirements: &[Operand, ApproachPoint],
+    },
+    OperatorSlotSignature {
+        arity: 3,
+        requirements: &[Variable, ApproachPoint, Operand],
+    },
+    OperatorSlotSignature {
+        arity: 4,
+        requirements: &[Variable, ApproachPoint, Direction, Operand],
+    },
+];
+const SIG_TAYLOR: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 3,
+        requirements: &[Operand, ApproachPoint, Order],
+    },
+    OperatorSlotSignature {
+        arity: 4,
+        requirements: &[Variable, ApproachPoint, Order, Operand],
+    },
+];
+const SIG_APPROXIMATE: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 1,
+        requirements: &[Operand],
+    },
+    OperatorSlotSignature {
+        arity: 2,
+        requirements: &[Operand, Requirement::Precision],
+    },
+];
+const SIG_SUM: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 4,
+    requirements: &[Variable, LowerBound, UpperBound, Operand],
+}];
+const SIG_DEFINED_INTEGRAL: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 4,
+        requirements: &[Operand, Variable, LowerBound, UpperBound],
+    },
+    OperatorSlotSignature {
+        arity: 5,
+        requirements: &[Operand, Variable, LowerBound, UpperBound, Operand],
+    },
+];
+const SIG_DOUBLE_INTEGRAL: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 7,
+    requirements: &[
+        Operand, Variable, LowerBound, UpperBound, Variable, LowerBound, UpperBound,
+    ],
+}];
+const SIG_POLAR_INTEGRAL: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 9,
+    requirements: &[
+        Operand, Variable, Variable, Variable, Variable, LowerBound, UpperBound, LowerBound,
+        UpperBound,
+    ],
+}];
+const SIG_NUMERIC_ODE: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 6,
+    requirements: &[
+        Operand,
+        Variable,
+        Variable,
+        ApproachPoint,
+        Replacement,
+        ApproachPoint,
+    ],
+}];
+const SIG_FIND_ROOT: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 3,
+    requirements: &[Operand, Variable, ApproachPoint],
+}];
+const SIG_PLOT: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 4,
+    requirements: &[Operand, Variable, LowerBound, UpperBound],
+}];
+const SIG_EXTREMA: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 3,
+    requirements: &[Operand, Variable, Variable],
+}];
+const SIG_LAGRANGE: &[OperatorSlotSignature] = &[OperatorSlotSignature {
+    arity: 4,
+    requirements: &[Operand, Operand, Variable, Variable],
 }];
 
 pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
@@ -455,100 +685,144 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         id: OperatorId::Derivative,
         names: &["D", "Deriv"],
         arities: &[2, 3],
+        slot_signatures: SIG_D,
         forms: BODIED,
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::Differentiate,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Calculus),
+        product_kind: "derivative",
+        title: "导数",
     },
     OperatorDescriptor {
         id: OperatorId::Factor,
         names: &["Factor"],
         arities: &[1],
+        slot_signatures: SIG_UNARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::Factor,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::AlgebraTransform),
+        product_kind: "algebra",
+        title: "代数变换",
     },
     OperatorDescriptor {
         id: OperatorId::AlgebraTransform,
         names: &["Expand", "Simplify", "Tidy"],
         arities: &[1],
+        slot_signatures: SIG_UNARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::TransformAlgebra,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::AlgebraTransform),
+        product_kind: "algebra",
+        title: "代数变换",
     },
     OperatorDescriptor {
         id: OperatorId::AlgebraTransform,
         names: &["Apart"],
         arities: &[2],
+        slot_signatures: SIG_BINARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::TransformAlgebra,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::AlgebraTransform),
+        product_kind: "algebra",
+        title: "部分分式分解",
     },
     OperatorDescriptor {
         id: OperatorId::Integral,
         names: &["Integrate"],
         arities: &[2, 4],
+        slot_signatures: SIG_INTEGRAL,
         forms: BODIED,
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::Integrate,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Calculus),
+        product_kind: "integral",
+        title: "积分",
     },
     OperatorDescriptor {
         id: OperatorId::Substitute,
         names: &["Subst"],
         arities: &[3],
+        slot_signatures: SIG_SUBST,
         forms: BODIED,
         value_argument: ValueArgument::Last,
         binders: NO_BINDERS,
         capability: CapabilityId::Substitute,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Substitute),
+        product_kind: "substitution",
+        title: "变量替换",
     },
     OperatorDescriptor {
         id: OperatorId::Limit,
         names: &["Limit"],
         arities: &[2, 3, 4],
+        slot_signatures: SIG_LIMIT,
         forms: BODIED_AND_CONVENTIONAL,
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::EvaluateLimit,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Calculus),
+        product_kind: "limit",
+        title: "极限",
     },
     OperatorDescriptor {
         id: OperatorId::Taylor,
         names: &["Taylor"],
         arities: &[3, 4],
+        slot_signatures: SIG_TAYLOR,
         forms: BODIED_AND_CONVENTIONAL,
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::ExpandTaylor,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Taylor),
+        product_kind: "taylor",
+        title: "Taylor 多项式",
     },
     OperatorDescriptor {
         id: OperatorId::Solve,
         names: &["Solve"],
         arities: &[2],
+        slot_signatures: SIG_BINARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::SolveEquation,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::EquationSolve),
+        product_kind: "equation",
+        title: "方程",
     },
     OperatorDescriptor {
         id: OperatorId::MatrixTransform,
         names: &["Transpose", "Determinant", "Inverse"],
         arities: &[1],
+        slot_signatures: SIG_UNARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::TransformMatrix,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MatrixUnary),
+        product_kind: "matrix",
+        title: "线性代数",
     },
     OperatorDescriptor {
         id: OperatorId::MatrixSolve,
         names: &["MatrixSolve", "SolveMatrix"],
         arities: &[2],
+        slot_signatures: SIG_BINARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::TransformMatrix,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MatrixSolve),
+        product_kind: "matrix",
+        title: "线性方程组",
     },
     OperatorDescriptor {
         id: OperatorId::MatrixAnalyze,
@@ -562,10 +836,14 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
             "EigenSpaces",
         ],
         arities: &[1],
+        slot_signatures: SIG_UNARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::AnalyzeMatrix,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MatrixUnary),
+        product_kind: "matrix",
+        title: "线性代数",
     },
     OperatorDescriptor {
         id: OperatorId::MatrixDecompose,
@@ -577,37 +855,183 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
             "OrthonormalBasis",
         ],
         arities: &[1],
+        slot_signatures: SIG_UNARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::AnalyzeMatrix,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::MatrixUnary),
+        product_kind: "matrix",
+        title: "线性代数",
     },
     OperatorDescriptor {
         id: OperatorId::FactorProjection,
         names: &["Factors"],
         arities: &[1],
+        slot_signatures: SIG_UNARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::AnalyzeMatrix,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::FactorProjection),
+        product_kind: "matrix",
+        title: "矩阵因子",
     },
     OperatorDescriptor {
         id: OperatorId::OdeSolve,
         names: &["OdeSolve"],
         arities: &[1],
+        slot_signatures: SIG_UNARY,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::SolveOde,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::OdeSolve),
+        product_kind: "ode",
+        title: "常微分方程",
     },
     OperatorDescriptor {
         id: OperatorId::Approximate,
         names: &["N", "Approximate"],
         arities: &[1, 2],
+        slot_signatures: SIG_APPROXIMATE,
         forms: CALL,
         value_argument: ValueArgument::First,
         binders: NO_BINDERS,
         capability: CapabilityId::Approximate,
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Approximate),
+        product_kind: "numeric",
+        title: "数值近似",
+    },
+    OperatorDescriptor {
+        id: OperatorId::Sum,
+        names: &["Sum"],
+        arities: &[4],
+        slot_signatures: SIG_SUM,
+        forms: CALL,
+        value_argument: ValueArgument::Last,
+        binders: FIRST_ARGUMENT_BINDS_LAST,
+        capability: CapabilityId::SumSeries,
+        availability: OperatorAvailability::Pending(PendingDomain::Series),
+        product_kind: "series",
+        title: "级数",
+    },
+    OperatorDescriptor {
+        id: OperatorId::ImproperIntegral,
+        names: &["ImproperIntegral"],
+        arities: &[4, 5],
+        slot_signatures: SIG_DEFINED_INTEGRAL,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: SECOND_ARGUMENT_BINDS_FIRST,
+        capability: CapabilityId::IntegrateDefined,
+        availability: OperatorAvailability::Pending(PendingDomain::DefinedIntegral),
+        product_kind: "defined_object",
+        title: "反常积分",
+    },
+    OperatorDescriptor {
+        id: OperatorId::PrincipalValueIntegral,
+        names: &["PrincipalValueIntegral"],
+        arities: &[4, 5],
+        slot_signatures: SIG_DEFINED_INTEGRAL,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: SECOND_ARGUMENT_BINDS_FIRST,
+        capability: CapabilityId::IntegrateDefined,
+        availability: OperatorAvailability::Pending(PendingDomain::DefinedIntegral),
+        product_kind: "defined_object",
+        title: "Cauchy 主值",
+    },
+    OperatorDescriptor {
+        id: OperatorId::DoubleIntegral,
+        names: &["DoubleIntegral"],
+        arities: &[7],
+        slot_signatures: SIG_DOUBLE_INTEGRAL,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: DOUBLE_INTEGRAL_BINDERS,
+        capability: CapabilityId::IntegrateMultiple,
+        availability: OperatorAvailability::Pending(PendingDomain::MultipleIntegral),
+        product_kind: "double_integral",
+        title: "二重积分",
+    },
+    OperatorDescriptor {
+        id: OperatorId::PolarIntegral,
+        names: &["PolarIntegral"],
+        arities: &[9],
+        slot_signatures: SIG_POLAR_INTEGRAL,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: SECOND_AND_THIRD_BIND_FIRST,
+        capability: CapabilityId::IntegrateMultiple,
+        availability: OperatorAvailability::Pending(PendingDomain::MultipleIntegral),
+        product_kind: "polar_integral",
+        title: "极坐标积分",
+    },
+    OperatorDescriptor {
+        id: OperatorId::OdeSolveNumeric,
+        names: &["OdeSolveNumeric"],
+        arities: &[6],
+        slot_signatures: SIG_NUMERIC_ODE,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::SolveNumericOde,
+        availability: OperatorAvailability::Pending(PendingDomain::NumericOde),
+        product_kind: "numeric_ode",
+        title: "常微分方程数值解",
+    },
+    OperatorDescriptor {
+        id: OperatorId::FindRoot,
+        names: &["FindRoot"],
+        arities: &[3],
+        slot_signatures: SIG_FIND_ROOT,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: SECOND_ARGUMENT_BINDS_FIRST,
+        capability: CapabilityId::FindNumericRoot,
+        availability: OperatorAvailability::Pending(PendingDomain::NumericRoot),
+        product_kind: "numeric_root",
+        title: "数值根",
+    },
+    OperatorDescriptor {
+        id: OperatorId::Plot,
+        names: &["Plot"],
+        arities: &[4],
+        slot_signatures: SIG_PLOT,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: SECOND_ARGUMENT_BINDS_FIRST,
+        capability: CapabilityId::RenderPlot,
+        availability: OperatorAvailability::Pending(PendingDomain::Plot),
+        product_kind: "plot",
+        title: "函数图像",
+    },
+    OperatorDescriptor {
+        id: OperatorId::Extrema,
+        names: &["Extrema"],
+        arities: &[3],
+        slot_signatures: SIG_EXTREMA,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: SECOND_AND_THIRD_BIND_FIRST,
+        capability: CapabilityId::AnalyzeExtrema,
+        availability: OperatorAvailability::Pending(PendingDomain::Extrema),
+        product_kind: "extrema",
+        title: "无约束极值",
+    },
+    OperatorDescriptor {
+        id: OperatorId::Lagrange,
+        names: &["Lagrange"],
+        arities: &[4],
+        slot_signatures: SIG_LAGRANGE,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: LAGRANGE_BINDERS,
+        capability: CapabilityId::AnalyzeExtrema,
+        availability: OperatorAvailability::Pending(PendingDomain::Extrema),
+        product_kind: "lagrange",
+        title: "约束极值",
     },
 ];
 
@@ -617,24 +1041,44 @@ pub fn operator_descriptor(name: &str) -> Option<&'static OperatorDescriptor> {
         .find(|descriptor| descriptor.names.contains(&name))
 }
 
-/// Transitional recognition for product operations whose typed descriptor has
-/// not migrated yet. Keeping it beside descriptors prevents execution layers
-/// from growing independent string lists.
 pub fn is_known_operator(name: &str) -> bool {
     operator_descriptor(name).is_some()
-        || matches!(
-            name,
-            "DoubleIntegral"
-                | "Extrema"
-                | "FindRoot"
-                | "ImproperIntegral"
-                | "Lagrange"
-                | "OdeSolve"
-                | "OdeSolveNumeric"
-                | "Plot"
-                | "PolarIntegral"
-                | "PrincipalValueIntegral"
-        )
+}
+
+pub fn object_native_route(name: &str) -> Option<ObjectNativeRoute> {
+    match operator_descriptor(name)?.availability {
+        OperatorAvailability::ObjectNative(route) => Some(route),
+        OperatorAvailability::Pending(_) => None,
+    }
+}
+
+pub fn is_object_native_operator(name: &str) -> bool {
+    object_native_route(name).is_some()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RemainingOperatorCapability {
+    pub operator: OperatorId,
+    pub names: Vec<&'static str>,
+    pub capability: CapabilityId,
+    pub domain: PendingDomain,
+}
+
+pub fn remaining_operator_capabilities() -> Vec<RemainingOperatorCapability> {
+    OPERATOR_DESCRIPTORS
+        .iter()
+        .filter_map(|descriptor| {
+            let OperatorAvailability::Pending(domain) = descriptor.availability else {
+                return None;
+            };
+            Some(RemainingOperatorCapability {
+                operator: descriptor.id,
+                names: descriptor.names.to_vec(),
+                capability: descriptor.capability,
+                domain,
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -710,21 +1154,15 @@ pub enum MatrixFactorizationKind {
     Cholesky,
 }
 
-fn signature_requirements(spelling: &str, arity: usize) -> Option<&'static [Requirement]> {
-    use Requirement::*;
-    match (spelling, arity) {
-        ("D" | "Deriv", 2) => Some(&[Variable, Operand]),
-        ("D" | "Deriv", 3) => Some(&[Variable, Order, Operand]),
-        ("Integrate", 2) => Some(&[Variable, Operand]),
-        ("Integrate", 4) => Some(&[Variable, LowerBound, UpperBound, Operand]),
-        ("Limit", 2) => Some(&[Operand, ApproachPoint]),
-        ("Limit", 3) => Some(&[Variable, ApproachPoint, Operand]),
-        ("Limit", 4) => Some(&[Variable, ApproachPoint, Direction, Operand]),
-        ("Taylor", 3) => Some(&[Operand, ApproachPoint, Order]),
-        ("Taylor", 4) => Some(&[Variable, ApproachPoint, Order, Operand]),
-        ("Subst", 3) => Some(&[Variable, Replacement, Operand]),
-        _ => None,
-    }
+pub(crate) fn signature_requirements(
+    spelling: &str,
+    arity: usize,
+) -> Option<&'static [Requirement]> {
+    operator_descriptor(spelling)?
+        .slot_signatures
+        .iter()
+        .find(|signature| signature.arity == arity)
+        .map(|signature| signature.requirements)
 }
 
 pub fn partial_application_state(
@@ -782,8 +1220,9 @@ pub fn partial_application_state(
             .map(|binder| BinderScope {
                 binder_slot: binder.binder_argument,
                 scope_slot: match binder.scope_argument {
-                    ValueArgument::First => 0,
-                    ValueArgument::Last => expected_arity - 1,
+                    ScopeArgument::First => 0,
+                    ScopeArgument::Last => expected_arity - 1,
+                    ScopeArgument::Index(index) => index,
                 },
             })
             .collect(),
@@ -842,8 +1281,9 @@ pub fn typed_application_state(
             .map(|binder| BinderScope {
                 binder_slot: binder.binder_argument,
                 scope_slot: match binder.scope_argument {
-                    ValueArgument::First => 0,
-                    ValueArgument::Last => arity - 1,
+                    ScopeArgument::First => 0,
+                    ScopeArgument::Last => arity - 1,
+                    ScopeArgument::Index(index) => index,
                 },
             })
             .collect(),
@@ -1788,7 +2228,86 @@ pub trait UnarySemanticOperation<Request> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use yacas_rs::parser::parse_expression;
+
+    #[test]
+    fn operator_registry_is_internally_complete_and_unambiguous() {
+        let mut names = BTreeSet::new();
+        for descriptor in OPERATOR_DESCRIPTORS {
+            assert!(!descriptor.names.is_empty());
+            for name in descriptor.names {
+                assert!(names.insert(*name), "duplicate operator spelling: {name}");
+                assert_eq!(operator_descriptor(name).unwrap().id, descriptor.id);
+            }
+
+            let declared_arities: BTreeSet<_> = descriptor.arities.iter().copied().collect();
+            let signature_arities: BTreeSet<_> = descriptor
+                .slot_signatures
+                .iter()
+                .map(|signature| {
+                    assert_eq!(signature.arity, signature.requirements.len());
+                    signature.arity
+                })
+                .collect();
+            assert_eq!(
+                declared_arities, signature_arities,
+                "{:?}",
+                descriptor.names
+            );
+
+            for arity in descriptor.arities {
+                for binder in descriptor.binders {
+                    assert!(binder.binder_argument < *arity, "{:?}", descriptor.names);
+                    let scope = match binder.scope_argument {
+                        ScopeArgument::First => 0,
+                        ScopeArgument::Last => arity - 1,
+                        ScopeArgument::Index(index) => index,
+                    };
+                    assert!(scope < *arity, "{:?}", descriptor.names);
+                    // A descriptor may support a shorter non-binding arity
+                    // (for example Limit(point, body)); binding activates only
+                    // where this slot is explicitly typed as a variable.
+                }
+            }
+
+            if let OperatorAvailability::ObjectNative(route) = descriptor.availability {
+                for name in descriptor.names {
+                    assert_eq!(object_native_route(name), Some(route));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn remaining_capabilities_are_generated_from_pending_descriptors() {
+        let generated = remaining_operator_capabilities();
+        let generated_names: BTreeSet<_> = generated
+            .iter()
+            .flat_map(|capability| capability.names.iter().copied())
+            .collect();
+        let expected_names: BTreeSet<_> = [
+            "Sum",
+            "ImproperIntegral",
+            "PrincipalValueIntegral",
+            "DoubleIntegral",
+            "PolarIntegral",
+            "OdeSolveNumeric",
+            "FindRoot",
+            "Plot",
+            "Extrema",
+            "Lagrange",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(generated_names, expected_names);
+        assert!(generated
+            .iter()
+            .all(|capability| capability.names.iter().all(|name| matches!(
+                operator_descriptor(name).unwrap().availability,
+                OperatorAvailability::Pending(domain) if domain == capability.domain
+            ))));
+    }
 
     #[test]
     fn view_borrows_one_ast_without_reparsing_children() {

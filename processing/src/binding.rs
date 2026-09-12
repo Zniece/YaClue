@@ -70,83 +70,41 @@ struct BinderSpec {
     body: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct BindingSignature {
-    pub name: &'static str,
-    pub arities: &'static [usize],
-    pub variable_argument: usize,
-    pub body_argument: ArgumentPosition,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum ArgumentPosition {
-    At(usize),
-    FromEnd(usize),
-}
-
-const DERIVATIVE_ARITIES: &[usize] = &[2, 3];
-const INTEGRAL_ARITIES: &[usize] = &[2, 4];
-const LIMIT_ARITIES: &[usize] = &[3, 4];
-const SUM_ARITIES: &[usize] = &[4];
-const DEFINED_INTEGRAL_ARITIES: &[usize] = &[4, 5];
-
-pub const BINDING_SIGNATURES: &[BindingSignature] = &[
-    BindingSignature {
-        name: "D",
-        arities: DERIVATIVE_ARITIES,
-        variable_argument: 0,
-        body_argument: ArgumentPosition::FromEnd(0),
-    },
-    BindingSignature {
-        name: "Deriv",
-        arities: DERIVATIVE_ARITIES,
-        variable_argument: 0,
-        body_argument: ArgumentPosition::FromEnd(0),
-    },
-    BindingSignature {
-        name: "Integrate",
-        arities: INTEGRAL_ARITIES,
-        variable_argument: 0,
-        body_argument: ArgumentPosition::FromEnd(0),
-    },
-    BindingSignature {
-        name: "Limit",
-        arities: LIMIT_ARITIES,
-        variable_argument: 0,
-        body_argument: ArgumentPosition::FromEnd(0),
-    },
-    BindingSignature {
-        name: "Sum",
-        arities: SUM_ARITIES,
-        variable_argument: 0,
-        body_argument: ArgumentPosition::FromEnd(0),
-    },
-    BindingSignature {
-        name: "ImproperIntegral",
-        arities: DEFINED_INTEGRAL_ARITIES,
-        variable_argument: 1,
-        body_argument: ArgumentPosition::At(0),
-    },
-    BindingSignature {
-        name: "PrincipalValueIntegral",
-        arities: DEFINED_INTEGRAL_ARITIES,
-        variable_argument: 1,
-        body_argument: ArgumentPosition::At(0),
-    },
-];
-
-fn binder_spec(head: &str, argument_count: usize) -> Option<BinderSpec> {
-    let signature = BINDING_SIGNATURES
-        .iter()
-        .find(|signature| signature.name == head && signature.arities.contains(&argument_count))?;
-    let body = match signature.body_argument {
-        ArgumentPosition::At(index) => (index < argument_count).then_some(index)?,
-        ArgumentPosition::FromEnd(offset) => argument_count.checked_sub(offset + 1)?,
+fn binder_specs(head: &str, argument_count: usize) -> Vec<BinderSpec> {
+    let Some(descriptor) = crate::semantic_core::operator_descriptor(head)
+        .filter(|descriptor| descriptor.arities.contains(&argument_count))
+    else {
+        return Vec::new();
     };
-    Some(BinderSpec {
-        variable: signature.variable_argument,
-        body,
-    })
+    let Some(signature) = descriptor
+        .slot_signatures
+        .iter()
+        .find(|signature| signature.arity == argument_count)
+    else {
+        return Vec::new();
+    };
+    descriptor
+        .binders
+        .iter()
+        .filter_map(|binder| {
+            if signature.requirements.get(binder.binder_argument)
+                != Some(&crate::semantic_core::Requirement::Variable)
+            {
+                return None;
+            }
+            let body = match binder.scope_argument {
+                crate::semantic_core::ScopeArgument::First => 0,
+                crate::semantic_core::ScopeArgument::Last => argument_count.checked_sub(1)?,
+                crate::semantic_core::ScopeArgument::Index(index) => index,
+            };
+            (binder.binder_argument < argument_count && body < argument_count).then_some(
+                BinderSpec {
+                    variable: binder.binder_argument,
+                    body,
+                },
+            )
+        })
+        .collect()
 }
 
 pub fn analyze(input: &str) -> Result<BindingAnalysis, EngineError> {
@@ -196,29 +154,39 @@ fn visit(node: &Rc<LispObject>, scopes: &mut Vec<(String, u32)>, result: &mut Tr
             };
             result.function_heads.insert(head.to_string());
             let arguments = &nodes[1..];
-            let spec = binder_spec(head, arguments.len());
-            for (index, argument) in arguments.iter().enumerate() {
-                if spec.is_some_and(|spec| index == spec.variable) {
+            let specs = binder_specs(head, arguments.len());
+            let mut binders = BTreeMap::new();
+            for spec in &specs {
+                if binders.contains_key(&spec.variable) {
                     continue;
                 }
-                if let Some(spec) = spec.filter(|spec| index == spec.body) {
-                    if let Some(variable) = arguments[spec.variable].atom_string() {
-                        result.has_binder = true;
-                        let binder = result.next_binder;
-                        result.next_binder += 1;
-                        result.bound_symbols.insert(variable.to_string());
-                        result.identities.insert(SymbolIdentity {
-                            name: variable.to_string(),
-                            role: SymbolRole::Bound,
-                            binder: Some(binder),
-                        });
-                        scopes.push((variable.to_string(), binder));
-                        visit(argument, scopes, result);
-                        scopes.pop();
-                        continue;
-                    }
+                if let Some(variable) = arguments[spec.variable].atom_string() {
+                    result.has_binder = true;
+                    let binder = result.next_binder;
+                    result.next_binder += 1;
+                    result.bound_symbols.insert(variable.to_string());
+                    result.identities.insert(SymbolIdentity {
+                        name: variable.to_string(),
+                        role: SymbolRole::Bound,
+                        binder: Some(binder),
+                    });
+                    binders.insert(spec.variable, (variable.to_string(), binder));
                 }
+            }
+            for (index, argument) in arguments.iter().enumerate() {
+                if binders.contains_key(&index) {
+                    continue;
+                }
+                let scoped: Vec<_> = specs
+                    .iter()
+                    .filter(|spec| spec.body == index)
+                    .filter_map(|spec| binders.get(&spec.variable).cloned())
+                    .collect();
+                scopes.extend(scoped.iter().cloned());
                 visit(argument, scopes, result);
+                for _ in &scoped {
+                    scopes.pop();
+                }
             }
         }
     }
@@ -310,27 +278,32 @@ fn canonical_node(
             let nodes: Vec<_> = spine_refs(first).collect();
             let head = nodes.first().and_then(|node| node.atom_string());
             let arguments = &nodes[1..];
-            let spec = head.and_then(|head| binder_spec(head, arguments.len()));
+            let specs = head.map_or_else(Vec::new, |head| binder_specs(head, arguments.len()));
             let mut parts = vec![head.map_or_else(|| "?".into(), ToString::to_string)];
-            let mut pending_binder = None;
-            for (index, argument) in arguments.iter().enumerate() {
-                if spec.is_some_and(|spec| index == spec.variable) {
-                    let binder = *next;
-                    *next += 1;
-                    parts.push(format!("!{binder}"));
-                    if let Some(variable) = argument.atom_string() {
-                        pending_binder = Some((variable.to_string(), binder));
-                    }
+            let mut binders = BTreeMap::new();
+            for spec in &specs {
+                if binders.contains_key(&spec.variable) {
                     continue;
                 }
-                let body_scope = spec.is_some_and(|spec| index == spec.body);
-                if body_scope {
-                    if let Some(binder) = pending_binder.take() {
-                        scopes.push(binder);
-                    }
+                if let Some(variable) = arguments[spec.variable].atom_string() {
+                    let binder = *next;
+                    *next += 1;
+                    binders.insert(spec.variable, (variable.to_string(), binder));
                 }
+            }
+            for (index, argument) in arguments.iter().enumerate() {
+                if let Some((_, binder)) = binders.get(&index) {
+                    parts.push(format!("!{binder}"));
+                    continue;
+                }
+                let scoped: Vec<_> = specs
+                    .iter()
+                    .filter(|spec| spec.body == index)
+                    .filter_map(|spec| binders.get(&spec.variable).cloned())
+                    .collect();
+                scopes.extend(scoped.iter().cloned());
                 parts.push(canonical_node(argument, scopes, next));
-                if body_scope && arguments[spec.unwrap().variable].atom_string().is_some() {
+                for _ in &scoped {
                     scopes.pop();
                 }
             }
@@ -369,7 +342,7 @@ fn rename_would_capture(node: &Rc<LispObject>, from: &str, to: &str) -> bool {
             .any(|node| rename_would_capture(node, from, to));
     };
     let arguments = &nodes[1..];
-    if let Some(spec) = binder_spec(head, arguments.len()) {
+    for spec in binder_specs(head, arguments.len()) {
         if arguments[spec.variable]
             .atom_string()
             .is_some_and(|name| name.as_ref() == from)
@@ -476,26 +449,37 @@ fn rename_bound(
                 return deep_clone(node);
             };
             let arguments = &nodes[1..];
-            let spec = binder_spec(head, arguments.len());
+            let specs = binder_specs(head, arguments.len());
+            let mut binder_renames = BTreeMap::new();
+            for spec in &specs {
+                binder_renames.entry(spec.variable).or_insert_with(|| {
+                    let old = arguments[spec.variable]
+                        .atom_string()
+                        .map(ToString::to_string);
+                    let new: Option<String> = old
+                        .as_deref()
+                        .filter(|name| *name == from)
+                        .map(|_| to.into());
+                    (old, new)
+                });
+            }
             let mut output = Vec::with_capacity(arguments.len());
-            let mut pending_scope = None;
             for (index, argument) in arguments.iter().enumerate() {
-                if spec.is_some_and(|spec| index == spec.variable) {
-                    let old = argument.atom_string().map(ToString::to_string);
-                    let new = old.as_deref().filter(|name| *name == from).map(|_| to);
-                    output
-                        .push(new.map_or_else(|| deep_clone(argument), |name| atom(symbols, name)));
+                if let Some((_, new)) = binder_renames.get(&index) {
+                    output.push(
+                        new.as_deref()
+                            .map_or_else(|| deep_clone(argument), |name| atom(symbols, name)),
+                    );
+                } else {
                     let mut scope = BTreeMap::new();
-                    if let (Some(old), Some(new)) = (old, new) {
-                        scope.insert(old, new.into());
+                    for spec in specs.iter().filter(|spec| spec.body == index) {
+                        if let Some((Some(old), Some(new))) = binder_renames.get(&spec.variable) {
+                            scope.insert(old.clone(), new.clone());
+                        }
                     }
-                    pending_scope = Some(scope);
-                } else if spec.is_some_and(|spec| index == spec.body) {
-                    renames.push(pending_scope.take().unwrap_or_default());
+                    renames.push(scope);
                     output.push(rename_bound(argument, from, to, renames, symbols));
                     renames.pop();
-                } else {
-                    output.push(rename_bound(argument, from, to, renames, symbols));
                 }
             }
             let mut kinds = vec![ObjectKind::Atom(symbols.look_up(head))];
@@ -527,17 +511,23 @@ fn substitute_node(
                 return deep_clone(node);
             };
             let arguments = &nodes[1..];
-            let spec = binder_spec(head, arguments.len());
-            let mut output = Vec::with_capacity(arguments.len());
-            let mut active_name = None;
-            for (index, argument) in arguments.iter().enumerate() {
-                if spec.is_some_and(|spec| index == spec.variable) {
-                    let original = argument.atom_string().map(ToString::to_string);
+            let specs = binder_specs(head, arguments.len());
+            let mut binder_names = BTreeMap::new();
+            for spec in &specs {
+                binder_names.entry(spec.variable).or_insert_with(|| {
+                    let original = arguments[spec.variable]
+                        .atom_string()
+                        .map(ToString::to_string);
                     let renamed = original.as_deref().and_then(|name| {
                         (name != target && replacement_free.contains(name))
                             .then(|| fresh_name(name, occupied))
                     });
-                    active_name = original.clone().map(|name| (name, renamed.clone()));
+                    (original, renamed)
+                });
+            }
+            let mut output = Vec::with_capacity(arguments.len());
+            for (index, argument) in arguments.iter().enumerate() {
+                if let Some((_, renamed)) = binder_names.get(&index) {
                     output.push(
                         renamed
                             .as_deref()
@@ -545,32 +535,30 @@ fn substitute_node(
                     );
                     continue;
                 }
-                if spec.is_some_and(|spec| index == spec.body) {
-                    if let Some((original, renamed)) = &active_name {
-                        let prepared = renamed.as_deref().map_or_else(
-                            || deep_clone(argument),
-                            |new| {
-                                let mut scope = BTreeMap::new();
-                                scope.insert(original.clone(), new.into());
-                                rename_bound(argument, original, new, &mut vec![scope], symbols)
-                            },
-                        );
-                        bound.push(renamed.clone().unwrap_or_else(|| original.clone()));
-                        output.push(substitute_node(
-                            &prepared,
-                            target,
-                            replacement,
-                            replacement_free,
-                            occupied,
-                            bound,
-                            symbols,
-                        ));
-                        bound.pop();
-                        continue;
+                let scoped: Vec<_> = specs
+                    .iter()
+                    .filter(|spec| spec.body == index)
+                    .filter_map(|spec| binder_names.get(&spec.variable))
+                    .filter_map(|(original, renamed)| {
+                        original
+                            .as_ref()
+                            .map(|original| (original.clone(), renamed.clone()))
+                    })
+                    .collect();
+                let mut prepared = deep_clone(argument);
+                for (original, renamed) in &scoped {
+                    if let Some(new) = renamed {
+                        let mut scope = BTreeMap::new();
+                        scope.insert(original.clone(), new.clone());
+                        prepared =
+                            rename_bound(&prepared, original, new, &mut vec![scope], symbols);
                     }
                 }
+                bound.extend(scoped.iter().map(|(original, renamed)| {
+                    renamed.clone().unwrap_or_else(|| original.clone())
+                }));
                 output.push(substitute_node(
-                    argument,
+                    &prepared,
                     target,
                     replacement,
                     replacement_free,
@@ -578,6 +566,7 @@ fn substitute_node(
                     bound,
                     symbols,
                 ));
+                bound.truncate(bound.len() - scoped.len());
             }
             let mut kinds = vec![ObjectKind::Atom(symbols.look_up(head))];
             kinds.extend(output.into_iter().map(|item| clone_kind(&item.kind)));
@@ -640,9 +629,11 @@ mod tests {
             "ImproperIntegral",
             "PrincipalValueIntegral",
         ] {
-            assert!(BINDING_SIGNATURES
+            assert!(crate::semantic_core::operator_descriptor(name)
+                .unwrap()
+                .arities
                 .iter()
-                .any(|signature| signature.name == name));
+                .any(|arity| !binder_specs(name, *arity).is_empty()));
         }
     }
 
@@ -651,6 +642,44 @@ mod tests {
         let result = analyze("ImproperIntegral(t^(a-1)*Exp(-t),t,0,Infinity)").unwrap();
         assert_eq!(result.free_symbols, ["a"]);
         assert_eq!(result.bound_symbols, ["t"]);
+    }
+
+    #[test]
+    fn multi_binder_operators_scope_every_declared_variable() {
+        let double = analyze("DoubleIntegral(x*y+a,x,0,1,y,0,b)").unwrap();
+        assert_eq!(double.free_symbols, ["a", "b"]);
+        assert_eq!(double.bound_symbols, ["x", "y"]);
+        assert!(alpha_equivalent(
+            "DoubleIntegral(x*y+a,x,0,1,y,0,b)",
+            "DoubleIntegral(u*v+a,u,0,1,v,0,b)"
+        )
+        .unwrap());
+
+        let extrema = analyze("Extrema(x^2+y^2+c,x,y)").unwrap();
+        assert_eq!(extrema.free_symbols, ["c"]);
+        assert_eq!(extrema.bound_symbols, ["x", "y"]);
+
+        let lagrange = analyze("Lagrange(x^2+y^2+a,x+y-b,x,y)").unwrap();
+        assert_eq!(lagrange.free_symbols, ["a", "b"]);
+        assert_eq!(lagrange.bound_symbols, ["x", "y"]);
+        assert!(alpha_equivalent(
+            "Lagrange(x^2+y^2+a,x+y-b,x,y)",
+            "Lagrange(u^2+v^2+a,u+v-b,u,v)"
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn multi_binder_rewrites_are_capture_safe_in_every_scope() {
+        let renamed = alpha_rename("Lagrange(x+y,x-y,x,y)", "x", "u").unwrap();
+        assert!(alpha_equivalent(&renamed, "Lagrange(u+y,u-y,u,y)").unwrap());
+        assert!(alpha_rename("Lagrange(x+y+u,x-y,x,y)", "x", "u").is_err());
+
+        let substituted = substitute_free("DoubleIntegral(x*y+a,x,0,1,y,0,b)", "a", "x+y").unwrap();
+        let analysis = analyze(&substituted).unwrap();
+        assert!(analysis.free_symbols.contains(&"x".into()));
+        assert!(analysis.free_symbols.contains(&"y".into()));
+        assert_eq!(analysis.bound_symbols.len(), 2);
     }
 
     #[test]

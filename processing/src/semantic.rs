@@ -218,10 +218,15 @@ fn classify(
                 matches!(head.as_ref(), "=" | "==" | "!=" | "<" | ">" | "<=" | ">=")
             }) {
                 ValueKind::Equation
-            } else if head
-                .as_ref()
-                .is_some_and(|head| matches!(head.as_ref(), "Solve" | "OdeSolve"))
-            {
+            } else if head.as_ref().is_some_and(|head| {
+                crate::semantic_core::operator_descriptor(head).is_some_and(|descriptor| {
+                    matches!(
+                        descriptor.id,
+                        crate::semantic_core::OperatorId::Solve
+                            | crate::semantic_core::OperatorId::OdeSolve
+                    )
+                })
+            }) {
                 ValueKind::SolutionSet
             } else if head.as_ref().is_some_and(|head| head.as_ref() == "List") {
                 ValueKind::Expression
@@ -295,7 +300,9 @@ fn list_length(node: &std::rc::Rc<LispObject>) -> Option<usize> {
 fn exactness(node: &std::rc::Rc<LispObject>, no_symbols: bool, kind: ValueKind) -> Exactness {
     if matches!(kind, ValueKind::SolutionSet | ValueKind::Unevaluated) {
         Exactness::Unknown
-    } else if contains_approximate_number(node) || has_root_head(node, "N") {
+    } else if contains_approximate_number(node)
+        || root_operator_id(node) == Some(crate::semantic_core::OperatorId::Approximate)
+    {
         Exactness::Approximate
     } else if no_symbols {
         Exactness::Exact
@@ -304,14 +311,14 @@ fn exactness(node: &std::rc::Rc<LispObject>, no_symbols: bool, kind: ValueKind) 
     }
 }
 
-fn has_root_head(node: &std::rc::Rc<LispObject>, expected: &str) -> bool {
+fn root_operator_id(node: &std::rc::Rc<LispObject>) -> Option<crate::semantic_core::OperatorId> {
     let ObjectKind::Sublist(first) = &node.kind else {
-        return false;
+        return None;
     };
     spine_refs(first)
         .next()
         .and_then(|head| head.atom_string())
-        .is_some_and(|head| head.as_ref() == expected)
+        .and_then(|head| crate::semantic_core::operator_descriptor(&head).map(|item| item.id))
 }
 
 fn contains_approximate_number(node: &std::rc::Rc<LispObject>) -> bool {

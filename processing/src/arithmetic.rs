@@ -25,74 +25,66 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                 && expression.children.iter().all(can_execute_elaborated_tree)
         }
         crate::elaboration::MathematicalForm::Application { head }
-            if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate") =>
+            if crate::semantic_core::is_object_native_operator(head) =>
         {
-            let operand_index = match (head.as_str(), expression.children.len()) {
-                ("Limit", 2) => 0,
-                ("Limit", 3) => 2,
-                ("Limit", 4) => 3,
-                ("D" | "Deriv", 2) => 1,
-                ("D" | "Deriv", 3) => 2,
-                ("Integrate", 2) => 1,
-                ("Integrate", 4) => 3,
-                _ => return false,
-            };
-            can_execute_elaborated_tree(&expression.children[operand_index])
-        }
-        crate::elaboration::MathematicalForm::Application { head }
-            if is_migrated_transform(head) =>
-        {
-            match head.as_str() {
-                "Apart" => {
+            use crate::semantic_core::ObjectNativeRoute;
+            match crate::semantic_core::object_native_route(head).unwrap() {
+                ObjectNativeRoute::Calculus => {
+                    let Some(operand_index) = crate::semantic_core::signature_requirements(
+                        head,
+                        expression.children.len(),
+                    )
+                    .and_then(|requirements| {
+                        requirements
+                            .iter()
+                            .position(|item| *item == crate::semantic_core::Requirement::Operand)
+                    }) else {
+                        return false;
+                    };
+                    can_execute_elaborated_tree(&expression.children[operand_index])
+                }
+                ObjectNativeRoute::AlgebraTransform => expression
+                    .children
+                    .first()
+                    .is_some_and(can_execute_elaborated_tree),
+                ObjectNativeRoute::MatrixSolve => {
+                    expression.children.len() == 2
+                        && expression.children.iter().all(can_execute_elaborated_tree)
+                }
+                ObjectNativeRoute::Substitute => {
+                    expression.children.len() == 3
+                        && can_execute_elaborated_tree(&expression.children[1])
+                        && can_execute_elaborated_tree(&expression.children[2])
+                }
+                ObjectNativeRoute::Approximate => {
+                    matches!(expression.children.len(), 1 | 2)
+                        && can_execute_elaborated_tree(&expression.children[0])
+                }
+                ObjectNativeRoute::Taylor => {
+                    let Some(operand_index) = crate::semantic_core::signature_requirements(
+                        head,
+                        expression.children.len(),
+                    )
+                    .and_then(|requirements| {
+                        requirements
+                            .iter()
+                            .position(|item| *item == crate::semantic_core::Requirement::Operand)
+                    }) else {
+                        return false;
+                    };
+                    can_execute_elaborated_tree(&expression.children[operand_index])
+                }
+                ObjectNativeRoute::EquationSolve => {
                     expression.children.len() == 2
                         && can_execute_elaborated_tree(&expression.children[0])
                 }
-                _ => {
+                ObjectNativeRoute::OdeSolve
+                | ObjectNativeRoute::MatrixUnary
+                | ObjectNativeRoute::FactorProjection => {
                     expression.children.len() == 1
                         && can_execute_elaborated_tree(&expression.children[0])
                 }
             }
-        }
-        crate::elaboration::MathematicalForm::Application { head }
-            if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix") =>
-        {
-            expression.children.len() == 2
-                && expression.children.iter().all(can_execute_elaborated_tree)
-        }
-        crate::elaboration::MathematicalForm::Application { head } if head == "Subst" => {
-            expression.children.len() == 3
-                && can_execute_elaborated_tree(&expression.children[1])
-                && can_execute_elaborated_tree(&expression.children[2])
-        }
-        crate::elaboration::MathematicalForm::Application { head }
-            if is_migrated_numeric_evaluation(head) =>
-        {
-            matches!(expression.children.len(), 1 | 2)
-                && can_execute_elaborated_tree(&expression.children[0])
-        }
-        crate::elaboration::MathematicalForm::Application { head } if head == "Taylor" => {
-            let operand_index = match expression.children.len() {
-                3 => 0,
-                4 => 3,
-                _ => return false,
-            };
-            can_execute_elaborated_tree(&expression.children[operand_index])
-        }
-        crate::elaboration::MathematicalForm::Application { head } if head == "Solve" => {
-            expression.children.len() == 2 && can_execute_elaborated_tree(&expression.children[0])
-        }
-        crate::elaboration::MathematicalForm::Application { head } if head == "OdeSolve" => {
-            expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
-        }
-        crate::elaboration::MathematicalForm::Application { head }
-            if is_migrated_matrix_unary(head) =>
-        {
-            expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
-        }
-        crate::elaboration::MathematicalForm::Application { head }
-            if is_migrated_factor_projection(head) =>
-        {
-            expression.children.len() == 1 && can_execute_elaborated_tree(&expression.children[0])
         }
         crate::elaboration::MathematicalForm::Application { head } => {
             !crate::semantic_core::is_known_operator(head)
@@ -108,97 +100,12 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
     }
 }
 
-pub fn is_migrated_transform(head: &str) -> bool {
-    matches!(head, "Simplify" | "Tidy" | "Expand" | "Factor" | "Apart")
-}
-
-pub fn is_migrated_numeric_evaluation(head: &str) -> bool {
-    matches!(head, "N" | "Approximate")
-}
-pub fn is_migrated_matrix_unary(head: &str) -> bool {
-    matches!(
-        head,
-        "Transpose"
-            | "Determinant"
-            | "Inverse"
-            | "Rank"
-            | "RREF"
-            | "RowReduce"
-            | "EigenValues"
-            | "NullSpace"
-            | "ColumnSpace"
-            | "EigenSpaces"
-            | "PLDU"
-            | "Cholesky"
-            | "GramSchmidt"
-            | "OrthogonalBasis"
-            | "OrthonormalBasis"
-    )
-}
-
-pub fn is_migrated_factor_projection(head: &str) -> bool {
-    head == "Factors"
-}
-
-pub fn has_migrated_factor_projection_descendant(
-    expression: &crate::elaboration::ElaboratedObject,
-) -> bool {
-    expression.children.iter().any(|child| {
-        matches!(&child.form, crate::elaboration::MathematicalForm::Application { head } if is_migrated_factor_projection(head))
-            || has_migrated_factor_projection_descendant(child)
-    })
-}
-
-pub fn has_migrated_taylor_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
-    expression.children.iter().any(|child| {
-        matches!(&child.form, crate::elaboration::MathematicalForm::Application { head } if head == "Taylor")
-            || has_migrated_taylor_descendant(child)
-    })
-}
-
-pub fn has_migrated_solve_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
-    expression.children.iter().any(|child| {
-        matches!(&child.form, crate::elaboration::MathematicalForm::Application { head } if head == "Solve")
-            || has_migrated_solve_descendant(child)
-    })
-}
-
-pub fn has_migrated_calculus_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
+pub fn has_object_native_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
     expression.children.iter().any(|child| {
         matches!(&child.form,
             crate::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate" | "OdeSolve"))
-            || has_migrated_calculus_descendant(child)
-    })
-}
-
-pub fn has_migrated_transform_descendant(
-    expression: &crate::elaboration::ElaboratedObject,
-) -> bool {
-    expression.children.iter().any(|child| {
-        matches!(&child.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if is_migrated_transform(head))
-            || has_migrated_transform_descendant(child)
-    })
-}
-
-pub fn has_migrated_substitution_descendant(
-    expression: &crate::elaboration::ElaboratedObject,
-) -> bool {
-    expression.children.iter().any(|child| {
-        matches!(&child.form,
-            crate::elaboration::MathematicalForm::Application { head } if head == "Subst")
-            || has_migrated_substitution_descendant(child)
-    })
-}
-
-pub fn has_migrated_numeric_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
-    expression.children.iter().any(|child| {
-        matches!(&child.form,
-            crate::elaboration::MathematicalForm::Application { head }
-                if is_migrated_numeric_evaluation(head))
-            || has_migrated_numeric_descendant(child)
+                if crate::semantic_core::is_object_native_operator(head))
+            || has_object_native_descendant(child)
     })
 }
 
@@ -237,35 +144,34 @@ pub fn execute_elaborated_structure(
         )? {
             return Ok(lowered);
         }
-        if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate") {
-            return execute_calculus_application(engine, expression, head);
-        }
-        if is_migrated_transform(head) {
-            return execute_transform_application(engine, expression, head);
-        }
-        if head == "Subst" {
-            return execute_substitution_application(engine, expression);
-        }
-        if is_migrated_numeric_evaluation(head) {
-            return execute_numeric_application(engine, expression, head);
-        }
-        if head == "Taylor" {
-            return execute_taylor_application(engine, expression);
-        }
-        if head == "Solve" {
-            return execute_solve_application(engine, expression);
-        }
-        if head == "OdeSolve" {
-            return execute_ode_solve_application(engine, expression);
-        }
-        if is_migrated_matrix_unary(head) {
-            return execute_matrix_unary_application(engine, expression, head);
-        }
-        if is_migrated_factor_projection(head) {
-            return execute_factor_projection_application(engine, expression);
-        }
-        if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix") {
-            return execute_matrix_solve_application(engine, expression);
+        use crate::semantic_core::ObjectNativeRoute;
+        if let Some(route) = crate::semantic_core::object_native_route(head) {
+            return match route {
+                ObjectNativeRoute::Calculus => {
+                    execute_calculus_application(engine, expression, head)
+                }
+                ObjectNativeRoute::AlgebraTransform => {
+                    execute_transform_application(engine, expression, head)
+                }
+                ObjectNativeRoute::Substitute => {
+                    execute_substitution_application(engine, expression)
+                }
+                ObjectNativeRoute::Approximate => {
+                    execute_numeric_application(engine, expression, head)
+                }
+                ObjectNativeRoute::Taylor => execute_taylor_application(engine, expression),
+                ObjectNativeRoute::EquationSolve => execute_solve_application(engine, expression),
+                ObjectNativeRoute::OdeSolve => execute_ode_solve_application(engine, expression),
+                ObjectNativeRoute::MatrixUnary => {
+                    execute_matrix_unary_application(engine, expression, head)
+                }
+                ObjectNativeRoute::FactorProjection => {
+                    execute_factor_projection_application(engine, expression)
+                }
+                ObjectNativeRoute::MatrixSolve => {
+                    execute_matrix_solve_application(engine, expression)
+                }
+            };
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);

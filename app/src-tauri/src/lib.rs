@@ -1,4 +1,3 @@
-use processing::algebra::TransformKind;
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::improper_integrals::ImproperIntegralRequest;
@@ -423,66 +422,18 @@ fn dispatch_expression_with_engine(
         elaborated.root.form,
         processing::elaboration::MathematicalForm::Structural { .. }
     ) || matches!(&elaborated.root.form,
-        processing::elaboration::MathematicalForm::Application { head } if head == "Subst")
-        || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head }
-                if processing::arithmetic::is_migrated_numeric_evaluation(head))
-        || matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head } if head == "Taylor")
-        || matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head } if head == "Solve")
-        || matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head }
-                if processing::arithmetic::is_migrated_matrix_unary(head))
-        || matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head }
-                if processing::arithmetic::is_migrated_factor_projection(head))
-        || matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "Limit" | "D" | "Deriv" | "Integrate"))
-        || matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"))
-        || processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
-        || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
-        || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
-        || processing::arithmetic::has_migrated_numeric_descendant(&elaborated.root)
-        || processing::arithmetic::has_migrated_taylor_descendant(&elaborated.root)
-        || processing::arithmetic::has_migrated_solve_descendant(&elaborated.root)
-        || processing::arithmetic::has_migrated_factor_projection_descendant(&elaborated.root)
+                if processing::semantic_core::is_object_native_operator(head))
+        || processing::arithmetic::has_object_native_descendant(&elaborated.root)
         || processing::arithmetic::has_effect_descendant(&elaborated.root)
         || call
             .as_ref()
             .is_some_and(processing::composition::is_candidate)
     {
-        let object_native_solve = matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head } if head == "Solve");
-        let object_native_matrix = matches!(&elaborated.root.form,
-            processing::elaboration::MathematicalForm::Application { head }
-                if processing::arithmetic::is_migrated_matrix_unary(head)
-                    || matches!(head.as_str(), "MatrixSolve" | "SolveMatrix"));
-        let calculus_composition =
-            processing::arithmetic::has_migrated_calculus_descendant(&elaborated.root)
-                || processing::arithmetic::has_migrated_transform_descendant(&elaborated.root)
-                || processing::arithmetic::has_migrated_substitution_descendant(&elaborated.root)
-                || processing::arithmetic::has_migrated_numeric_descendant(&elaborated.root)
-                || processing::arithmetic::has_migrated_taylor_descendant(&elaborated.root)
-                || processing::arithmetic::has_migrated_solve_descendant(&elaborated.root);
-        let object_native_calculus = match &elaborated.root.form {
-            processing::elaboration::MathematicalForm::Application { head }
-                if matches!(head.as_str(), "D" | "Deriv") && !calculus_composition =>
-            {
-                Some(("derivative", "导数"))
-            }
-            processing::elaboration::MathematicalForm::Application { head }
-                if head == "Limit" && !calculus_composition =>
-            {
-                Some(("limit", "极限"))
-            }
-            processing::elaboration::MathematicalForm::Application { head }
-                if head == "Integrate" && !calculus_composition =>
-            {
-                Some(("integral", "积分"))
+        let root_descriptor = match &elaborated.root.form {
+            processing::elaboration::MathematicalForm::Application { head } => {
+                processing::semantic_core::operator_descriptor(head)
+                    .filter(|_| processing::semantic_core::is_object_native_operator(head))
             }
             _ => None,
         };
@@ -497,25 +448,41 @@ fn dispatch_expression_with_engine(
             if !request.steps {
                 result.steps.clear();
             }
+            let has_native_child =
+                processing::arithmetic::has_object_native_descendant(&elaborated.root);
+            let (kind, title) = match (&elaborated.root.form, root_descriptor) {
+                (processing::elaboration::MathematicalForm::Relation { .. }, _) => {
+                    ("equation", "方程")
+                }
+                (_, Some(descriptor)) if !has_native_child => {
+                    use processing::semantic_core::OperatorId;
+                    match descriptor.id {
+                        OperatorId::Derivative
+                        | OperatorId::Limit
+                        | OperatorId::Integral
+                        | OperatorId::Solve
+                        | OperatorId::OdeSolve
+                        | OperatorId::MatrixTransform
+                        | OperatorId::MatrixSolve
+                        | OperatorId::MatrixAnalyze
+                        | OperatorId::MatrixDecompose
+                        | OperatorId::FactorProjection => {
+                            (descriptor.product_kind, descriptor.title)
+                        }
+                        OperatorId::Factor | OperatorId::AlgebraTransform
+                            if result.status
+                                == processing::composition::CompositionStatus::Completed =>
+                        {
+                            (descriptor.product_kind, descriptor.title)
+                        }
+                        _ => ("composition", "组合运算"),
+                    }
+                }
+                _ => ("composition", "组合运算"),
+            };
             return unified_result(
-                if let Some((kind, _)) = object_native_calculus {
-                    kind
-                } else if object_native_solve {
-                    "equation"
-                } else if object_native_matrix {
-                    "matrix"
-                } else {
-                    "composition"
-                },
-                if let Some((_, title)) = object_native_calculus {
-                    title
-                } else if object_native_solve {
-                    "方程"
-                } else if object_native_matrix {
-                    "线性代数"
-                } else {
-                    "组合运算"
-                },
+                kind,
+                title,
                 result.value.clone(),
                 result.tex.clone(),
                 result.steps.clone(),
@@ -690,74 +657,6 @@ fn dispatch_expression_with_engine(
                     &result,
                 );
             }
-            ("OdeSolve", [equation]) => {
-                if request.steps {
-                    let result = processing::ode::solve_steps_with_verbosity(
-                        &mut *engine,
-                        equation,
-                        "x",
-                        "y",
-                        &[],
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "ode",
-                        "常微分方程",
-                        result.result.solution.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::ode::solve(&mut *engine, equation, "x", "y", &[])
-                    .map_err(message)?;
-                return unified_result(
-                    "ode",
-                    "常微分方程",
-                    result.solution.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Solve", [equations, variables]) => {
-                let equations = list_or_single(equations, "方程列表")?;
-                let variables = list_or_single(variables, "变量列表")?;
-                let equation_refs: Vec<_> = equations.iter().map(String::as_str).collect();
-                let variable_refs: Vec<_> = variables.iter().map(String::as_str).collect();
-                let (solved, steps) = if request.steps
-                    && equations.len() == 1
-                    && variables.len() == 1
-                {
-                    let stepped = processing::equations::solve_steps_with_verbosity(
-                        &mut *engine,
-                        &equations[0],
-                        &variables[0],
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    (stepped.result, stepped.steps)
-                } else {
-                    (
-                        processing::equations::solve(&mut *engine, &equation_refs, &variable_refs)
-                            .map_err(message)?,
-                        vec![],
-                    )
-                };
-                return unified_result(
-                    "equation",
-                    if equations.len() == 1 {
-                        "方程"
-                    } else {
-                        "方程组"
-                    },
-                    String::new(),
-                    solved.tex.clone(),
-                    steps,
-                    &solved,
-                );
-            }
             ("OdeSolveNumeric", [equation, independent, dependent, start, value, end]) => {
                 let end = end
                     .parse::<f64>()
@@ -784,21 +683,6 @@ fn dispatch_expression_with_engine(
                     "常微分方程数值解",
                     String::new(),
                     String::new(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("N", [expression, precision]) => {
-                let precision = precision
-                    .parse::<u32>()
-                    .map_err(|_| invalid_input("近似精度必须是正整数"))?;
-                let result = processing::numeric::approximate(&mut *engine, expression, precision)
-                    .map_err(message)?;
-                return unified_result(
-                    "numeric",
-                    "数值近似",
-                    result.output.clone(),
-                    result.tex.clone(),
                     vec![],
                     &result,
                 );
@@ -845,57 +729,6 @@ fn dispatch_expression_with_engine(
                     "函数图像",
                     request.expression.clone(),
                     String::new(),
-                    vec![],
-                    &result,
-                );
-            }
-            (head @ ("Factor" | "Expand" | "Simplify" | "Tidy"), [expression]) => {
-                let kind = match head {
-                    "Factor" => TransformKind::Factor,
-                    "Expand" => TransformKind::Expand,
-                    "Simplify" => TransformKind::Simplify,
-                    _ => TransformKind::Tidy,
-                };
-                let result = processing::algebra::transform(&mut *engine, expression, kind, None)
-                    .map_err(message)?;
-                return unified_result(
-                    "algebra",
-                    "代数变换",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Apart", [expression, variable]) => {
-                let result = processing::algebra::transform(
-                    &mut *engine,
-                    expression,
-                    TransformKind::Apart,
-                    Some(variable),
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "algebra",
-                    "部分分式分解",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Taylor", [variable, point, degree, expression]) => {
-                let degree = degree
-                    .parse::<u32>()
-                    .map_err(|_| invalid_input("Taylor 次数必须是非负整数"))?;
-                let result =
-                    processing::numeric::taylor(&mut *engine, expression, variable, point, degree)
-                        .map_err(message)?;
-                return unified_result(
-                    "taylor",
-                    "Taylor 多项式",
-                    result.output.clone(),
-                    result.tex.clone(),
                     vec![],
                     &result,
                 );
@@ -962,42 +795,6 @@ fn dispatch_expression_with_engine(
                     "lagrange",
                     "约束极值",
                     result.expression.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            (head @ ("Determinant" | "Inverse" | "Transpose" | "EigenValues"), [matrix]) => {
-                let operation = match head {
-                    "Determinant" => MatrixOperation::Determinant,
-                    "Inverse" => MatrixOperation::Inverse,
-                    "Transpose" => MatrixOperation::Transpose,
-                    _ => MatrixOperation::Eigenvalues,
-                };
-                let result =
-                    processing::linear_algebra::compute(&mut *engine, matrix, operation, None)
-                        .map_err(message)?;
-                return unified_result(
-                    "matrix",
-                    "线性代数",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("MatrixSolve" | "SolveMatrix", [matrix, vector]) => {
-                let result = processing::linear_algebra::compute(
-                    &mut *engine,
-                    matrix,
-                    MatrixOperation::Solve,
-                    Some(vector),
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "matrix",
-                    "线性方程组",
-                    result.output.clone(),
                     result.tex.clone(),
                     vec![],
                     &result,
@@ -1376,17 +1173,12 @@ mod tests {
                 .unwrap();
         assert!(!oscillatory.expression.contains("Complex("));
         assert!(oscillatory.expression.contains("Cos"));
-        assert_eq!(
-            oscillatory.data["result"]["preferred_representation"],
-            "real_basis"
-        );
-        assert_eq!(
-            oscillatory.data["result"]["representations"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
+        assert_eq!(oscillatory.data["status"], "completed");
+        assert!(oscillatory.data["operators"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|operator| operator == "ode_solve"));
         assert!(!oscillatory
             .semantic
             .symbol_identities
