@@ -213,7 +213,7 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
                         children,
                         ValueKind::Expression,
                         SemanticInterpretation::List,
-                        CapabilitySet::equation_input(),
+                        CapabilitySet::collection(),
                     )
                 }
             } else if matches!(head.as_str(), "+" | "-" | "*" | "/" | "^") {

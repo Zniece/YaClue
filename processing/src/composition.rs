@@ -189,7 +189,7 @@ pub fn execute_elaborated(
     let analysis = computation.certificates.iter().find_map(|certificate| {
         matches!(
             certificate.kind.as_str(),
-            "extrema_analysis" | "lagrange_analysis"
+            "extrema_analysis" | "lagrange_analysis" | "multivariate_shape"
         )
         .then(|| serde_json::from_str(&certificate.payload).ok())
         .flatten()
@@ -875,5 +875,37 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.rule == "solve-equations"));
+    }
+
+    #[test]
+    fn multivariate_differentials_use_the_object_pipeline_and_compose() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("Gradient(x^2+y^2,{x,y})", "{2*x,2*y}"),
+            ("Jacobian({x+y,x*y},{x,y})", "{{1,1},{y,x}}"),
+            ("Hessian(x^2*y+y^3,{x,y})", "{{2*y,2*x},{2*x,6*y}}"),
+            ("Divergence({x^2,y^2},{x,y})", "2*x+2*y"),
+            ("Curl({y*z,x*z,x*y},{x,y,z})", "{0,0,0}"),
+            (
+                "DirectionalDerivative(x^2+y^2,{x,y},{3,4},True)",
+                "2*(3*x+4*y)/5",
+            ),
+            ("Sin(Divergence({x,y},{x,y}))", "Sin(2)"),
+        ] {
+            let result = execute_steps(&mut engine, source, StepVerbosity::Concise)
+                .unwrap_or_else(|error| panic!("{source}: {error}"))
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+            assert_eq!(
+                engine.eval(&result.value).unwrap().expr.to_string(),
+                engine.eval(expected).unwrap().expr.to_string(),
+                "{source}: {}",
+                result.value
+            );
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "multivariate-differential"));
+        }
     }
 }

@@ -96,6 +96,9 @@ pub fn execute_elaborated_structure(
                 ObjectNativeRoute::NumericRoot => execute_find_root_application(engine, expression),
                 ObjectNativeRoute::PlotEffect => unreachable!("Plot uses the effect form"),
                 ObjectNativeRoute::Extrema => execute_extrema_application(engine, expression, head),
+                ObjectNativeRoute::MultivariateDifferential => {
+                    execute_multivariate_application(engine, expression, head)
+                }
             };
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -532,6 +535,86 @@ fn execute_extrema_application(
         }
         _ => Err(EngineError::InvalidInput(format!("{head} 的参数签名无效"))),
     }
+}
+
+fn execute_multivariate_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    let collection = |index: usize, label: &str| -> Result<Vec<String>, EngineError> {
+        let node = expression
+            .children
+            .get(index)
+            .ok_or_else(|| EngineError::InvalidInput(format!("{head} 缺少{label}")))?;
+        if !matches!(node.form, crate::elaboration::MathematicalForm::Collection) {
+            return Err(EngineError::InvalidInput(format!(
+                "{head} 的{label}必须是列表"
+            )));
+        }
+        Ok(node
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect())
+    };
+    let operation = match head {
+        "Gradient" => crate::multivariate::MultivariateOperation::Gradient,
+        "Jacobian" => crate::multivariate::MultivariateOperation::Jacobian,
+        "Hessian" => crate::multivariate::MultivariateOperation::Hessian,
+        "Divergence" => crate::multivariate::MultivariateOperation::Divergence,
+        "Curl" => crate::multivariate::MultivariateOperation::Curl,
+        "DirectionalDerivative" => {
+            crate::multivariate::MultivariateOperation::DirectionalDerivative
+        }
+        _ => return Err(EngineError::InvalidInput("未知多元微分运算".into())),
+    };
+    let variables = collection(1, "变量列表")?;
+    let directional =
+        operation == crate::multivariate::MultivariateOperation::DirectionalDerivative;
+    let direction = if directional {
+        collection(2, "方向向量")?
+    } else {
+        Vec::new()
+    };
+    let normalize_direction = if directional {
+        expression.children.get(3).is_some_and(|node| {
+            matches!(
+                node.object.print_source().as_str(),
+                "True" | "true" | "Normalized"
+            )
+        })
+    } else {
+        false
+    };
+    let point_index = if directional { 4 } else { 2 };
+    let point = if expression.children.get(point_index).is_some() {
+        collection(point_index, "求值点")?
+    } else {
+        Vec::new()
+    };
+    let mut operand = execute_elaborated_structure(engine, &expression.children[0])?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, head, 0);
+    }
+    let input = operand
+        .value()
+        .expect("checked multivariate operand")
+        .clone();
+    let mut current = crate::multivariate::MultivariateDifferentialOperation.compute(
+        engine,
+        &input,
+        &crate::multivariate::MultivariateObjectRequest {
+            operation,
+            variables,
+            direction,
+            point,
+            order: 1,
+            normalize_direction,
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
 }
 
 fn execute_numeric_application(

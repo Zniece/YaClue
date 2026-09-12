@@ -7,6 +7,16 @@ use crate::input::{
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
+use yacas_rs::value::{spine_refs, ObjectKind};
+
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
+};
 
 pub const MAX_MULTIVARIATE_DIMENSION: usize = 16;
 pub const MAX_PARTIAL_ORDER: u32 = 64;
@@ -24,7 +34,7 @@ pub enum MultivariateOperation {
 }
 
 #[derive(Debug, Clone)]
-pub struct MultivariateRequest {
+struct MultivariateRequest {
     pub operation: MultivariateOperation,
     pub expressions: Vec<String>,
     pub variables: Vec<String>,
@@ -35,8 +45,144 @@ pub struct MultivariateRequest {
     pub normalize_direction: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct MultivariateObjectRequest {
+    pub operation: MultivariateOperation,
+    pub variables: Vec<String>,
+    pub direction: Vec<String>,
+    pub point: Vec<String>,
+    pub order: u32,
+    pub normalize_direction: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MultivariateDifferentialOperation;
+
+impl SemanticOperation<MultivariateObjectRequest> for MultivariateDifferentialOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &MultivariateObjectRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::AnalyzeMultivariate)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备多元微分能力".into(),
+            ));
+        }
+        let legacy = MultivariateRequest {
+            operation: request.operation,
+            expressions: object_components(input),
+            variables: request.variables.clone(),
+            direction: request.direction.clone(),
+            point: request.point.clone(),
+            order: request.order,
+            normalize_direction: request.normalize_direction,
+        };
+        let result = compute(engine, &legacy)?;
+        let source = result.output.clone();
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let metadata = if result.unresolved {
+            ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+        } else {
+            ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
+        };
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(SemanticState {
+                kind: if result.unresolved {
+                    ValueKind::Unevaluated
+                } else {
+                    crate::semantic::analyze_input(&source, "多元微分结果")?
+                        .semantic
+                        .kind
+                },
+                interpretation: if result.unresolved {
+                    SemanticInterpretation::HeldApplication {
+                        operator: format!("{:?}", request.operation),
+                    }
+                } else {
+                    SemanticInterpretation::PlainExpression
+                },
+                metadata,
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            }),
+            overlay: None,
+            normalization: (!result.unresolved).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MultivariateDifferential),
+            }),
+        });
+        let event = RuleEvent {
+            rule: "multivariate-differential".into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: request
+                .variables
+                .iter()
+                .cloned()
+                .map(|variable| ("variable".into(), variable))
+                .collect(),
+            conditions: Vec::new(),
+            payload: RulePayload::Structural,
+            importance: RuleImportance::Key,
+            presentation: Some(RulePresentation {
+                expression: source,
+                explanation: format!("执行 {:?} 多元微分运算。", request.operation),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: if result.unresolved {
+                ComputationOutput::Held(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: vec![Certificate {
+                kind: "multivariate_shape".into(),
+                payload: serde_json::to_string(&result.shape)
+                    .map_err(|error| EngineError::Parse(error.to_string()))?,
+            }],
+            effects: Vec::new(),
+        })
+    }
+}
+
+fn object_components(input: &crate::semantic_core::MathematicalObject) -> Vec<String> {
+    let expression = input.raw_expression();
+    let ObjectKind::Sublist(first) = &expression.kind else {
+        return vec![input.print_source()];
+    };
+    let nodes = spine_refs(first).collect::<Vec<_>>();
+    if nodes
+        .first()
+        .and_then(|node| node.atom_string())
+        .is_none_or(|head| head.as_ref() != "List")
+    {
+        return vec![input.print_source()];
+    }
+    crate::input::with_parse_env(|env| {
+        nodes
+            .iter()
+            .skip(1)
+            .map(|node| yacas_rs::printer::infix_print(env, node))
+            .collect()
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
-pub struct MultivariateResult {
+struct MultivariateResult {
     pub operation: MultivariateOperation,
     pub output: String,
     pub tex: String,
@@ -47,7 +193,7 @@ pub struct MultivariateResult {
     pub unresolved: bool,
 }
 
-pub fn compute(
+fn compute(
     engine: &mut dyn Engine,
     request: &MultivariateRequest,
 ) -> Result<MultivariateResult, EngineError> {

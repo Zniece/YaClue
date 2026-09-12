@@ -304,6 +304,7 @@ pub enum OperatorId {
     Plot,
     Extrema,
     Lagrange,
+    MultivariateDifferential,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -328,6 +329,7 @@ pub enum CapabilityId {
     FindNumericRoot,
     RenderPlot,
     AnalyzeExtrema,
+    AnalyzeMultivariate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +351,7 @@ pub enum ObjectNativeRoute {
     NumericRoot,
     PlotEffect,
     Extrema,
+    MultivariateDifferential,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -697,6 +700,36 @@ const SIG_LAGRANGE: &[OperatorSlotSignature] = &[OperatorSlotSignature {
     arity: 4,
     requirements: &[Operand, Operand, Variable, Variable],
 }];
+const SIG_MULTIVARIATE: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 2,
+        requirements: &[Operand, Operand],
+    },
+    OperatorSlotSignature {
+        arity: 3,
+        requirements: &[Operand, Operand, Operand],
+    },
+];
+const SIG_DIRECTIONAL_DERIVATIVE: &[OperatorSlotSignature] = &[
+    OperatorSlotSignature {
+        arity: 3,
+        requirements: &[Operand, Operand, Direction],
+    },
+    OperatorSlotSignature {
+        arity: 4,
+        requirements: &[Operand, Operand, Direction, Requirement::Assumption],
+    },
+    OperatorSlotSignature {
+        arity: 5,
+        requirements: &[
+            Operand,
+            Operand,
+            Direction,
+            Requirement::Assumption,
+            Operand,
+        ],
+    },
+];
 
 pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
     OperatorDescriptor {
@@ -1050,6 +1083,32 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Extrema,
         product_kind: "lagrange",
         title: "约束极值",
+    },
+    OperatorDescriptor {
+        id: OperatorId::MultivariateDifferential,
+        names: &["Gradient", "Jacobian", "Hessian", "Divergence", "Curl"],
+        arities: &[2, 3],
+        slot_signatures: SIG_MULTIVARIATE,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::AnalyzeMultivariate,
+        route: ObjectNativeRoute::MultivariateDifferential,
+        product_kind: "multivariate",
+        title: "多元微分",
+    },
+    OperatorDescriptor {
+        id: OperatorId::MultivariateDifferential,
+        names: &["DirectionalDerivative"],
+        arities: &[3, 4, 5],
+        slot_signatures: SIG_DIRECTIONAL_DERIVATIVE,
+        forms: CALL,
+        value_argument: ValueArgument::First,
+        binders: NO_BINDERS,
+        capability: CapabilityId::AnalyzeMultivariate,
+        route: ObjectNativeRoute::MultivariateDifferential,
+        product_kind: "multivariate",
+        title: "方向导数",
     },
 ];
 
@@ -1513,6 +1572,7 @@ pub enum ObjectCapability {
     SolveNumericOde,
     FindNumericRoot,
     AnalyzeExtrema,
+    AnalyzeMultivariate,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1556,6 +1616,7 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::SolveNumericOde as u8)
                 | (1 << ObjectCapability::FindNumericRoot as u8)
                 | (1 << ObjectCapability::AnalyzeExtrema as u8)
+                | (1 << ObjectCapability::AnalyzeMultivariate as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
@@ -1566,6 +1627,14 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::SolveNumericOde as u8),
         )
     }
+    pub const fn collection() -> Self {
+        Self(
+            (1 << ObjectCapability::SolveEquation as u8)
+                | (1 << ObjectCapability::SolveOde as u8)
+                | (1 << ObjectCapability::SolveNumericOde as u8)
+                | (1 << ObjectCapability::AnalyzeMultivariate as u8),
+        )
+    }
     pub const fn matrix() -> Self {
         Self(
             (1 << ObjectCapability::MatrixAdd as u8)
@@ -1574,7 +1643,8 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::MatrixDeterminant as u8)
                 | (1 << ObjectCapability::MatrixInverse as u8)
                 | (1 << ObjectCapability::MatrixSolve as u8)
-                | (1 << ObjectCapability::MatrixAnalyze as u8),
+                | (1 << ObjectCapability::MatrixAnalyze as u8)
+                | (1 << ObjectCapability::AnalyzeMultivariate as u8),
         )
     }
     pub const fn factorization() -> Self {

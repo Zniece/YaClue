@@ -636,6 +636,36 @@ mod tests {
     }
 
     #[test]
+    fn unified_input_exposes_composable_multivariate_differentials() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let gradient = process_expression_with_engine(
+            request("Gradient(x^2+y^2,{x,y},{1,-2})", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(gradient.kind, "multivariate");
+        assert_eq!(gradient.expression.replace(' ', ""), "{2,-4}");
+        assert_eq!(gradient.data["analysis"], serde_json::json!([2]));
+        assert!(gradient
+            .steps
+            .iter()
+            .any(|step| step.rule == "multivariate-differential"));
+        assert_eq!(
+            gradient.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+
+        let composed = process_expression_with_engine(
+            request("Sin(Divergence({x,y},{x,y}))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.kind, "composition");
+        assert_eq!(composed.expression, "Sin(2)");
+        assert_eq!(composed.semantic.kind, ValueKind::Scalar);
+    }
+
+    #[test]
     fn unified_input_accepts_two_argument_limit_with_default_x() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for steps in [true, false] {
