@@ -134,6 +134,7 @@ impl SemanticOperation<MultivariateObjectRequest> for MultivariateDifferentialOp
             conditions: Vec::new(),
             payload: RulePayload::Structural,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: source,
                 explanation: format!("执行 {:?} 多元微分运算。", request.operation),

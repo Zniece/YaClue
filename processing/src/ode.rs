@@ -225,6 +225,7 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: solved.then(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "求得并验证常微分方程解集。".into(),

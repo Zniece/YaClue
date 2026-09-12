@@ -161,6 +161,7 @@ impl SemanticOperation<SurfaceIntegralObjectRequest> for SurfaceIntegralOperatio
                     StepImportance::Normal => RuleImportance::Normal,
                     StepImportance::Key => RuleImportance::Key,
                 },
+                transformation: None,
                 presentation: Some(RulePresentation {
                     expression: step.expr,
                     explanation: step.why,

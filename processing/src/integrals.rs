@@ -210,6 +210,7 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
                         crate::steps::StepImportance::Normal => RuleImportance::Normal,
                         crate::steps::StepImportance::Key => RuleImportance::Key,
                     },
+                    transformation: None,
                     presentation: Some(RulePresentation {
                         expression: if held_family {
                             output.print_source()
@@ -358,6 +359,7 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
                 crate::steps::StepImportance::Normal => RuleImportance::Normal,
                 crate::steps::StepImportance::Key => RuleImportance::Key,
             },
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: step.expr,
                 explanation: step.why,

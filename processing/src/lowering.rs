@@ -170,6 +170,7 @@ fn lower_euler_gamma(
         conditions: conditions.conditions().to_vec(),
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
+        transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
             explanation: "识别 Euler 型积分核，在成立条件下使用原生 Gamma 对象。".into(),

@@ -160,6 +160,7 @@ impl SemanticOperation<NumericOdeRequest> for NumericOdeOperation {
             conditions: Vec::new(),
             payload: RulePayload::Structural,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: if completed {

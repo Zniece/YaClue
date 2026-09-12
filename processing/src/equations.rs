@@ -198,6 +198,7 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: (!unresolved).then(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: match result.status {

@@ -421,6 +421,7 @@ fn limit_rule_events(
                 conditions: conditions.clone(),
                 payload: event.payload,
                 importance: event.importance,
+                transformation: None,
                 presentation: Some(RulePresentation {
                     expression: event.expression,
                     explanation: event.explanation,

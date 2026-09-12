@@ -2299,9 +2299,63 @@ pub struct RuleEvent {
     pub conditions: Vec<Condition>,
     pub payload: RulePayload,
     pub importance: RuleImportance,
+    /// Whole-expression replay data for product-visible transformations.
+    /// Internal events deliberately leave this empty.
+    pub transformation: Option<TransformationContext>,
     /// Optional product hint.  It never determines mathematical state; it is
     /// only consumed when projecting a trace into a teaching step.
     pub presentation: Option<RulePresentation>,
+}
+
+impl RuleEvent {
+    /// Returns explicit whole-expression context when an enclosing composer
+    /// supplied it, otherwise a replayable root context for a unary/local
+    /// rewrite. Multi-input rules must provide explicit context before they
+    /// can be projected as an equivalence step.
+    pub fn transformation_context(&self) -> Option<TransformationContext> {
+        if let Some(context) = &self.transformation {
+            return context.is_replayable(self).then(|| context.clone());
+        }
+        if self.presentation.is_none() || !self.additional_inputs.is_empty() {
+            return None;
+        }
+        let focus = self
+            .input
+            .focus
+            .clone()
+            .unwrap_or_else(ExpressionPath::root);
+        Some(TransformationContext {
+            root_before: ObjectReference {
+                focus: None,
+                ..self.input.clone()
+            },
+            root_after: ObjectReference {
+                focus: None,
+                ..self.output.clone()
+            },
+            focus,
+        })
+    }
+}
+
+/// Versioned AST references needed to replay one local rewrite in the context
+/// of the complete mathematical expression. The focus is interpreted against
+/// `root_before`; `root_after` is the authoritative rewritten root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransformationContext {
+    pub root_before: ObjectReference,
+    pub root_after: ObjectReference,
+    pub focus: ExpressionPath,
+}
+
+impl TransformationContext {
+    pub fn is_replayable(&self, event: &RuleEvent) -> bool {
+        self.root_before.focus.is_none()
+            && self.root_after.focus.is_none()
+            && (!self.focus.segments().is_empty()
+                || (self.root_before.revision == event.input.revision
+                    && self.root_after.revision == event.output.revision))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2946,6 +3000,7 @@ mod tests {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Normal,
+            transformation: None,
             presentation: None,
         };
         let continuous = vec![
@@ -2958,5 +3013,37 @@ mod tests {
         ];
         assert!(transformation_chain_is_continuous(&continuous));
         assert!(!transformation_chain_is_continuous(&discontinuous));
+    }
+
+    #[test]
+    fn visible_unary_event_has_replayable_ast_context() {
+        let event = RuleEvent {
+            rule: "simplify-power".into(),
+            input: ObjectReference {
+                object: ObjectId(9),
+                revision: ObjectRevision(2),
+                focus: Some(ExpressionPath::root().argument(1)),
+            },
+            additional_inputs: Vec::new(),
+            output: ObjectReference {
+                object: ObjectId(9),
+                revision: ObjectRevision(3),
+                focus: None,
+            },
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Normal,
+            transformation: None,
+            presentation: Some(RulePresentation {
+                expression: "4".into(),
+                explanation: "计算幂".into(),
+                tex_override: None,
+            }),
+        };
+        let context = event.transformation_context().unwrap();
+        assert_eq!(context.root_before.focus, None);
+        assert_eq!(context.root_after.focus, None);
+        assert_eq!(context.focus.segments(), &[1]);
     }
 }

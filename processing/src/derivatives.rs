@@ -337,6 +337,7 @@ pub fn derivative_computation_for_object(
             } else {
                 fact.importance
             },
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: fact.expression,
                 explanation: fact.explanation,
@@ -696,6 +697,7 @@ fn held_derivative_of_registered_function(
         conditions: operand.semantics.metadata.conditions.conditions().to_vec(),
         payload: RulePayload::Structural,
         importance: RuleImportance::Key,
+        transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
             explanation: "该已知特殊函数暂无可靠闭式导数规则，保留类型化形式导数。".into(),
@@ -845,6 +847,7 @@ fn derivative_of_registered_function(
         conditions: conditions.conditions().to_vec(),
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
+        transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
             explanation: "应用已登记的函数偏导规则，并由通用链式法则组合参数导数。".into(),
@@ -1018,6 +1021,7 @@ fn integral_derivative_computation(
         conditions: conditions.conditions().to_vec(),
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
+        transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
             explanation: explanation.into(),

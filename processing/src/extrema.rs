@@ -332,6 +332,7 @@ fn structured_extrema_output(
                 StepImportance::Normal => RuleImportance::Normal,
                 StepImportance::Routine => RuleImportance::Routine,
             },
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: event.expr,
                 explanation: event.why,

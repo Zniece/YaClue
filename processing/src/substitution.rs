@@ -105,6 +105,7 @@ impl BinarySemanticOperation<SubstitutionRequest> for SubstitutionOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: (!unresolved).then(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "仅替换自由出现的变量，并避免捕获绑定变量。".into(),

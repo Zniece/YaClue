@@ -196,6 +196,7 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: (!held).then(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "执行类型检查后的矩阵运算。".into(),
@@ -336,6 +337,7 @@ impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: "按矩阵形状规则组合两个矩阵对象。".into(),
@@ -419,6 +421,7 @@ impl BinarySemanticOperation<crate::semantic_core::ObjectId> for MatrixSolveOper
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: "求解形状兼容的线性方程组。".into(),
@@ -609,6 +612,7 @@ impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: "从类型化矩阵对象计算结构不变量。".into(),
@@ -805,6 +809,7 @@ impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: "构造经过验证、可组合的类型化线性代数对象。".into(),
@@ -891,6 +896,7 @@ impl SemanticOperation<()> for FactorProjectionOperation {
             conditions: Vec::new(),
             payload: RulePayload::Structural,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: "从类型化矩阵分解对象投影出有序因子列表。".into(),

@@ -184,6 +184,7 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: if result.unresolved {

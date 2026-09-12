@@ -1224,6 +1224,7 @@ fn execute_container(
         conditions: conditions.conditions().to_vec(),
         payload: RulePayload::Structural,
         importance: RuleImportance::Normal,
+        transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
             explanation: "用已类型化的成员重建数学容器。".into(),
@@ -1393,6 +1394,7 @@ fn execute_function_application(
         conditions: conditions.conditions().to_vec(),
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
+        transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
             explanation: "将已类型化的参数应用到数学函数。".into(),
@@ -1692,6 +1694,7 @@ fn retain_pending_application(
         conditions: Vec::new(),
         payload: RulePayload::Structural,
         importance: RuleImportance::Key,
+        transformation: None,
         presentation: None,
     };
     let mut current = Computation {
@@ -1852,6 +1855,7 @@ impl BinarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor 
             conditions: conditions.conditions().to_vec(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: "组合两个已类型化的数学对象。".into(),
@@ -1957,6 +1961,7 @@ impl UnarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor {
             conditions: conditions.conditions().to_vec(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: "对已类型化的数学对象取负。".into(),
@@ -2129,6 +2134,7 @@ fn no_value_structure(
         conditions: conditions.conditions().to_vec(),
         payload: RulePayload::Inference,
         importance: RuleImportance::Key,
+        transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
             explanation: "操作数没有数学值，因此结构运算也没有值。".into(),

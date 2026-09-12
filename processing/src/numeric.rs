@@ -151,6 +151,7 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: (!unresolved).then(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: if no_value {
@@ -301,6 +302,7 @@ impl SemanticOperation<FindRootRequest> for FindRootOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: converged.then(|| RulePresentation {
                 expression: result.output,
                 explanation: "从给定初值求得数值根。".into(),
@@ -440,6 +442,7 @@ impl SemanticOperation<TaylorRequest> for TaylorOperation {
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
+            transformation: None,
             presentation: (!result.unresolved).then(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "在指定点展开 Taylor 多项式。".into(),
