@@ -1,6 +1,8 @@
 //! Type-directed lowering from a complete semantic application to an
 //! equivalent, usually more native, mathematical representation.
 
+use std::rc::Rc;
+
 use crate::engine::{Engine, EngineError};
 use crate::semantic_core::{
     object_from_source, CapabilitySet, Certificate, Computation, ComputationOutput,
@@ -13,6 +15,7 @@ use crate::{
     protocol::ResultMetadata,
     semantic::{Exactness, ValueKind},
 };
+use yacas_rs::value::LispObject;
 
 pub type LoweringExecutor =
     fn(&mut dyn Engine, &MathematicalObject, TraceMode) -> Result<Option<Computation>, EngineError>;
@@ -43,6 +46,20 @@ pub fn try_lower_application(
     trace_mode: TraceMode,
 ) -> Result<Option<Computation>, EngineError> {
     dispatch_registered(engine, input, trace_mode, LOWERING_RULES)
+}
+
+/// Lower an operation-local equivalent AST without inserting it into the
+/// source object's stable representation set.
+pub fn try_lower_temporary_representation(
+    engine: &mut dyn Engine,
+    source: &MathematicalObject,
+    expression: Rc<LispObject>,
+    semantics: SemanticState,
+    trace_mode: TraceMode,
+) -> Result<Option<Computation>, EngineError> {
+    let session = source.temporary_operation_session(expression);
+    let temporary = session.materialize(semantics);
+    try_lower_application(engine, &temporary, trace_mode)
 }
 
 fn lower_euler_gamma(
@@ -357,6 +374,39 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(rules.contains(&"intrinsic-gamma-lowering"));
         assert!(rules.contains(&"derivative-registered-function-chain-rule"));
+    }
+
+    #[test]
+    fn temporary_euler_expansion_refolds_without_polluting_compact_gamma() {
+        let compact = crate::elaboration::elaborate("Gamma(x)").unwrap().object;
+        let euler = crate::elaboration::elaborate("Integrate(t,0,Infinity)(t^(x-1)*Exp(-t))")
+            .unwrap()
+            .object;
+        let session = compact.temporary_operation_session(euler.raw_expression());
+
+        assert_eq!(session.identity, compact.identity());
+        assert_eq!(session.revision, compact.revision);
+        assert_eq!(compact.print_source(), "Gamma(x)");
+        assert_eq!(compact.stable_representation_count(), 1);
+        crate::input::with_parse_env(|env| {
+            assert!(session.view(env).print_source().starts_with("Integrate("));
+        });
+
+        let mut engine = crate::engine::RustEngine::spawn().unwrap();
+        let refolded = try_lower_temporary_representation(
+            &mut engine,
+            &compact,
+            euler.raw_expression(),
+            euler.semantics.clone(),
+            TraceMode::Detailed,
+        )
+        .unwrap()
+        .unwrap();
+        let output = refolded.value().unwrap();
+        assert_eq!(output.identity(), compact.identity());
+        assert_eq!(output.print_source().replace(' ', ""), "Gamma(x)");
+        assert_eq!(compact.print_source(), "Gamma(x)");
+        assert_eq!(compact.stable_representation_count(), 1);
     }
 
     #[test]

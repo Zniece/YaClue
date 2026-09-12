@@ -6,6 +6,8 @@
 //! honest non-success state, classified bad input, and structured evidence.
 
 use processing::algebra::{transform, TransformKind};
+use processing::arithmetic::execute_elaborated_structure;
+use processing::elaboration::elaborate;
 use processing::engine::{EngineError, RustEngine};
 use processing::equations::{solve as solve_equations, SolveCompleteness, SolveStatus};
 use processing::equivalence::{verify, Equivalence, ProofBudget, VerificationMethod};
@@ -159,6 +161,20 @@ fn bounded_equivalence_release_contract() {
         different.method,
         Some(VerificationMethod::NumericCounterexample) | Some(VerificationMethod::ResidualProof)
     ));
+}
+
+#[test]
+fn compact_representation_release_contract() {
+    let mut engine = RustEngine::spawn().unwrap();
+    let expression = elaborate("Expand(D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t))))").unwrap();
+    let computation = execute_elaborated_structure(&mut engine, &expression).unwrap();
+    let output = computation.value().unwrap();
+    let source = output.print_source().replace(' ', "");
+
+    assert!(source.contains("Gamma(x)"));
+    assert!(source.contains("PolyGamma(0,x)"));
+    assert!(!source.contains("Integrate("));
+    assert!(output.stable_representation_count() <= 4);
 }
 
 #[test]

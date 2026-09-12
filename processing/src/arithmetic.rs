@@ -2089,6 +2089,24 @@ mod tests {
     }
 
     #[test]
+    fn special_functions_stay_compact_across_algebra_and_calculus_composition() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for source in [
+            "Expand(Gamma(x))",
+            "Simplify(D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t))))",
+            "Expand(D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t))))",
+        ] {
+            let elaborated = crate::elaboration::elaborate(source).unwrap();
+            let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+            let output = result.value().unwrap();
+            let compact = output.print_source().replace(' ', "");
+            assert!(compact.contains("Gamma(x)"), "{source}: {compact}");
+            assert!(!compact.contains("Integrate("), "{source}: {compact}");
+            assert!(output.stable_representation_count() <= 4);
+        }
+    }
+
+    #[test]
     fn unresolved_transform_retains_its_outer_application() {
         let mut engine = RustEngine::spawn().unwrap();
         let elaborated = crate::elaboration::elaborate("Factor(Integrate(x)f(x))").unwrap();

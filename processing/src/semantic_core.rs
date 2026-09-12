@@ -76,6 +76,15 @@ impl OperationSessionAst {
     pub fn view<'a>(&'a self, env: &'a Environment) -> ExpressionView<'a> {
         ExpressionView::new(env, &self.expression)
     }
+
+    /// Materialize an operation-local object without reparsing or adding the
+    /// temporary AST to the source object's stable representations.
+    pub(crate) fn materialize(&self, semantics: SemanticState) -> MathematicalObject {
+        let mut object =
+            MathematicalObject::new(self.identity.0, self.expression.clone(), semantics);
+        object.revision = self.revision;
+        object
+    }
 }
 
 #[allow(dead_code)] // Consumed by the B2 algebra-transform adapters.
@@ -1344,6 +1353,19 @@ impl MathematicalObject {
             revision: self.revision,
             expression,
         })
+    }
+
+    /// Start an ephemeral operation session from an explicitly derived AST.
+    /// The AST is never retained as a stable representation by this method.
+    pub(crate) fn temporary_operation_session(
+        &self,
+        expression: Rc<LispObject>,
+    ) -> OperationSessionAst {
+        OperationSessionAst {
+            identity: self.identity(),
+            revision: self.revision,
+            expression,
+        }
     }
 
     pub fn operation_cache_key(
