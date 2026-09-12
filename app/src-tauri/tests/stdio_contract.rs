@@ -53,11 +53,12 @@ fn json_lines_is_persistent_structured_and_recovers_after_bad_input() {
     assert_eq!(rows[2]["expression"], "2*x");
     assert_eq!(rows[3]["error"]["code"], "invalid_input");
     assert_eq!(rows[4]["outcome"]["resolution"], "unresolved");
-    assert_eq!(rows[4]["data"]["status"], "unresolved");
+    assert_eq!(rows[4]["status"], "unresolved");
     assert_eq!(rows[4]["semantic"]["kind"], "unevaluated");
     assert_eq!(rows[5]["outcome"]["resolution"], "no_result");
-    assert_eq!(rows[6]["data"]["effect_only"], true);
-    assert_eq!(rows[7]["data"]["analysis"], json!([2]));
-    assert_eq!(rows[8]["data"]["analysis"]["integrand_verified"], true);
-    assert_eq!(rows[9]["data"]["analysis"]["integrand_verified"], true);
+    assert_eq!(rows[6]["effect_only"], true);
+    assert_eq!(rows[7]["analysis"], json!([2]));
+    assert_eq!(rows[8]["analysis"]["integrand_verified"], true);
+    assert_eq!(rows[9]["analysis"]["integrand_verified"], true);
+    assert!(rows.iter().all(|row| row.get("data").is_none()));
 }

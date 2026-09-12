@@ -93,7 +93,15 @@ pub struct ProcessExpressionResult {
     expression: String,
     tex: String,
     steps: Vec<Step>,
-    data: Value,
+    conclusions: Vec<processing::steps::MathematicalConclusion>,
+    status: Option<processing::composition::CompositionStatus>,
+    operators: Vec<processing::semantic_core::OperatorId>,
+    held: Option<processing::composition::HeldApplication>,
+    sampled_data: Option<processing::semantic_core::SampledTrajectory>,
+    plot: Option<processing::plot::PlotEffect>,
+    effect_only: bool,
+    analysis: Option<Value>,
+    details: Option<Value>,
     semantic: SemanticSummary,
     outcome: ResultMetadata,
 }
@@ -104,7 +112,14 @@ struct DispatchExpressionResult {
     expression: String,
     tex: String,
     steps: Vec<Step>,
-    data: Value,
+    conclusions: Vec<processing::steps::MathematicalConclusion>,
+    status: processing::composition::CompositionStatus,
+    operators: Vec<processing::semantic_core::OperatorId>,
+    held: Option<processing::composition::HeldApplication>,
+    sampled_data: Option<processing::semantic_core::SampledTrajectory>,
+    plot: Option<processing::plot::PlotEffect>,
+    effect_only: bool,
+    analysis: Option<Value>,
     semantic: SemanticSummary,
     outcome: ResultMetadata,
 }
@@ -114,15 +129,20 @@ fn unified_result(
     title: &str,
     result: processing::composition::CompositionResult,
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
-    let data = serde_json::to_value(&result)
-        .map_err(|error| invalid_input(format!("结果序列化失败: {error}")))?;
     Ok(DispatchExpressionResult {
         kind: kind.into(),
         title: title.into(),
         expression: result.value,
         tex: result.tex,
         steps: result.steps,
-        data,
+        conclusions: result.conclusions,
+        status: result.status,
+        operators: result.operators,
+        held: result.held,
+        sampled_data: result.sampled_data,
+        plot: result.plot,
+        effect_only: result.effect_only,
+        analysis: result.analysis,
         semantic: result.semantic,
         outcome: result.outcome,
     })
@@ -257,10 +277,18 @@ pub fn process_expression_with_engine(
             expression: request.expression,
             tex,
             steps: Vec::new(),
-            data: serde_json::json!({
+            conclusions: Vec::new(),
+            status: None,
+            operators: Vec::new(),
+            held: None,
+            sampled_data: None,
+            plot: None,
+            effect_only: false,
+            analysis: None,
+            details: Some(serde_json::json!({
                 "status": "partial_application",
                 "partial": partial,
-            }),
+            })),
             semantic,
             outcome,
         });
@@ -287,11 +315,19 @@ pub fn process_expression_with_engine(
             expression: request.expression,
             tex: format!("\\operatorname{{{}}}", partials.spelling),
             steps: Vec::new(),
-            data: serde_json::json!({
+            conclusions: Vec::new(),
+            status: None,
+            operators: Vec::new(),
+            held: None,
+            sampled_data: None,
+            plot: None,
+            effect_only: false,
+            analysis: None,
+            details: Some(serde_json::json!({
                 "status": "ambiguous_partial_application",
                 "candidates": partials.candidates,
                 "display_templates": templates,
-            }),
+            })),
             semantic,
             outcome: ResultMetadata::unresolved(
                 analyzed.semantic.exactness,
@@ -306,7 +342,15 @@ pub fn process_expression_with_engine(
         expression: result.expression,
         tex: result.tex,
         steps: result.steps,
-        data: result.data,
+        conclusions: result.conclusions,
+        status: Some(result.status),
+        operators: result.operators,
+        held: result.held,
+        sampled_data: result.sampled_data,
+        plot: result.plot,
+        effect_only: result.effect_only,
+        analysis: result.analysis,
+        details: None,
         semantic: result.semantic,
         outcome: result.outcome,
     })
@@ -435,10 +479,12 @@ mod tests {
             assert!(!result.expression.is_empty(), "{name}");
             assert!(!result.tex.is_empty(), "{name}");
             assert!(result.steps.is_empty(), "{name}");
-            assert!(result.data.get("status").is_some(), "{name}");
-            assert!(result.data.get("outcome").is_some(), "{name}");
-            assert!(result.data.get("semantic").is_some(), "{name}");
-            assert!(result.data.get("conditions").is_some(), "{name}");
+            assert!(result.status.is_some(), "{name}");
+            assert_eq!(
+                result.outcome.support,
+                processing::protocol::SupportState::Supported,
+                "{name}"
+            );
         }
     }
 
@@ -518,12 +564,13 @@ mod tests {
                 .unwrap();
         assert!(!oscillatory.expression.contains("Complex("));
         assert!(oscillatory.expression.contains("Cos"));
-        assert_eq!(oscillatory.data["status"], "completed");
-        assert!(oscillatory.data["operators"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|operator| operator == "ode_solve"));
+        assert_eq!(
+            oscillatory.status,
+            Some(processing::composition::CompositionStatus::Completed)
+        );
+        assert!(oscillatory
+            .operators
+            .contains(&processing::semantic_core::OperatorId::OdeSolve));
         assert!(!oscillatory
             .semantic
             .symbol_identities
@@ -607,7 +654,10 @@ mod tests {
             symbolic_integral.steps.last().unwrap().rule,
             "antiderivative-family"
         );
-        assert_eq!(symbolic_integral.data["status"], "completed");
+        assert_eq!(
+            symbolic_integral.status,
+            Some(processing::composition::CompositionStatus::Completed)
+        );
         assert!(
             symbolic_integral
                 .semantic
@@ -660,7 +710,10 @@ mod tests {
             gaussian_disk.outcome.resolution,
             processing::protocol::ResolutionState::Solved
         );
-        assert_eq!(gaussian_disk.data["status"], "completed");
+        assert_eq!(
+            gaussian_disk.status,
+            Some(processing::composition::CompositionStatus::Completed)
+        );
         assert!(gaussian_disk
             .steps
             .iter()
@@ -697,9 +750,17 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{source}: {}", error.message));
             assert_eq!(result.kind, kind, "{source}");
             assert_eq!(result.expression.replace(' ', ""), expected, "{source}");
-            assert_eq!(result.data["status"], "completed", "{source}");
-            assert_eq!(result.data["effect_only"], false, "{source}");
-            assert_eq!(result.data["outcome"]["resolution"], "solved", "{source}");
+            assert_eq!(
+                result.status,
+                Some(processing::composition::CompositionStatus::Completed),
+                "{source}"
+            );
+            assert!(!result.effect_only, "{source}");
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Solved,
+                "{source}"
+            );
         }
     }
 
@@ -713,7 +774,7 @@ mod tests {
         .unwrap();
         assert_eq!(gradient.kind, "multivariate");
         assert_eq!(gradient.expression.replace(' ', ""), "{2,-4}");
-        assert_eq!(gradient.data["analysis"], serde_json::json!([2]));
+        assert_eq!(gradient.analysis.as_ref().unwrap(), &serde_json::json!([2]));
         assert!(gradient
             .steps
             .iter()
@@ -743,7 +804,7 @@ mod tests {
         .unwrap();
         assert_eq!(line.kind, "line_integral");
         assert_eq!(line.expression, "1");
-        assert_eq!(line.data["analysis"]["integrand_verified"], true);
+        assert_eq!(line.analysis.as_ref().unwrap()["integrand_verified"], true);
         assert!(line
             .steps
             .iter()
@@ -775,8 +836,11 @@ mod tests {
         .unwrap();
         assert_eq!(surface.kind, "surface_integral");
         assert_eq!(surface.expression, "-6");
-        assert_eq!(surface.data["analysis"]["normal_verified"], true);
-        assert_eq!(surface.data["analysis"]["integrand_verified"], true);
+        assert_eq!(surface.analysis.as_ref().unwrap()["normal_verified"], true);
+        assert_eq!(
+            surface.analysis.as_ref().unwrap()["integrand_verified"],
+            true
+        );
         assert!(surface
             .steps
             .iter()
@@ -1038,7 +1102,10 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(singular.data["analysis"]["status"], "singular_constraint");
+        assert_eq!(
+            singular.analysis.as_ref().unwrap()["status"],
+            "singular_constraint"
+        );
         assert_eq!(
             singular.outcome.resolution,
             processing::protocol::ResolutionState::Unresolved
@@ -1237,9 +1304,12 @@ mod tests {
             assert_eq!(result.expression, expression);
             assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
             assert_eq!(result.semantic.bound_symbols, ["x"]);
-            assert_eq!(result.data["partial"]["operator"].as_str(), Some(operator));
             assert_eq!(
-                result.data["partial"]["missing"],
+                result.details.as_ref().unwrap()["partial"]["operator"].as_str(),
+                Some(operator)
+            );
+            assert_eq!(
+                result.details.as_ref().unwrap()["partial"]["missing"],
                 serde_json::json!(["operand"])
             );
             assert_eq!(
@@ -1251,9 +1321,18 @@ mod tests {
         let overloaded =
             process_expression_with_engine(request("Limit(t)", false), &mut engine).unwrap();
         assert_eq!(overloaded.kind, "partial_application");
-        assert_eq!(overloaded.data["status"], "ambiguous_partial_application");
-        assert_eq!(overloaded.data["candidates"].as_array().unwrap().len(), 3);
-        assert!(overloaded.data["display_templates"]
+        assert_eq!(
+            overloaded.details.as_ref().unwrap()["status"],
+            "ambiguous_partial_application"
+        );
+        assert_eq!(
+            overloaded.details.as_ref().unwrap()["candidates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(overloaded.details.as_ref().unwrap()["display_templates"]
             .as_array()
             .unwrap()
             .iter()
@@ -1297,11 +1376,9 @@ mod tests {
             held.outcome.resolution,
             processing::protocol::ResolutionState::Unresolved
         );
-        assert!(held.data["operators"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|operator| operator == "factor"));
+        assert!(held
+            .operators
+            .contains(&processing::semantic_core::OperatorId::Factor));
     }
 
     #[test]
@@ -1500,11 +1577,10 @@ mod tests {
             processing::semantic::Exactness::Approximate
         );
         assert!(result.expression.starts_with("{{0,"));
-        assert_eq!(result.data["sampled_data"]["independent"], "x");
-        assert_eq!(result.data["sampled_data"]["dependent"], "y");
-        assert!(result.data["sampled_data"]["points"]
-            .as_array()
-            .is_some_and(|points| points.len() > 1));
+        let sampled = result.sampled_data.as_ref().unwrap();
+        assert_eq!(sampled.independent, "x");
+        assert_eq!(sampled.dependent, "y");
+        assert!(sampled.points.len() > 1);
         assert!(result
             .steps
             .iter()
@@ -1563,12 +1639,11 @@ mod tests {
         assert_eq!(result.kind, "plot");
         assert_eq!(result.semantic.kind, ValueKind::Expression);
         assert_eq!(result.expression, "2*x");
-        assert_eq!(result.data["effect_only"], true);
-        assert_eq!(result.data["plot"]["expression"], "2*x");
-        assert_eq!(result.data["plot"]["variable"], "x");
-        assert!(result.data["plot"]["sampled"]["points"]
-            .as_array()
-            .is_some_and(|points| !points.is_empty()));
+        assert!(result.effect_only);
+        let plot = result.plot.as_ref().unwrap();
+        assert_eq!(plot.expression, "2*x");
+        assert_eq!(plot.variable, "x");
+        assert!(!plot.sampled.points.is_empty());
         assert!(result.steps.iter().any(|step| step.rule == "power-rule"));
 
         for expression in ["Plot(x,x,0,1)+1", "Sin(Plot(x,x,0,1))"] {
@@ -1591,13 +1666,13 @@ mod tests {
         .unwrap();
         assert_eq!(extrema.kind, "extrema");
         assert_eq!(extrema.semantic.kind, ValueKind::SolutionSet);
-        assert_eq!(extrema.data["analysis"]["status"], "classified");
+        assert_eq!(extrema.analysis.as_ref().unwrap()["status"], "classified");
         assert_eq!(
-            extrema.data["analysis"]["critical_points"][0]["kind"],
+            extrema.analysis.as_ref().unwrap()["critical_points"][0]["kind"],
             "local_minimum"
         );
         assert_eq!(
-            extrema.data["analysis"]["critical_points"][0]["gradient_verified"],
+            extrema.analysis.as_ref().unwrap()["critical_points"][0]["gradient_verified"],
             true
         );
         assert!(extrema
@@ -1612,11 +1687,11 @@ mod tests {
         .unwrap();
         assert_eq!(lagrange.kind, "lagrange");
         assert_eq!(lagrange.semantic.kind, ValueKind::SolutionSet);
-        assert_eq!(lagrange.data["analysis"]["status"], "candidates");
-        assert!(lagrange.data["analysis"]["candidates"]
+        assert_eq!(lagrange.analysis.as_ref().unwrap()["status"], "candidates");
+        assert!(lagrange.analysis.as_ref().unwrap()["candidates"]
             .as_array()
             .is_some_and(|candidates| !candidates.is_empty()));
-        assert!(lagrange.data["analysis"]["candidates"]
+        assert!(lagrange.analysis.as_ref().unwrap()["candidates"]
             .as_array()
             .unwrap()
             .iter()
