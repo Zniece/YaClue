@@ -359,6 +359,7 @@ pub fn derivative_computation_for_object(
 struct FunctionPartialDerivative {
     expression: String,
     conditions: Vec<Condition>,
+    requires_structural_output: bool,
 }
 
 type PartialDerivativeBuilder = fn(&[String], usize) -> Option<FunctionPartialDerivative>;
@@ -371,12 +372,19 @@ struct FunctionDerivativeRule {
     partial_derivative: PartialDerivativeBuilder,
 }
 
+pub(crate) fn preserves_registered_function_identity(head: &str, arity: usize) -> bool {
+    FUNCTION_DERIVATIVE_RULES
+        .iter()
+        .any(|rule| rule.head == head && rule.arity == arity)
+}
+
 fn gamma_partial(arguments: &[String], argument_index: usize) -> Option<FunctionPartialDerivative> {
     (argument_index == 0).then(|| {
         let argument = &arguments[0];
         FunctionPartialDerivative {
             expression: format!("Gamma({argument})*PolyGamma(0,{argument})"),
             conditions: Vec::new(),
+            requires_structural_output: false,
         }
     })
 }
@@ -385,6 +393,7 @@ fn erf_partial(arguments: &[String], argument_index: usize) -> Option<FunctionPa
     (argument_index == 0).then(|| FunctionPartialDerivative {
         expression: format!("2*Exp(-(({})^2))/Sqrt(Pi)", arguments[0]),
         conditions: Vec::new(),
+        requires_structural_output: false,
     })
 }
 
@@ -408,6 +417,7 @@ fn poly_gamma_partial(
     (argument_index == 1).then(|| FunctionPartialDerivative {
         expression: format!("PolyGamma(({order})+1,{})", arguments[1]),
         conditions,
+        requires_structural_output: false,
     })
 }
 
@@ -423,8 +433,78 @@ fn lambert_w_partial(
             conditions: vec![Condition::NonZero {
                 expression: format!("1+{function}"),
             }],
+            requires_structural_output: false,
         }
     })
+}
+
+fn beta_partial(arguments: &[String], argument_index: usize) -> Option<FunctionPartialDerivative> {
+    let [left, right] = arguments else {
+        return None;
+    };
+    let active = &arguments[argument_index];
+    Some(FunctionPartialDerivative {
+        expression: format!(
+            "Beta({left},{right})*(PolyGamma(0,{active})-PolyGamma(0,({left})+({right})))"
+        ),
+        conditions: vec![
+            Condition::RealPartPositive {
+                expression: left.clone(),
+            },
+            Condition::RealPartPositive {
+                expression: right.clone(),
+            },
+        ],
+        // Yacas eagerly rewrites Beta to a Gamma quotient. Keep the compact
+        // registered function identity in the derivative result.
+        requires_structural_output: true,
+    })
+}
+
+fn incomplete_gamma_partial(
+    arguments: &[String],
+    argument_index: usize,
+) -> Option<FunctionPartialDerivative> {
+    let [limit, shape] = arguments else {
+        return None;
+    };
+    let conditions = vec![
+        Condition::RealPartPositive {
+            expression: shape.clone(),
+        },
+        Condition::Positive {
+            expression: limit.clone(),
+        },
+    ];
+    match argument_index {
+        0 => Some(FunctionPartialDerivative {
+            expression: format!("Exp((({shape})-1)*Ln({limit})-({limit}))"),
+            conditions,
+            requires_structural_output: false,
+        }),
+        1 => {
+            let binder = ["t", "u", "v", "s", "r"]
+                .into_iter()
+                .find(|candidate| !limit.contains(candidate) && !shape.contains(candidate))
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    crate::input::fresh_internal_symbols(
+                        "IncompleteGammaDerivative",
+                        &[limit, shape],
+                        ["T"],
+                    )[0]
+                    .clone()
+                });
+            Some(FunctionPartialDerivative {
+                expression: format!(
+                    "Integrate({binder},0,{limit})(Exp((({shape})-1)*Ln({binder})-{binder})*Ln({binder}))"
+                ),
+                conditions,
+                requires_structural_output: true,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Function identities are data in this bounded registry. The dispatcher
@@ -454,6 +534,18 @@ const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
         head: "LambertW",
         arity: 1,
         partial_derivative: lambert_w_partial,
+    },
+    FunctionDerivativeRule {
+        id: "function.beta.derivative",
+        head: "Beta",
+        arity: 2,
+        partial_derivative: beta_partial,
+    },
+    FunctionDerivativeRule {
+        id: "function.incomplete-gamma.derivative",
+        head: "IncompleteGamma",
+        arity: 2,
+        partial_derivative: incomplete_gamma_partial,
     },
 ];
 
@@ -490,6 +582,7 @@ fn derivative_of_registered_function(
     let mut events = Vec::new();
     let mut certificates = Vec::new();
     let mut effects = Vec::new();
+    let mut requires_structural_output = false;
     let mut condition_items = operand.semantics.metadata.conditions.conditions().to_vec();
     for (index, argument) in arguments.iter().enumerate() {
         let mut inner = derivative_computation(engine, argument, &request.variable, 1)?;
@@ -506,6 +599,7 @@ fn derivative_of_registered_function(
             continue;
         };
         if inner_source != "0" {
+            requires_structural_output |= partial.requires_structural_output;
             terms.push(if inner_source == "1" {
                 partial.expression.clone()
             } else {
@@ -537,7 +631,11 @@ fn derivative_of_registered_function(
     } else {
         terms.join("+")
     };
-    let source = engine.eval_expr(&source)?.to_string();
+    let source = if requires_structural_output {
+        source
+    } else {
+        engine.eval_expr(&source)?.to_string()
+    };
     let conditions = ConditionSet::new(condition_items)?;
     let mut output = operand.clone();
     let semantics = SemanticState {
@@ -1043,6 +1141,65 @@ mod tests {
             .events
             .iter()
             .all(|event| event.rule != "derivative-registered-function-chain-rule"));
+    }
+
+    #[test]
+    fn multivariate_special_function_rules_sum_every_active_parameter_slot() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let beta = crate::elaboration::elaborate("D(x)Beta(x,x^2)").unwrap();
+        let beta_result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &beta).unwrap();
+        let beta_source = beta_result.value().unwrap().print_source();
+        assert!(beta_source.contains("PolyGamma(0,x)"), "{beta_source}");
+        assert!(beta_source.contains("PolyGamma(0,x^2)"), "{beta_source}");
+        assert!(beta_source.contains("2*x"), "{beta_source}");
+        assert!(beta_result
+            .value()
+            .unwrap()
+            .semantics
+            .metadata
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::RealPartPositive { expression } if expression == "x^2")));
+
+        let incomplete = crate::elaboration::elaborate("D(x)IncompleteGamma(x^2,x+1)").unwrap();
+        let incomplete_result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &incomplete).unwrap();
+        let incomplete_source = incomplete_result.value().unwrap().print_source();
+        assert!(incomplete_source.contains("Ln(x^2)"), "{incomplete_source}");
+        assert!(
+            incomplete_source.contains("Integrate("),
+            "{incomplete_source}"
+        );
+        assert!(incomplete_source.contains("Ln("), "{incomplete_source}");
+        assert!(!incomplete_source.contains("D("), "{incomplete_source}");
+        assert!(incomplete_result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| {
+                event.bindings.iter().any(|(key, value)| {
+                    key == "derivative_rule" && value == "function.incomplete-gamma.derivative"
+                })
+            }));
+    }
+
+    #[test]
+    fn incomplete_gamma_parameter_derivative_uses_a_capture_free_formal_integral() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let expression = crate::elaboration::elaborate(
+            "D(x)IncompleteGamma(YaClueIncompleteGammaDerivativeInternal0T,x)",
+        )
+        .unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+        let source = result.value().unwrap().print_source();
+        assert!(source.contains("Integrate(s,0,"), "{source}");
+        assert!(!source.contains("YaClueIncompleteGammaDerivativeInternal1T"));
+        assert!(!source.contains("D("));
     }
 
     #[test]

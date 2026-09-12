@@ -1351,6 +1351,8 @@ mod tests {
             "D(x)Erf(x^2)",
             "D(x)PolyGamma(2,Sin(x))",
             "D(x)LambertW(Exp(x))",
+            "D(x)Beta(x,x^2)",
+            "D(x)IncompleteGamma(x^2,x+1)",
         ] {
             let result =
                 process_expression_with_engine(request(expression, true), &mut engine).unwrap();
@@ -1362,6 +1364,20 @@ mod tests {
                 .iter()
                 .any(|step| step.rule == "derivative-registered-function-chain-rule"));
         }
+
+        let incomplete = process_expression_with_engine(
+            request("D(x)IncompleteGamma(x^2,x+1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert!(incomplete.expression.contains("Integrate("));
+        assert!(incomplete.expression.contains("Ln("));
+        assert!(incomplete
+            .outcome
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, processing::protocol::Condition::RealPartPositive { expression } if expression == "x+1")));
 
         let held = process_expression_with_engine(request("D(x)PolyGamma(x,x)", true), &mut engine)
             .unwrap();

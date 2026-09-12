@@ -1213,6 +1213,19 @@ fn execute_function_application(
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         }
+    } else if crate::derivatives::preserves_registered_function_identity(head, arguments.len()) {
+        output = crate::semantic_core::MathematicalObject::new(
+            expression.object.id,
+            rebuilt.clone(),
+            expression.object.semantics.clone(),
+        );
+        SemanticState {
+            kind: ValueKind::Expression,
+            interpretation: SemanticInterpretation::PlainExpression,
+            metadata: ResultMetadata::solved(exactness, conditions.clone()),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        }
     } else {
         let rebuilt_object = crate::semantic_core::MathematicalObject::new(
             expression.object.id,
@@ -2334,6 +2347,16 @@ mod tests {
             assert!(compact.contains("Gamma(x)"), "{source}: {compact}");
             assert!(!compact.contains("Integrate("), "{source}: {compact}");
             assert!(output.stable_representation_count() <= 4);
+        }
+    }
+
+    #[test]
+    fn derivative_registered_functions_keep_their_symbolic_application_identity() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for source in ["Beta(x,y)", "IncompleteGamma(x,a)"] {
+            let elaborated = crate::elaboration::elaborate(source).unwrap();
+            let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+            assert_eq!(result.value().unwrap().print_source(), source);
         }
     }
 
