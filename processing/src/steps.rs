@@ -297,7 +297,33 @@ pub fn render_rule_trace_in_root(
     if let Some(last) = steps.last_mut() {
         last.importance = StepImportance::Key;
     }
+    validate_step_chain(&root.object.print_source(), &steps)?;
     Ok(steps)
+}
+
+/// Enforce the product invariant independently of any renderer: every visible
+/// item is an equivalence transformation, starts at the complete input, and
+/// continues exactly from the preceding whole-expression endpoint.
+pub fn validate_step_chain(initial: &str, steps: &[Step]) -> Result<(), EngineError> {
+    let mut expected = initial;
+    for (index, step) in steps.iter().enumerate() {
+        if step.kind != StepKind::EquivalentTransformation {
+            return Err(EngineError::Parse(format!("步骤 {index} 不是等价变换")));
+        }
+        if step.before_expr.as_deref() != Some(expected) {
+            return Err(EngineError::Parse(format!("步骤 {index} 与前一步不连续")));
+        }
+        if step.before_tex.as_ref().is_none_or(String::is_empty)
+            || step.expr.is_empty()
+            || step.tex.is_empty()
+        {
+            return Err(EngineError::Parse(format!(
+                "步骤 {index} 缺少完整表达式或 TeX"
+            )));
+        }
+        expected = &step.expr;
+    }
+    Ok(())
 }
 
 fn render_product_tex(engine: &mut dyn Engine, expression: &str) -> String {

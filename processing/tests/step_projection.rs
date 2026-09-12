@@ -12,6 +12,10 @@ fn difficult_compositions_are_continuous_whole_expression_chains() {
         "{Limit(t,0)(Sin(t)/t),D(x)(x^3),Integrate(x)(2*x)}",
         "(y+2^2*y)==Sin(x)",
     ] {
+        let initial = processing::elaboration::elaborate(source)
+            .unwrap()
+            .object
+            .print_source();
         let result = execute_steps(&mut engine, source, StepVerbosity::Detailed)
             .unwrap_or_else(|error| panic!("{source}: {error}"))
             .unwrap();
@@ -38,6 +42,7 @@ fn difficult_compositions_are_continuous_whole_expression_chains() {
             result.steps
         );
         assert_eq!(result.steps.last().unwrap().expr, result.value, "{source}");
+        processing::steps::validate_step_chain(&initial, &result.steps).unwrap();
     }
 }
 
