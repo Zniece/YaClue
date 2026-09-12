@@ -5,9 +5,9 @@ use std::rc::Rc;
 
 use crate::engine::{Engine, EngineError};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Certificate, Computation, ComputationOutput,
-    MathematicalObject, NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta,
-    OperatorId, Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    CapabilitySet, Certificate, Computation, ComputationOutput, MathematicalObject,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
+    Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticState, TraceMode,
 };
 use crate::{improper_integrals::ImproperIntegralRequest, protocol::ConditionSet};
@@ -139,7 +139,7 @@ fn lower_euler_gamma(
         capabilities: CapabilitySet::symbolic_expression(),
         requirements: Vec::new(),
     };
-    let parsed = object_from_source(input.id, &lowered.value, semantics.clone())?;
+    let parsed = crate::semantic_core::parse_engine_expression(&lowered.value)?;
     let mut output = input.clone();
     output.apply(ObjectDelta {
         expression: Some(parsed.raw_expression()),

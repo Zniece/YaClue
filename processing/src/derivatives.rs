@@ -288,7 +288,7 @@ pub fn derivative_computation_for_object(
         requirements: Vec::new(),
     };
     let output_ast =
-        object_from_source(output_object.id, &output_source, semantics.clone())?.raw_expression();
+        crate::semantic_core::parse_engine_expression(&output_source)?.raw_expression();
     if unresolved {
         crate::semantic_core::promote_held_application("D", &output_ast, &mut semantics)?;
     } else {
@@ -466,7 +466,7 @@ fn derivative_of_registered_function(
         capabilities: CapabilitySet::symbolic_expression(),
         requirements: Vec::new(),
     };
-    let parsed = object_from_source(output.id, &source, semantics.clone())?;
+    let parsed = crate::semantic_core::parse_engine_expression(&source)?;
     let input_ref = output.reference(None);
     output.apply(ObjectDelta {
         expression: Some(parsed.raw_expression()),
@@ -554,7 +554,7 @@ fn derivative_of_typed_integral(
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(operand.id, &integrand, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&integrand)?;
         let mut output = operand.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),
@@ -623,7 +623,7 @@ fn derivative_of_typed_integral(
         capabilities: CapabilitySet::symbolic_expression(),
         requirements: Vec::new(),
     };
-    let parsed = object_from_source(operand.id, &source, semantics.clone())?;
+    let parsed = crate::semantic_core::parse_engine_expression(&source)?;
     crate::semantic_core::promote_held_application(
         "Integrate",
         &parsed.raw_expression(),

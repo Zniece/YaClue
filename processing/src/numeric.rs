@@ -4,11 +4,13 @@ use crate::engine::{Engine, EngineError, EvalResult, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
+#[cfg(test)]
+use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Certificate, Computation, ComputationOutput,
-    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
-    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
-    SemanticInterpretation, SemanticOperation, SemanticState,
+    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 use serde::Serialize;
 
@@ -114,7 +116,7 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
             },
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if unresolved {
             crate::semantic_core::promote_held_application(
                 "N",
@@ -262,7 +264,7 @@ impl SemanticOperation<FindRootRequest> for FindRootOperation {
                 requirements: Vec::new(),
             }
         };
-        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if !converged {
             crate::semantic_core::promote_held_application(
                 "FindRoot",
@@ -401,7 +403,7 @@ impl SemanticOperation<TaylorRequest> for TaylorOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if result.unresolved {
             crate::semantic_core::promote_held_application(
                 "Taylor",

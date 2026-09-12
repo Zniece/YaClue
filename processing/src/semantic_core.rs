@@ -2002,21 +2002,41 @@ impl MathematicalObject {
     }
 }
 
-/// Transitional construction boundary for legacy string-based domains.  The
-/// resulting object owns the parsed Yacas tree; migrated callers pass the
-/// object onward instead of parsing its source again.
+/// Parse source returned by a string-based engine adapter back into the shared
+/// AST representation without manufacturing a temporary semantic object.
+pub(crate) struct ParsedEngineExpression {
+    expression: Rc<LispObject>,
+}
+
+impl ParsedEngineExpression {
+    pub(crate) fn raw_expression(&self) -> Rc<LispObject> {
+        self.expression.clone()
+    }
+}
+
+pub(crate) fn parse_engine_expression(source: &str) -> Result<ParsedEngineExpression, EngineError> {
+    crate::input::validate_safe_text(source, "引擎表达式")?;
+    crate::input::with_parse_env(|env| {
+        let expression = yacas_rs::parser::parse_expression(env, &format!("{source};"))
+            .map_err(|error| EngineError::InvalidInput(format!("引擎表达式语法错误: {error:?}")))?
+            .ok_or_else(|| EngineError::InvalidInput("引擎表达式为空".into()))?;
+        Ok(ParsedEngineExpression { expression })
+    })
+}
+
+/// Product/input construction boundary. Domain adapters that only need an AST
+/// use `parse_engine_expression` and do not allocate a temporary object.
 pub fn object_from_source(
     id: ObjectId,
     source: &str,
     semantics: SemanticState,
 ) -> Result<MathematicalObject, EngineError> {
-    crate::input::validate_safe_text(source, "语义表达式")?;
-    crate::input::with_parse_env(|env| {
-        let expression = yacas_rs::parser::parse_expression(env, &format!("{source};"))
-            .map_err(|error| EngineError::InvalidInput(format!("语义表达式语法错误: {error:?}")))?
-            .ok_or_else(|| EngineError::InvalidInput("语义表达式为空".into()))?;
-        Ok(MathematicalObject::new(id, expression, semantics))
-    })
+    let parsed = parse_engine_expression(source)?;
+    Ok(MathematicalObject::new(
+        id,
+        parsed.raw_expression(),
+        semantics,
+    ))
 }
 
 #[derive(Clone, Default)]

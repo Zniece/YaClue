@@ -3,11 +3,13 @@
 use crate::engine::{Engine, EngineError};
 use crate::protocol::{ConditionSet, OutcomeReason, ResolutionState, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
+#[cfg(test)]
+use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    object_from_source, BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput,
-    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
-    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
-    SemanticInterpretation, SemanticState,
+    BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +49,7 @@ impl BinarySemanticOperation<SubstitutionRequest> for SubstitutionOperation {
                 input.semantics.clone(),
             );
             let normalized = engine.eval_expr(&structural.print_source())?.to_string();
-            object_from_source(input.id, &normalized, input.semantics.clone())?.raw_expression()
+            crate::semantic_core::parse_engine_expression(&normalized)?.raw_expression()
         };
         let kind = crate::input::with_parse_env(|env| {
             crate::semantic::analyze_tree(env, &expression)

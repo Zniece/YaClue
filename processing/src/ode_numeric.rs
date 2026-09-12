@@ -7,11 +7,13 @@ use serde::Serialize;
 
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
+#[cfg(test)]
+use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Certificate, Computation, ComputationOutput,
-    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
-    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,7 +124,7 @@ impl SemanticOperation<NumericOdeRequest> for NumericOdeOperation {
             capabilities: CapabilitySet::empty(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
         if !completed {
             crate::semantic_core::promote_held_application(
                 "OdeSolveNumeric",

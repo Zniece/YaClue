@@ -157,7 +157,7 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if unresolved {
             crate::semantic_core::promote_held_application(
                 "Integrate",
@@ -313,7 +313,7 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &representative, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&representative)?;
         if unresolved {
             crate::semantic_core::promote_held_application(
                 "Integrate",

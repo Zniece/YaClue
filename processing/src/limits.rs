@@ -335,7 +335,7 @@ pub fn limit_computation_for_object(
         capabilities: output_capabilities,
         requirements: Vec::new(),
     };
-    let parsed_output = object_from_source(object.id, output_source, output_semantics.clone())?;
+    let parsed_output = crate::semantic_core::parse_engine_expression(output_source)?;
     let output_ast = parsed_output.raw_expression();
     if metadata.resolution == crate::protocol::ResolutionState::Unresolved {
         crate::semantic_core::promote_held_application(

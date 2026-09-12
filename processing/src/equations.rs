@@ -8,10 +8,10 @@ use crate::input::{
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
-    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    CapabilitySet, Computation, ComputationOutput, NormalizationLevel, NormalizationMetadata,
+    NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -161,7 +161,7 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             capabilities: CapabilitySet::empty(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if unresolved {
             crate::semantic_core::promote_held_application(
                 "Solve",

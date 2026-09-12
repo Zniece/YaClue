@@ -4,8 +4,10 @@ use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{fresh_internal_symbols, strip_tex_delimiters, validate_expression};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
+#[cfg(test)]
+use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    object_from_source, BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput,
+    BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput, ExpressionView,
     NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
     OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticOperation, SemanticState,
@@ -160,7 +162,7 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             },
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &output_source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if held {
             let spelling = match request.operation {
                 MatrixOperation::Transpose => "Transpose",
@@ -309,7 +311,7 @@ impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
             capabilities: CapabilitySet::matrix(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(request.output_id, &result.output, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&result.output)?;
         let mut output = crate::semantic_core::MathematicalObject::new(
             request.output_id,
             parsed.raw_expression(),
@@ -392,7 +394,7 @@ impl BinarySemanticOperation<crate::semantic_core::ObjectId> for MatrixSolveOper
             capabilities: CapabilitySet::empty(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(*output_id, &result.output, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&result.output)?;
         let mut output = crate::semantic_core::MathematicalObject::new(
             *output_id,
             parsed.raw_expression(),
@@ -499,10 +501,12 @@ impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
                 if result.unresolved {
                     return held_matrix_analysis(input, kind);
                 }
-                let eigenvalue_object =
-                    object_from_source(input.id, &result.output, input.semantics.clone())?;
+                let eigenvalue_expression =
+                    crate::semantic_core::parse_engine_expression(&result.output)?;
                 let length = crate::input::with_parse_env(|env| {
-                    eigenvalue_object.view(env).arguments().len()
+                    ExpressionView::new(env, &eigenvalue_expression.raw_expression())
+                        .arguments()
+                        .len()
                 });
                 (
                     result.output,
@@ -584,7 +588,7 @@ impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
             capabilities,
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),
@@ -646,11 +650,10 @@ fn held_matrix_analysis(
         capabilities: CapabilitySet::empty(),
         requirements: Vec::new(),
     };
-    let parsed = object_from_source(
-        input.id,
-        &format!("{head}({})", input.print_source()),
-        semantics.clone(),
-    )?;
+    let parsed = crate::semantic_core::parse_engine_expression(&format!(
+        "{head}({})",
+        input.print_source()
+    ))?;
     crate::semantic_core::promote_held_application(head, &parsed.raw_expression(), &mut semantics)?;
     let mut output = input.clone();
     output.apply(ObjectDelta {
@@ -781,7 +784,7 @@ impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation
             metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),
@@ -867,7 +870,7 @@ impl SemanticOperation<()> for FactorProjectionOperation {
             capabilities: CapabilitySet::empty(),
             requirements: Vec::new(),
         };
-        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
         let mut output = input.clone();
         output.apply(ObjectDelta {
             expression: Some(parsed.raw_expression()),

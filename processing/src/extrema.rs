@@ -8,11 +8,13 @@ use crate::input::{
 };
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
+#[cfg(test)]
+use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Certificate, Computation, ComputationOutput,
-    MathematicalObject, NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta,
-    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
-    SemanticInterpretation, SemanticOperation, SemanticState,
+    CapabilitySet, Certificate, Computation, ComputationOutput, MathematicalObject,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
+    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -296,7 +298,7 @@ fn structured_extrema_output(
         capabilities: CapabilitySet::empty(),
         requirements: Vec::new(),
     };
-    let parsed = object_from_source(input.id, &source, semantics.clone())?;
+    let parsed = crate::semantic_core::parse_engine_expression(&source)?;
     if resolution == 2 {
         crate::semantic_core::promote_held_application(
             spelling,
