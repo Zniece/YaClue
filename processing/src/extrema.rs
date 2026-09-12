@@ -129,8 +129,11 @@ impl SemanticOperation<ExtremaRequest> for ExtremaOperation {
                 "该数学对象不具备极值分析能力".into(),
             ));
         }
-        let analyzed = analyze_steps(engine, &input.print_source(), &request.x, &request.y)?;
-        extrema_computation(input, analyzed)
+        let expression = input.print_source();
+        validate_request(&expression, &request.x, &request.y)?;
+        let result = analyze_internal(engine, &expression, &request.x, &request.y, false)?;
+        let events = extrema_step_events(&result);
+        extrema_computation(input, result, events)
     }
 }
 
@@ -160,22 +163,26 @@ impl SemanticOperation<LagrangeRequest> for LagrangeOperation {
                 "该数学对象不具备约束极值分析能力".into(),
             ));
         }
-        let analyzed = analyze_lagrange_steps(
+        let expression = input.print_source();
+        validate_lagrange_request(&expression, &request.constraint, &request.x, &request.y)?;
+        let result = analyze_lagrange_internal(
             engine,
-            &input.print_source(),
+            &expression,
             &request.constraint,
             &request.x,
             &request.y,
+            false,
         )?;
-        lagrange_computation(input, analyzed)
+        let events = lagrange_step_events(&result);
+        lagrange_computation(input, result, events)
     }
 }
 
 fn extrema_computation(
     input: &MathematicalObject,
-    analyzed: ExtremaStepResult,
+    result: ExtremaResult,
+    events: Vec<StepEvent>,
 ) -> Result<Computation, EngineError> {
-    let result = analyzed.result;
     let source = match result.status {
         ExtremaStatus::Classified | ExtremaStatus::PartiallyClassified => format!(
             "{{{}}}",
@@ -206,7 +213,7 @@ fn extrema_computation(
         OperatorId::Extrema,
         "Extrema",
         resolution,
-        analyzed.steps,
+        events,
         Certificate {
             kind: "extrema_analysis".into(),
             payload: serde_json::to_string(&result)
@@ -217,9 +224,9 @@ fn extrema_computation(
 
 fn lagrange_computation(
     input: &MathematicalObject,
-    analyzed: LagrangeStepResult,
+    result: LagrangeResult,
+    events: Vec<StepEvent>,
 ) -> Result<Computation, EngineError> {
-    let result = analyzed.result;
     let source = match result.status {
         LagrangeStatus::Candidates => lagrange_display(&result.candidates),
         LagrangeStatus::NoCandidates => "List()".into(),
@@ -243,7 +250,7 @@ fn lagrange_computation(
         OperatorId::Lagrange,
         "Lagrange",
         resolution,
-        analyzed.steps,
+        events,
         Certificate {
             kind: "lagrange_analysis".into(),
             payload: serde_json::to_string(&result)
@@ -260,7 +267,7 @@ fn structured_extrema_output(
     operator: OperatorId,
     spelling: &str,
     resolution: u8,
-    steps: Vec<Step>,
+    events: Vec<StepEvent>,
     certificate: Certificate,
 ) -> Result<Computation, EngineError> {
     let interpretation = if resolution == 2 {
@@ -308,25 +315,25 @@ fn structured_extrema_output(
             mode: NormalizationMode::Operation(operator),
         }),
     });
-    let events = steps
+    let events = events
         .into_iter()
-        .map(|step| RuleEvent {
-            rule: step.rule,
+        .map(|event| RuleEvent {
+            rule: event.rule,
             input: input.reference(None),
             additional_inputs: Vec::new(),
             output: output.reference(None),
             bindings: Vec::new(),
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
-            importance: match step.importance {
+            importance: match event.importance {
                 StepImportance::Key => RuleImportance::Key,
                 StepImportance::Normal => RuleImportance::Normal,
                 StepImportance::Routine => RuleImportance::Routine,
             },
             presentation: Some(RulePresentation {
-                expression: step.expr,
-                explanation: step.why,
-                tex_override: Some(step.tex),
+                expression: event.expr,
+                explanation: event.why,
+                tex_override: None,
             }),
         })
         .collect();
@@ -342,44 +349,7 @@ fn structured_extrema_output(
     })
 }
 
-pub fn analyze_lagrange(
-    engine: &mut dyn Engine,
-    expression: &str,
-    constraint: &str,
-    x: &str,
-    y: &str,
-) -> Result<LagrangeResult, EngineError> {
-    validate_lagrange_request(expression, constraint, x, y)?;
-    analyze_lagrange_internal(engine, expression, constraint, x, y, true)
-}
-
-pub fn analyze_lagrange_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    constraint: &str,
-    x: &str,
-    y: &str,
-) -> Result<LagrangeStepResult, EngineError> {
-    analyze_lagrange_steps_with_verbosity(
-        engine,
-        expression,
-        constraint,
-        x,
-        y,
-        StepVerbosity::Detailed,
-    )
-}
-
-pub fn analyze_lagrange_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    constraint: &str,
-    x: &str,
-    y: &str,
-    verbosity: StepVerbosity,
-) -> Result<LagrangeStepResult, EngineError> {
-    validate_lagrange_request(expression, constraint, x, y)?;
-    let mut result = analyze_lagrange_internal(engine, expression, constraint, x, y, false)?;
+fn lagrange_step_events(result: &LagrangeResult) -> Vec<StepEvent> {
     let system = format!("{{{}}}", result.equations.join(","));
     let mut events = vec![StepEvent::new(
         "lagrange-system",
@@ -412,10 +382,9 @@ pub fn analyze_lagrange_steps_with_verbosity(
             StepImportance::Key,
         ));
     }
-    let display = lagrange_display(&result.candidates);
     events.push(StepEvent::new(
         "lagrange-result",
-        &display,
+        &lagrange_display(&result.candidates),
         match result.status {
             LagrangeStatus::Candidates => {
                 "得到经过验证的约束极值候选；当前结果不自动宣称全局最值。"
@@ -428,42 +397,10 @@ pub fn analyze_lagrange_steps_with_verbosity(
         },
         StepImportance::Key,
     ));
-    let steps = render_events(engine, events, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(LagrangeStepResult { result, steps })
+    events
 }
 
-pub fn analyze(
-    engine: &mut dyn Engine,
-    expression: &str,
-    x: &str,
-    y: &str,
-) -> Result<ExtremaResult, EngineError> {
-    validate_request(expression, x, y)?;
-    analyze_internal(engine, expression, x, y, true)
-}
-
-pub fn analyze_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    x: &str,
-    y: &str,
-) -> Result<ExtremaStepResult, EngineError> {
-    analyze_steps_with_verbosity(engine, expression, x, y, StepVerbosity::Detailed)
-}
-
-pub fn analyze_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    x: &str,
-    y: &str,
-    verbosity: StepVerbosity,
-) -> Result<ExtremaStepResult, EngineError> {
-    validate_request(expression, x, y)?;
-    let mut result = analyze_internal(engine, expression, x, y, false)?;
+fn extrema_step_events(result: &ExtremaResult) -> Vec<StepEvent> {
     let gradient_equations = format!("{{{}==0,{}==0}}", result.gradient[0], result.gradient[1]);
     let mut events = vec![StepEvent::new(
         "extrema-gradient",
@@ -521,7 +458,84 @@ pub fn analyze_steps_with_verbosity(
         },
         StepImportance::Key,
     ));
-    let steps = render_events(engine, events, verbosity)?;
+    events
+}
+
+pub fn analyze_lagrange(
+    engine: &mut dyn Engine,
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+) -> Result<LagrangeResult, EngineError> {
+    validate_lagrange_request(expression, constraint, x, y)?;
+    analyze_lagrange_internal(engine, expression, constraint, x, y, true)
+}
+
+pub fn analyze_lagrange_steps(
+    engine: &mut dyn Engine,
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+) -> Result<LagrangeStepResult, EngineError> {
+    analyze_lagrange_steps_with_verbosity(
+        engine,
+        expression,
+        constraint,
+        x,
+        y,
+        StepVerbosity::Detailed,
+    )
+}
+
+pub fn analyze_lagrange_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    constraint: &str,
+    x: &str,
+    y: &str,
+    verbosity: StepVerbosity,
+) -> Result<LagrangeStepResult, EngineError> {
+    validate_lagrange_request(expression, constraint, x, y)?;
+    let mut result = analyze_lagrange_internal(engine, expression, constraint, x, y, false)?;
+    let steps = render_events(engine, lagrange_step_events(&result), verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(LagrangeStepResult { result, steps })
+}
+
+pub fn analyze(
+    engine: &mut dyn Engine,
+    expression: &str,
+    x: &str,
+    y: &str,
+) -> Result<ExtremaResult, EngineError> {
+    validate_request(expression, x, y)?;
+    analyze_internal(engine, expression, x, y, true)
+}
+
+pub fn analyze_steps(
+    engine: &mut dyn Engine,
+    expression: &str,
+    x: &str,
+    y: &str,
+) -> Result<ExtremaStepResult, EngineError> {
+    analyze_steps_with_verbosity(engine, expression, x, y, StepVerbosity::Detailed)
+}
+
+pub fn analyze_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    x: &str,
+    y: &str,
+    verbosity: StepVerbosity,
+) -> Result<ExtremaStepResult, EngineError> {
+    validate_request(expression, x, y)?;
+    let mut result = analyze_internal(engine, expression, x, y, false)?;
+    let steps = render_events(engine, extrema_step_events(&result), verbosity)?;
     result.tex = steps
         .last()
         .map(|step| step.tex.clone())
@@ -1368,6 +1382,48 @@ mod tests {
         )
         .unwrap();
         assert_eq!(engine.batch_sizes, [lagrange.steps.len()]);
+    }
+
+    #[test]
+    fn semantic_extrema_emits_unrendered_trace_without_product_step_roundtrip() {
+        let input = object_from_source(
+            crate::semantic_core::ObjectId(201),
+            "x^2+y^2",
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mut engine = CountingEngine::spawn();
+        let result = ExtremaOperation
+            .compute(
+                &mut engine,
+                &input,
+                &ExtremaRequest {
+                    x: "x".into(),
+                    y: "y".into(),
+                },
+            )
+            .unwrap();
+        assert!(engine.batch_sizes.is_empty());
+        assert!(result
+            .trace
+            .as_ref()
+            .is_some_and(|trace| trace.events.len() >= 4));
+        assert!(result
+            .trace
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .all(|event| event
+                .presentation
+                .as_ref()
+                .is_some_and(|presentation| presentation.tex_override.is_none())));
     }
 
     #[test]
