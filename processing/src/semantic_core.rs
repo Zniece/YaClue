@@ -30,6 +30,55 @@ pub struct ObjectId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ObjectRevision(pub u64);
 
+/// Identity of the mathematical value, independent of which equivalent AST
+/// is currently preferred for display or for an operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MathematicalIdentity(pub ObjectId);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RepresentationId(pub u8);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepresentationPreference {
+    Principal,
+    Operation(OperatorId),
+    Named(String),
+}
+
+#[derive(Clone)]
+struct StableRepresentation {
+    id: RepresentationId,
+    preference: RepresentationPreference,
+    expression: Rc<LispObject>,
+    overlay: SemanticOverlay,
+    normalization: Option<NormalizationMetadata>,
+}
+
+#[derive(Clone)]
+struct RepresentationSet {
+    candidates: Vec<StableRepresentation>,
+    active: RepresentationId,
+}
+
+/// A bounded, computation-local AST selection. It is deliberately not stored
+/// on `MathematicalObject`, so temporary expansions cannot leak into the
+/// object's stable representation set.
+#[derive(Clone)]
+pub struct OperationSessionAst {
+    pub identity: MathematicalIdentity,
+    pub revision: ObjectRevision,
+    expression: Rc<LispObject>,
+}
+
+impl OperationSessionAst {
+    pub fn view<'a>(&'a self, env: &'a Environment) -> ExpressionView<'a> {
+        ExpressionView::new(env, &self.expression)
+    }
+}
+
+#[allow(dead_code)] // Consumed by the B2 algebra-transform adapters.
+pub(crate) const MAX_STABLE_REPRESENTATIONS: usize = 4;
+
 /// Cumulative normalization strength. A higher level includes the guarantees
 /// of every preceding level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1081,10 +1130,18 @@ pub struct MathematicalObject {
     pub semantics: SemanticState,
     pub overlay: SemanticOverlay,
     pub normalization: Option<NormalizationState>,
+    representations: RepresentationSet,
 }
 
 impl MathematicalObject {
     pub fn new(id: ObjectId, expression: Rc<LispObject>, semantics: SemanticState) -> Self {
+        let principal = StableRepresentation {
+            id: RepresentationId(0),
+            preference: RepresentationPreference::Principal,
+            expression: expression.clone(),
+            overlay: SemanticOverlay::default(),
+            normalization: None,
+        };
         Self {
             id,
             revision: ObjectRevision(0),
@@ -1092,7 +1149,105 @@ impl MathematicalObject {
             semantics,
             overlay: SemanticOverlay::default(),
             normalization: None,
+            representations: RepresentationSet {
+                candidates: vec![principal],
+                active: RepresentationId(0),
+            },
         }
+    }
+
+    pub fn identity(&self) -> MathematicalIdentity {
+        MathematicalIdentity(self.id)
+    }
+
+    pub fn active_representation(&self) -> RepresentationId {
+        self.representations.active
+    }
+
+    pub fn stable_representation_count(&self) -> usize {
+        self.representations.candidates.len()
+    }
+
+    pub fn representation_preference(
+        &self,
+        id: RepresentationId,
+    ) -> Option<&RepresentationPreference> {
+        self.representations
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == id)
+            .map(|candidate| &candidate.preference)
+    }
+
+    /// Retain one explicitly produced equivalent representation. The caller
+    /// supplies the transformation proof; B2 connects this primitive to
+    /// certified algebra operations.
+    #[allow(dead_code)] // B1 primitive; B2 is the first production caller.
+    pub(crate) fn retain_representation(
+        &mut self,
+        expression: Rc<LispObject>,
+        preference: RepresentationPreference,
+        normalization: Option<NormalizationMetadata>,
+    ) -> Option<RepresentationId> {
+        if self.representations.candidates.len() >= MAX_STABLE_REPRESENTATIONS {
+            return None;
+        }
+        let id = RepresentationId(self.representations.candidates.len() as u8);
+        self.representations.candidates.push(StableRepresentation {
+            id,
+            preference,
+            expression,
+            overlay: SemanticOverlay::default(),
+            normalization,
+        });
+        Some(id)
+    }
+
+    #[allow(dead_code)] // B1 primitive; B2 is the first production caller.
+    pub(crate) fn activate_representation(
+        &mut self,
+        id: RepresentationId,
+    ) -> Result<(), EngineError> {
+        let candidate = self
+            .representations
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == id)
+            .cloned()
+            .ok_or_else(|| EngineError::InvalidInput("未知的对象表示".into()))?;
+        if self.representations.active == id {
+            return Ok(());
+        }
+        self.expression = candidate.expression;
+        self.overlay = candidate.overlay;
+        self.representations.active = id;
+        self.revision.0 += 1;
+        self.normalization = candidate.normalization.map(|metadata| NormalizationState {
+            revision: self.revision,
+            metadata,
+        });
+        Ok(())
+    }
+
+    pub fn operation_session(
+        &self,
+        representation: Option<RepresentationId>,
+    ) -> Result<OperationSessionAst, EngineError> {
+        let expression = match representation {
+            None => self.expression.clone(),
+            Some(id) => self
+                .representations
+                .candidates
+                .iter()
+                .find(|candidate| candidate.id == id)
+                .map(|candidate| candidate.expression.clone())
+                .ok_or_else(|| EngineError::InvalidInput("未知的对象表示".into()))?,
+        };
+        Ok(OperationSessionAst {
+            identity: self.identity(),
+            revision: self.revision,
+            expression,
+        })
     }
 
     pub fn view<'a>(&'a self, env: &'a Environment) -> ExpressionView<'a> {
@@ -1166,7 +1321,8 @@ impl MathematicalObject {
     /// delta completely before invoking this method, so no half-updated object
     /// can escape a transition.
     pub fn apply(&mut self, delta: ObjectDelta) {
-        let changed = delta.expression.is_some()
+        let expression_changed = delta.expression.is_some();
+        let changed = expression_changed
             || delta.semantics.is_some()
             || delta.overlay.is_some()
             || delta.normalization.is_some();
@@ -1188,6 +1344,34 @@ impl MathematicalObject {
                 revision: self.revision,
                 metadata,
             });
+        }
+        if expression_changed {
+            self.representations = RepresentationSet {
+                candidates: vec![StableRepresentation {
+                    id: RepresentationId(0),
+                    preference: RepresentationPreference::Principal,
+                    expression: self.expression.clone(),
+                    overlay: self.overlay.clone(),
+                    normalization: self
+                        .normalization
+                        .as_ref()
+                        .map(|state| state.metadata.clone()),
+                }],
+                active: RepresentationId(0),
+            };
+        } else if changed {
+            if let Some(active) = self
+                .representations
+                .candidates
+                .iter_mut()
+                .find(|candidate| candidate.id == self.representations.active)
+            {
+                active.overlay = self.overlay.clone();
+                active.normalization = self
+                    .normalization
+                    .as_ref()
+                    .map(|state| state.metadata.clone());
+            }
         }
     }
 }
@@ -1504,6 +1688,95 @@ mod tests {
         assert_eq!(before.object, after.object);
         assert_eq!(before.revision, ObjectRevision(0));
         assert_eq!(after.revision, ObjectRevision(1));
+    }
+
+    #[test]
+    fn equivalent_representations_preserve_identity_and_version_ast_snapshots() {
+        let mut env = Environment::new();
+        let expanded = parse_expression(&mut env, "x^2-1;").unwrap().unwrap();
+        let factored = parse_expression(&mut env, "(x-1)*(x+1);").unwrap().unwrap();
+        let metadata = ResultMetadata::solved(
+            crate::semantic::Exactness::Exact,
+            crate::protocol::ConditionSet::empty(),
+        );
+        let mut object = MathematicalObject::new(
+            ObjectId(30),
+            expanded,
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata,
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        );
+        let identity = object.identity();
+        let alternative = object
+            .retain_representation(
+                factored,
+                RepresentationPreference::Named("factored".into()),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(object.stable_representation_count(), 2);
+        assert_eq!(object.revision, ObjectRevision(0));
+        object.activate_representation(alternative).unwrap();
+        assert_eq!(object.identity(), identity);
+        assert_eq!(object.revision, ObjectRevision(1));
+        assert_eq!(object.view(&env).print_source(), "(x-1)*(x+1)");
+        assert_eq!(
+            object.representation_preference(alternative),
+            Some(&RepresentationPreference::Named("factored".into()))
+        );
+
+        object.activate_representation(RepresentationId(0)).unwrap();
+        assert_eq!(object.identity(), identity);
+        assert_eq!(object.revision, ObjectRevision(2));
+        assert_eq!(object.view(&env).print_source(), "x^2-1");
+    }
+
+    #[test]
+    fn operation_session_ast_is_temporary_and_stable_candidates_are_bounded() {
+        let mut env = Environment::new();
+        let principal = parse_expression(&mut env, "Gamma(x);").unwrap().unwrap();
+        let metadata = ResultMetadata::solved(
+            crate::semantic::Exactness::Exact,
+            crate::protocol::ConditionSet::empty(),
+        );
+        let mut object = MathematicalObject::new(
+            ObjectId(31),
+            principal,
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata,
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        );
+        let original_revision = object.revision;
+        for index in 0..5 {
+            let expression = parse_expression(&mut env, &format!("Gamma(x)+{index};"))
+                .unwrap()
+                .unwrap();
+            object.retain_representation(
+                expression,
+                RepresentationPreference::Operation(OperatorId::Derivative),
+                None,
+            );
+        }
+        assert_eq!(
+            object.stable_representation_count(),
+            MAX_STABLE_REPRESENTATIONS
+        );
+
+        let session = object.operation_session(Some(RepresentationId(1))).unwrap();
+        assert_eq!(session.identity, object.identity());
+        assert_eq!(session.revision, original_revision);
+        assert_eq!(session.view(&env).print_source(), "Gamma(x)+0");
+        assert_eq!(object.view(&env).print_source(), "Gamma(x)");
+        assert_eq!(object.revision, original_revision);
     }
 
     #[test]
