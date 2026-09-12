@@ -48,6 +48,7 @@ pub struct CompositionResult {
     pub sampled_data: Option<crate::semantic_core::SampledTrajectory>,
     pub plot: Option<crate::plot::PlotEffect>,
     pub effect_only: bool,
+    pub analysis: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -160,6 +161,7 @@ pub fn execute_elaborated(
             sampled_data: None,
             plot,
             effect_only: true,
+            analysis: None,
         }));
     }
     if (structural_context || root_is_native)
@@ -237,6 +239,14 @@ pub fn execute_elaborated(
                 }
                 constants
             });
+        let analysis = computation.certificates.iter().find_map(|certificate| {
+            matches!(
+                certificate.kind.as_str(),
+                "extrema_analysis" | "lagrange_analysis"
+            )
+            .then(|| serde_json::from_str(&certificate.payload).ok())
+            .flatten()
+        });
         return Ok(Some(CompositionResult {
             status,
             value,
@@ -254,6 +264,7 @@ pub fn execute_elaborated(
             },
             plot: None,
             effect_only: false,
+            analysis,
         }));
     }
     let mut operations = Vec::new();
@@ -320,6 +331,7 @@ fn execute_collected(
                 sampled_data: None,
                 plot: None,
                 effect_only: false,
+                analysis: None,
             }));
         }
     };
@@ -359,6 +371,7 @@ fn execute_collected(
                 sampled_data: None,
                 plot: None,
                 effect_only: false,
+                analysis: None,
             }));
         }
         return Ok(None);
@@ -433,6 +446,7 @@ fn execute_collected(
         sampled_data: None,
         plot: None,
         effect_only: false,
+        analysis: None,
     }))
 }
 
@@ -480,6 +494,7 @@ fn execute_limit_then_derivative(
                 sampled_data: None,
                 plot: None,
                 effect_only: false,
+                analysis: None,
             }));
         }
         ComputationOutput::EffectsOnly => unreachable!("Limit always returns an object"),
@@ -511,6 +526,7 @@ fn execute_limit_then_derivative(
             sampled_data: None,
             plot: None,
             effect_only: false,
+            analysis: None,
         }));
     }
     let differentiated =
@@ -557,6 +573,7 @@ fn execute_limit_then_derivative(
         sampled_data: None,
         plot: None,
         effect_only: false,
+        analysis: None,
     }))
 }
 
@@ -1020,9 +1037,10 @@ fn apply(
         CompositionOperator::FindRoot => Err(EngineError::InvalidInput(
             "数值求根必须通过类型化数学对象执行".into(),
         )),
-        CompositionOperator::Plot
-        | CompositionOperator::Extrema
-        | CompositionOperator::Lagrange => Err(EngineError::InvalidInput(
+        CompositionOperator::Extrema | CompositionOperator::Lagrange => Err(
+            EngineError::InvalidInput("极值分析必须通过类型化数学对象执行".into()),
+        ),
+        CompositionOperator::Plot => Err(EngineError::InvalidInput(
             "待迁移运算符不能进入旧组合执行器".into(),
         )),
     }

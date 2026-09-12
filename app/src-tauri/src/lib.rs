@@ -223,6 +223,8 @@ fn project_domain_semantic(
         && result.kind != "polar_integral"
         && result.kind != "numeric_ode"
         && result.kind != "numeric_root"
+        && result.kind != "extrema"
+        && result.kind != "lagrange"
         && generated.is_empty()
     {
         return Ok(input.clone());
@@ -263,6 +265,7 @@ fn project_domain_semantic(
             "ode" => Some(ValueKind::SolutionSet),
             "integral" => Some(ValueKind::FunctionFamily),
             "numeric_ode" => Some(ValueKind::SampledData),
+            "extrema" | "lagrange" => Some(ValueKind::SolutionSet),
             _ => None,
         },
     )
@@ -275,6 +278,8 @@ fn project_domain_semantic(
             | "double_integral"
             | "polar_integral"
             | "numeric_ode"
+            | "extrema"
+            | "lagrange"
     ) && result
         .data
         .get("status")
@@ -467,6 +472,15 @@ fn dispatch_expression_with_engine(
                 {
                     (descriptor.product_kind, descriptor.title)
                 }
+                (_, Some(descriptor))
+                    if matches!(
+                        descriptor.id,
+                        processing::semantic_core::OperatorId::Extrema
+                            | processing::semantic_core::OperatorId::Lagrange
+                    ) =>
+                {
+                    (descriptor.product_kind, descriptor.title)
+                }
                 (_, Some(descriptor)) if !has_native_child => {
                     use processing::semantic_core::OperatorId;
                     match descriptor.id {
@@ -513,73 +527,6 @@ fn dispatch_expression_with_engine(
     }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
-            ("Extrema", [expression, x, y]) => {
-                if request.steps {
-                    let result = processing::extrema::analyze_steps_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        x,
-                        y,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "extrema",
-                        "无约束极值",
-                        result.result.expression.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::extrema::analyze(&mut *engine, expression, x, y)
-                    .map_err(message)?;
-                return unified_result(
-                    "extrema",
-                    "无约束极值",
-                    result.expression.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Lagrange", [expression, constraint, x, y]) => {
-                if request.steps {
-                    let result = processing::extrema::analyze_lagrange_steps_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        constraint,
-                        x,
-                        y,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "lagrange",
-                        "约束极值",
-                        result.result.expression.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::extrema::analyze_lagrange(
-                    &mut *engine,
-                    expression,
-                    constraint,
-                    x,
-                    y,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "lagrange",
-                    "约束极值",
-                    result.expression.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
             (head @ ("+" | "*"), [left, right])
                 if call
                     .argument_heads
@@ -1352,6 +1299,27 @@ mod tests {
             absent.outcome.resolution,
             processing::protocol::ResolutionState::NoResult
         );
+
+        let singular = process_expression_with_engine(
+            request("Lagrange(x+y,(x^2+y^2)^2,x,y)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(singular.data["analysis"]["status"], "singular_constraint");
+        assert_eq!(
+            singular.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(singular.expression.starts_with("Lagrange("));
+
+        let rejected_outer =
+            process_expression_with_engine(request("D(x)Extrema(x^2+y^2,x,y)", false), &mut engine)
+                .unwrap();
+        assert_eq!(
+            rejected_outer.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(rejected_outer.expression.starts_with("D(x)"));
     }
 
     #[test]
@@ -1786,6 +1754,57 @@ mod tests {
                 };
             assert!(error.message.contains("副作用"), "{}", error.message);
         }
+    }
+
+    #[test]
+    fn unified_input_routes_extrema_and_lagrange_as_structured_candidate_sets() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let extrema = process_expression_with_engine(
+            request("Extrema(Expand((x-1)^2+(y+2)^2),x,y)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(extrema.kind, "extrema");
+        assert_eq!(extrema.semantic.kind, ValueKind::SolutionSet);
+        assert_eq!(extrema.data["analysis"]["status"], "classified");
+        assert_eq!(
+            extrema.data["analysis"]["critical_points"][0]["kind"],
+            "local_minimum"
+        );
+        assert_eq!(
+            extrema.data["analysis"]["critical_points"][0]["gradient_verified"],
+            true
+        );
+        assert!(extrema
+            .steps
+            .iter()
+            .any(|step| step.rule == "extrema-classify"));
+
+        let lagrange = process_expression_with_engine(
+            request("Lagrange(x+y,x^2+y^2-1,x,y)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(lagrange.kind, "lagrange");
+        assert_eq!(lagrange.semantic.kind, ValueKind::SolutionSet);
+        assert_eq!(lagrange.data["analysis"]["status"], "candidates");
+        assert!(lagrange.data["analysis"]["candidates"]
+            .as_array()
+            .is_some_and(|candidates| !candidates.is_empty()));
+        assert!(lagrange.data["analysis"]["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|candidate| candidate["stationarity_verified"] == true
+                && candidate["constraint_verified"] == true));
+
+        let absent =
+            process_expression_with_engine(request("Extrema(x+y,x,y)", false), &mut engine)
+                .unwrap();
+        assert_eq!(
+            absent.outcome.resolution,
+            processing::protocol::ResolutionState::NoResult
+        );
     }
 
     #[test]

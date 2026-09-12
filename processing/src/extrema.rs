@@ -6,6 +6,14 @@ use crate::input::{
     analyze_expression, fresh_internal_symbols, render_one_tex, validate_expression,
     validate_symbol,
 };
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Certificate, Computation, ComputationOutput,
+    MathematicalObject, NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta,
+    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState,
+};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -94,6 +102,244 @@ pub struct LagrangeResult {
 pub struct LagrangeStepResult {
     pub result: LagrangeResult,
     pub steps: Vec<Step>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtremaRequest {
+    pub x: String,
+    pub y: String,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ExtremaOperation;
+
+impl SemanticOperation<ExtremaRequest> for ExtremaOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &MathematicalObject,
+        request: &ExtremaRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::AnalyzeExtrema)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备极值分析能力".into(),
+            ));
+        }
+        let analyzed = analyze_steps(engine, &input.print_source(), &request.x, &request.y)?;
+        extrema_computation(input, analyzed)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LagrangeRequest {
+    pub constraint: String,
+    pub x: String,
+    pub y: String,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LagrangeOperation;
+
+impl SemanticOperation<LagrangeRequest> for LagrangeOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &MathematicalObject,
+        request: &LagrangeRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::AnalyzeExtrema)
+        {
+            return Err(EngineError::InvalidInput(
+                "该数学对象不具备约束极值分析能力".into(),
+            ));
+        }
+        let analyzed = analyze_lagrange_steps(
+            engine,
+            &input.print_source(),
+            &request.constraint,
+            &request.x,
+            &request.y,
+        )?;
+        lagrange_computation(input, analyzed)
+    }
+}
+
+fn extrema_computation(
+    input: &MathematicalObject,
+    analyzed: ExtremaStepResult,
+) -> Result<Computation, EngineError> {
+    let result = analyzed.result;
+    let source = match result.status {
+        ExtremaStatus::Classified | ExtremaStatus::PartiallyClassified => format!(
+            "{{{}}}",
+            result
+                .critical_points
+                .iter()
+                .map(|point| assignments_expression(&point.coordinates))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        ExtremaStatus::NoCriticalPoints => "List()".into(),
+        ExtremaStatus::Unresolved => format!(
+            "Extrema({},{},{})",
+            input.print_source(),
+            result.variables[0],
+            result.variables[1]
+        ),
+    };
+    let resolution = match result.status {
+        ExtremaStatus::Classified | ExtremaStatus::PartiallyClassified => 0,
+        ExtremaStatus::NoCriticalPoints => 1,
+        ExtremaStatus::Unresolved => 2,
+    };
+    structured_extrema_output(
+        input,
+        source,
+        result.variables.to_vec(),
+        OperatorId::Extrema,
+        "Extrema",
+        resolution,
+        analyzed.steps,
+        Certificate {
+            kind: "extrema_analysis".into(),
+            payload: serde_json::to_string(&result)
+                .map_err(|error| EngineError::Parse(error.to_string()))?,
+        },
+    )
+}
+
+fn lagrange_computation(
+    input: &MathematicalObject,
+    analyzed: LagrangeStepResult,
+) -> Result<Computation, EngineError> {
+    let result = analyzed.result;
+    let source = match result.status {
+        LagrangeStatus::Candidates => lagrange_display(&result.candidates),
+        LagrangeStatus::NoCandidates => "List()".into(),
+        LagrangeStatus::SingularConstraint | LagrangeStatus::Unresolved => format!(
+            "Lagrange({},{},{},{})",
+            input.print_source(),
+            result.constraint,
+            result.variables[0],
+            result.variables[1]
+        ),
+    };
+    let resolution = match result.status {
+        LagrangeStatus::Candidates => 0,
+        LagrangeStatus::NoCandidates => 1,
+        LagrangeStatus::SingularConstraint | LagrangeStatus::Unresolved => 2,
+    };
+    structured_extrema_output(
+        input,
+        source,
+        result.variables.to_vec(),
+        OperatorId::Lagrange,
+        "Lagrange",
+        resolution,
+        analyzed.steps,
+        Certificate {
+            kind: "lagrange_analysis".into(),
+            payload: serde_json::to_string(&result)
+                .map_err(|error| EngineError::Parse(error.to_string()))?,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn structured_extrema_output(
+    input: &MathematicalObject,
+    source: String,
+    variables: Vec<String>,
+    operator: OperatorId,
+    spelling: &str,
+    resolution: u8,
+    steps: Vec<Step>,
+    certificate: Certificate,
+) -> Result<Computation, EngineError> {
+    let interpretation = if resolution == 2 {
+        SemanticInterpretation::HeldApplication {
+            operator: spelling.into(),
+        }
+    } else {
+        SemanticInterpretation::SolutionSet {
+            variables,
+            parameters: Vec::new(),
+        }
+    };
+    let metadata = match resolution {
+        0 => ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+        1 => ResultMetadata::no_result(Exactness::Symbolic, OutcomeReason::MathematicalAbsence),
+        _ => ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered),
+    };
+    let mut semantics = SemanticState {
+        kind: if resolution == 0 {
+            ValueKind::SolutionSet
+        } else {
+            ValueKind::Unevaluated
+        },
+        interpretation,
+        metadata,
+        capabilities: CapabilitySet::empty(),
+        requirements: Vec::new(),
+    };
+    let parsed = object_from_source(input.id, &source, semantics.clone())?;
+    if resolution == 2 {
+        crate::semantic_core::promote_held_application(
+            spelling,
+            &parsed.raw_expression(),
+            &mut semantics,
+        )?;
+    }
+    let mut output = input.clone();
+    output.apply(ObjectDelta {
+        expression: Some(parsed.raw_expression()),
+        semantics: Some(semantics),
+        overlay: None,
+        normalization: (resolution == 0).then_some(NormalizationMetadata {
+            level: NormalizationLevel::Domain,
+            assumptions: Vec::new(),
+            mode: NormalizationMode::Operation(operator),
+        }),
+    });
+    let events = steps
+        .into_iter()
+        .map(|step| RuleEvent {
+            rule: step.rule,
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: match step.importance {
+                StepImportance::Key => RuleImportance::Key,
+                StepImportance::Normal => RuleImportance::Normal,
+                StepImportance::Routine => RuleImportance::Routine,
+            },
+            presentation: Some(RulePresentation {
+                expression: step.expr,
+                explanation: step.why,
+                tex_override: Some(step.tex),
+            }),
+        })
+        .collect();
+    Ok(Computation {
+        output: match resolution {
+            0 => ComputationOutput::Value(output),
+            1 => ComputationOutput::NoValue(output),
+            _ => ComputationOutput::Held(output),
+        },
+        trace: Some(RuleTrace { events }),
+        certificates: vec![certificate],
+        effects: Vec::new(),
+    })
 }
 
 pub fn analyze_lagrange(

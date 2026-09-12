@@ -348,13 +348,12 @@ pub enum ObjectNativeRoute {
     NumericOde,
     NumericRoot,
     PlotEffect,
+    Extrema,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PendingDomain {
-    Extrema,
-}
+pub enum PendingDomain {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorAvailability {
@@ -1016,7 +1015,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_AND_THIRD_BIND_FIRST,
         capability: CapabilityId::AnalyzeExtrema,
-        availability: OperatorAvailability::Pending(PendingDomain::Extrema),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Extrema),
         product_kind: "extrema",
         title: "无约束极值",
     },
@@ -1029,7 +1028,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: LAGRANGE_BINDERS,
         capability: CapabilityId::AnalyzeExtrema,
-        availability: OperatorAvailability::Pending(PendingDomain::Extrema),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Extrema),
         product_kind: "lagrange",
         title: "约束极值",
     },
@@ -1521,6 +1520,7 @@ pub enum ObjectCapability {
     IntegrateMultiple,
     SolveNumericOde,
     FindNumericRoot,
+    AnalyzeExtrema,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1534,7 +1534,7 @@ pub enum ObjectCapability {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CapabilitySet(u32);
+pub struct CapabilitySet(u64);
 
 impl CapabilitySet {
     pub const fn empty() -> Self {
@@ -1563,6 +1563,7 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::IntegrateMultiple as u8)
                 | (1 << ObjectCapability::SolveNumericOde as u8)
                 | (1 << ObjectCapability::FindNumericRoot as u8)
+                | (1 << ObjectCapability::AnalyzeExtrema as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
@@ -2316,7 +2317,7 @@ mod tests {
             .iter()
             .flat_map(|capability| capability.names.iter().copied())
             .collect();
-        let expected_names: BTreeSet<_> = ["Extrema", "Lagrange"].into_iter().collect();
+        let expected_names: BTreeSet<_> = BTreeSet::new();
         assert_eq!(generated_names, expected_names);
         assert!(generated
             .iter()

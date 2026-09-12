@@ -105,6 +105,12 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                         && can_execute_elaborated_tree(&expression.children[0])
                 }
                 ObjectNativeRoute::PlotEffect => false,
+                ObjectNativeRoute::Extrema => {
+                    matches!(expression.children.len(), 3 | 4)
+                        && can_execute_elaborated_tree(&expression.children[0])
+                        && (expression.children.len() == 3
+                            || can_execute_elaborated_tree(&expression.children[1]))
+                }
             }
         }
         crate::elaboration::MathematicalForm::Application { head } => {
@@ -204,6 +210,7 @@ pub fn execute_elaborated_structure(
                 }
                 ObjectNativeRoute::NumericRoot => execute_find_root_application(engine, expression),
                 ObjectNativeRoute::PlotEffect => unreachable!("Plot uses the effect form"),
+                ObjectNativeRoute::Extrema => execute_extrema_application(engine, expression, head),
             };
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -583,6 +590,63 @@ fn execute_find_root_application(
     )?;
     merge_prior_computation(&mut current, &mut operand);
     Ok(current)
+}
+
+fn execute_extrema_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    match (
+        crate::semantic_core::operator_descriptor(head).map(|item| item.id),
+        expression.children.as_slice(),
+    ) {
+        (Some(OperatorId::Extrema), [operand_node, x, y]) => {
+            let mut operand = execute_elaborated_structure(engine, operand_node)?;
+            if !matches!(operand.output, ComputationOutput::Value(_)) {
+                return retain_pending_application(expression, operand, head, 0);
+            }
+            let input = operand.value().expect("checked extrema operand").clone();
+            let mut current = crate::extrema::ExtremaOperation.compute(
+                engine,
+                &input,
+                &crate::extrema::ExtremaRequest {
+                    x: x.object.print_source(),
+                    y: y.object.print_source(),
+                },
+            )?;
+            merge_prior_computation(&mut current, &mut operand);
+            Ok(current)
+        }
+        (Some(OperatorId::Lagrange), [operand_node, constraint_node, x, y]) => {
+            let mut operand = execute_elaborated_structure(engine, operand_node)?;
+            if !matches!(operand.output, ComputationOutput::Value(_)) {
+                return retain_pending_application(expression, operand, head, 0);
+            }
+            let mut constraint = execute_elaborated_structure(engine, constraint_node)?;
+            if !matches!(constraint.output, ComputationOutput::Value(_)) {
+                return retain_pending_application(expression, constraint, head, 1);
+            }
+            let input = operand.value().expect("checked Lagrange operand").clone();
+            let constraint_source = constraint
+                .value()
+                .expect("checked Lagrange constraint")
+                .print_source();
+            let mut current = crate::extrema::LagrangeOperation.compute(
+                engine,
+                &input,
+                &crate::extrema::LagrangeRequest {
+                    constraint: constraint_source,
+                    x: x.object.print_source(),
+                    y: y.object.print_source(),
+                },
+            )?;
+            merge_prior_computation(&mut current, &mut constraint);
+            merge_prior_computation(&mut current, &mut operand);
+            Ok(current)
+        }
+        _ => Err(EngineError::InvalidInput(format!("{head} 的参数签名无效"))),
+    }
 }
 
 fn execute_numeric_application(
