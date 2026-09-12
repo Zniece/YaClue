@@ -8,7 +8,7 @@ use processing::ode::InitialCondition;
 use processing::ode_numeric::NumericOdeOptions;
 use processing::plot::SampleOptions;
 use processing::protocol::{
-    Condition, ConditionSet, OutcomeReason, ResultCompleteness, ResultMetadata,
+    Condition, ConditionSet, Conditionality, OutcomeReason, ResultCompleteness, ResultMetadata,
 };
 use processing::semantic::{SemanticSummary, ValueKind};
 use processing::steps::{Step, StepVerbosity};
@@ -163,8 +163,16 @@ fn result_metadata(
     {
         ResultMetadata::unresolved(exactness, OutcomeReason::AlgorithmUncovered)
     } else {
-        ResultMetadata::solved(exactness, conditions)
+        ResultMetadata::solved(exactness, conditions.clone())
     };
+    if !conditions.is_empty() {
+        metadata.conditions = conditions;
+        metadata.conditionality = if metadata.reason == Some(OutcomeReason::ConditionInsufficient) {
+            Conditionality::Insufficient
+        } else {
+            Conditionality::Conditional
+        };
+    }
     if let Some(completeness) = domain.get("completeness").and_then(Value::as_str) {
         metadata.completeness = match completeness {
             "complete" | "parametric" | "periodic" => ResultCompleteness::Complete,
@@ -1562,6 +1570,72 @@ mod tests {
                 processing::protocol::ResolutionState::Solved
             );
         }
+    }
+
+    #[test]
+    fn semantic_calculus_end_to_end_acceptance() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let started = std::time::Instant::now();
+        let cases = [
+            ("Limit(t,0)(Sin(t)/t+x^2)", "x^2+1", "limit"),
+            (
+                "D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t)))",
+                "Gamma(x)*PolyGamma(0,x)",
+                "composition",
+            ),
+            (
+                "D(x)(Integrate(t,0,1)(Sin(x*t)/(1+t^2)))",
+                "Integrate(t,0,1)D(x,1)Sin(x*t)/(1+t^2)",
+                "composition",
+            ),
+        ];
+        for (source, expected, kind) in cases {
+            let without_steps =
+                process_expression_with_engine(request(source, false), &mut engine).unwrap();
+            let with_steps =
+                process_expression_with_engine(request(source, true), &mut engine).unwrap();
+            assert_eq!(without_steps.expression, expected, "{source}");
+            assert_eq!(with_steps.expression, expected, "{source}");
+            assert_eq!(without_steps.kind, kind, "{source}");
+            assert!(without_steps.steps.is_empty(), "{source}");
+            assert!(!with_steps.steps.is_empty(), "{source}");
+            assert_eq!(without_steps.outcome, with_steps.outcome, "{source}");
+            let line = serde_json::to_string(&with_steps).unwrap();
+            assert!(!line.contains('\n'));
+            let decoded: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(decoded["expression"], expected);
+        }
+        let gamma = process_expression_with_engine(
+            request("D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t)))", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(gamma.outcome.conditionality, Conditionality::Conditional);
+        assert!(gamma
+            .outcome
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::RealPartPositive { expression } if expression == "x")));
+        let held = process_expression_with_engine(
+            request("D(x)(Integrate(t,0,1)(Sin(x*t)/(1+t^2)))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(held
+            .outcome
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::Unknown { .. })));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "semantic calculus acceptance exceeded its bounded runtime"
+        );
     }
 
     #[test]

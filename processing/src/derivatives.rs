@@ -507,7 +507,7 @@ fn derivative_of_registered_function(
 }
 
 fn derivative_of_typed_integral(
-    engine: &mut dyn Engine,
+    _engine: &mut dyn Engine,
     operand: &crate::semantic_core::MathematicalObject,
     request: &DerivativeRequest,
 ) -> Result<Option<Computation>, EngineError> {
@@ -587,11 +587,10 @@ fn derivative_of_typed_integral(
             return Ok(None);
         }
     }
-    let differentiated = derivative_computation(engine, &integrand, &request.variable, 1)?;
-    let derivative = differentiated
-        .subject()
-        .expect("derivative produces a mathematical object")
-        .print_source();
+    // This is a semantic degradation, not an invitation to force the inner
+    // derivative through a different algorithm. Retaining the typed
+    // derivative preserves exact composition until its own rule is known.
+    let derivative = format!("D({},{})({integrand})", request.variable, request.order);
     let source = match (lower, upper) {
         (Some(lower), Some(upper)) => {
             format!("Integrate({variable},{lower},{upper})({derivative})")
@@ -637,7 +636,7 @@ fn derivative_of_typed_integral(
         overlay: None,
         normalization: None,
     });
-    let mut computation = integral_derivative_computation(
+    let computation = integral_derivative_computation(
         operand,
         output,
         "differentiate-under-integral-sign",
@@ -645,11 +644,6 @@ fn derivative_of_typed_integral(
         conditions,
         true,
     );
-    if let Some(trace) = differentiated.trace {
-        let mut events = trace.events;
-        events.extend(computation.trace.take().unwrap().events);
-        computation.trace = Some(RuleTrace { events });
-    }
     Ok(Some(computation))
 }
 

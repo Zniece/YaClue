@@ -358,4 +358,29 @@ mod tests {
         assert!(rules.contains(&"intrinsic-gamma-lowering"));
         assert!(rules.contains(&"derivative-registered-function-chain-rule"));
     }
+
+    #[test]
+    fn trace_modes_share_the_same_lowering_transition() {
+        let input = crate::elaboration::elaborate("Integrate(t,0,Infinity)(t^(x-1)*Exp(-t))")
+            .unwrap()
+            .object;
+        let mut engine = crate::engine::RustEngine::spawn().unwrap();
+        let off = try_lower_application(&mut engine, &input, TraceMode::Off)
+            .unwrap()
+            .unwrap();
+        let detailed = try_lower_application(&mut engine, &input, TraceMode::Detailed)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            off.value().unwrap().print_source(),
+            detailed.value().unwrap().print_source()
+        );
+        assert_eq!(
+            off.value().unwrap().semantics.metadata,
+            detailed.value().unwrap().semantics.metadata
+        );
+        assert!(off.trace.is_none());
+        assert_eq!(detailed.trace.unwrap().events.len(), 1);
+        assert_eq!(off.certificates, detailed.certificates);
+    }
 }
