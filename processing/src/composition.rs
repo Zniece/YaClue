@@ -4,14 +4,13 @@
 use serde::Serialize;
 
 use crate::engine::{Engine, EngineError};
-use crate::input::{strip_tex_delimiters, RootCall};
+use crate::input::strip_tex_delimiters;
 use crate::protocol::{ConditionSet, ResultMetadata};
 use crate::semantic::SemanticSummary;
+pub use crate::semantic_core::OperatorId as CompositionOperator;
 use crate::semantic_core::{
-    is_known_operator, operator_descriptor, ComputationOutput, ObjectCapability,
-    OperatorDescriptor, SemanticInterpretation,
+    operator_descriptor, ComputationOutput, ObjectCapability, SemanticInterpretation,
 };
-pub use crate::semantic_core::{OperatorId as CompositionOperator, ValueArgument};
 use crate::steps::{Step, StepVerbosity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -47,26 +46,6 @@ pub struct HeldApplication {
     pub source: String,
     pub operand_head: String,
     pub pending_operators: Vec<CompositionOperator>,
-}
-
-/// Cheap gate over the root analysis already performed by the product input
-/// path. Ordinary single-operation requests do not enter the composition
-/// parser or pay another traversal.
-pub fn is_candidate(call: &RootCall) -> bool {
-    let Some(signature) = operator_descriptor(&call.head) else {
-        return false;
-    };
-    if !signature.arities.contains(&call.arguments.len()) {
-        return true;
-    }
-    if is_conventional_value_form(signature, call.arguments.len()) {
-        return true;
-    }
-    let value_index = value_index(signature, call.arguments.len());
-    call.argument_heads
-        .get(value_index)
-        .and_then(|head| head.as_deref())
-        .is_some_and(is_known_operator)
 }
 
 /// Parse and execute a complete mathematical input through the object-native
@@ -310,23 +289,6 @@ fn tex_code(value: &str) -> String {
         }
     }
     format!(r"\mathtt{{{escaped}}}")
-}
-
-fn value_index(signature: &OperatorDescriptor, argument_count: usize) -> usize {
-    if is_conventional_value_form(signature, argument_count) {
-        return 0;
-    }
-    match signature.value_argument {
-        ValueArgument::First => 0,
-        ValueArgument::Last => argument_count.saturating_sub(1),
-    }
-}
-
-fn is_conventional_value_form(signature: &OperatorDescriptor, argument_count: usize) -> bool {
-    matches!(
-        (signature.id, argument_count),
-        (CompositionOperator::Limit, 2) | (CompositionOperator::Taylor, 3)
-    )
 }
 
 #[cfg(test)]

@@ -490,6 +490,35 @@ pub struct OperatorSlotSignature {
     pub requirements: &'static [Requirement],
 }
 
+impl OperatorDescriptor {
+    pub fn operand_index(&self, arity: usize) -> Option<usize> {
+        self.slot_signatures
+            .iter()
+            .find(|signature| signature.arity == arity)?
+            .requirements
+            .iter()
+            .position(|requirement| *requirement == Requirement::Operand)
+    }
+
+    /// Product presentation is registry-owned. `None` means the computation
+    /// should use the generic composition presentation.
+    pub fn product_presentation(
+        &self,
+        has_native_child: bool,
+        completed: bool,
+    ) -> Option<(&'static str, &'static str)> {
+        let visible = match self.route {
+            ObjectNativeRoute::PlotEffect | ObjectNativeRoute::Extrema => true,
+            ObjectNativeRoute::AlgebraTransform => !has_native_child && completed,
+            ObjectNativeRoute::Substitute
+            | ObjectNativeRoute::Approximate
+            | ObjectNativeRoute::Taylor => false,
+            _ => !has_native_child,
+        };
+        visible.then_some((self.product_kind, self.title))
+    }
+}
+
 const CALL: &[ApplicationForm] = &[ApplicationForm::Call];
 const BODIED: &[ApplicationForm] = &[ApplicationForm::Bodied];
 const BODIED_AND_CONVENTIONAL: &[ApplicationForm] = &[
@@ -2289,6 +2318,33 @@ mod tests {
                 assert_eq!(object_native_route(name), Some(descriptor.route));
             }
         }
+
+        let limit = operator_descriptor("Limit").unwrap();
+        assert_eq!(limit.operand_index(2), Some(0));
+        assert_eq!(limit.operand_index(3), Some(2));
+        assert_eq!(limit.operand_index(4), Some(3));
+        let taylor = operator_descriptor("Taylor").unwrap();
+        assert_eq!(taylor.operand_index(3), Some(0));
+        assert_eq!(taylor.operand_index(4), Some(3));
+
+        assert_eq!(
+            operator_descriptor("Plot")
+                .unwrap()
+                .product_presentation(true, true),
+            Some(("plot", "函数图像"))
+        );
+        assert_eq!(
+            operator_descriptor("D")
+                .unwrap()
+                .product_presentation(true, true),
+            None
+        );
+        assert_eq!(
+            operator_descriptor("Factor")
+                .unwrap()
+                .product_presentation(false, false),
+            None
+        );
     }
 
     #[test]

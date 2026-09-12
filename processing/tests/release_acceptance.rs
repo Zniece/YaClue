@@ -415,10 +415,6 @@ fn migrated_object_pipeline_release_contract() {
     let mut engine = RustEngine::spawn().expect("engine boot");
     let execute = |engine: &mut RustEngine, source: &str| {
         let elaborated = elaborate(source).unwrap_or_else(|error| panic!("{source}: {error}"));
-        assert!(
-            processing::arithmetic::can_execute_elaborated_tree(&elaborated),
-            "object-native tree rejected: {source}"
-        );
         execute_elaborated_structure(engine, &elaborated)
             .unwrap_or_else(|error| panic!("{source}: {error}"))
     };

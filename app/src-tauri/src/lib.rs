@@ -173,47 +173,12 @@ fn dispatch_expression_with_engine(
             ("matrix", "线性代数")
         }
         (processing::elaboration::MathematicalForm::Relation { .. }, _) => ("equation", "方程"),
-        (_, Some(descriptor)) if descriptor.id == processing::semantic_core::OperatorId::Plot => {
-            (descriptor.product_kind, descriptor.title)
-        }
-        (_, Some(descriptor))
-            if matches!(
-                descriptor.id,
-                processing::semantic_core::OperatorId::Extrema
-                    | processing::semantic_core::OperatorId::Lagrange
-            ) =>
-        {
-            (descriptor.product_kind, descriptor.title)
-        }
-        (_, Some(descriptor)) if !has_native_child => {
-            use processing::semantic_core::OperatorId;
-            match descriptor.id {
-                OperatorId::Derivative
-                | OperatorId::Limit
-                | OperatorId::Integral
-                | OperatorId::Solve
-                | OperatorId::OdeSolve
-                | OperatorId::MatrixTransform
-                | OperatorId::MatrixSolve
-                | OperatorId::MatrixAnalyze
-                | OperatorId::MatrixDecompose
-                | OperatorId::FactorProjection => (descriptor.product_kind, descriptor.title),
-                OperatorId::Sum
-                | OperatorId::ImproperIntegral
-                | OperatorId::PrincipalValueIntegral
-                | OperatorId::DoubleIntegral
-                | OperatorId::PolarIntegral
-                | OperatorId::OdeSolveNumeric
-                | OperatorId::FindRoot
-                | OperatorId::Plot => (descriptor.product_kind, descriptor.title),
-                OperatorId::Factor | OperatorId::AlgebraTransform
-                    if result.status == processing::composition::CompositionStatus::Completed =>
-                {
-                    (descriptor.product_kind, descriptor.title)
-                }
-                _ => ("composition", "组合运算"),
-            }
-        }
+        (_, Some(descriptor)) => descriptor
+            .product_presentation(
+                has_native_child,
+                result.status == processing::composition::CompositionStatus::Completed,
+            )
+            .unwrap_or(("composition", "组合运算")),
         (
             processing::elaboration::MathematicalForm::Number
             | processing::elaboration::MathematicalForm::Symbol

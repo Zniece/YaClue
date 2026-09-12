@@ -12,121 +12,6 @@ use crate::semantic_core::{
     SemanticInterpretation, SemanticOperation, SemanticState, UnarySemanticOperation,
 };
 
-/// Recursively execute a structural elaboration tree without reparsing its
-/// children. Registered domain applications remain typed Held operands until
-/// their own executor has lowered them.
-pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedObject) -> bool {
-    match &expression.form {
-        crate::elaboration::MathematicalForm::Structural { .. } => {
-            !expression
-                .children
-                .iter()
-                .any(|child| matches!(child.form, crate::elaboration::MathematicalForm::Collection))
-                && expression.children.iter().all(can_execute_elaborated_tree)
-        }
-        crate::elaboration::MathematicalForm::Application { head }
-            if crate::semantic_core::is_object_native_operator(head) =>
-        {
-            use crate::semantic_core::ObjectNativeRoute;
-            match crate::semantic_core::object_native_route(head).unwrap() {
-                ObjectNativeRoute::Calculus => {
-                    let Some(operand_index) = crate::semantic_core::signature_requirements(
-                        head,
-                        expression.children.len(),
-                    )
-                    .and_then(|requirements| {
-                        requirements
-                            .iter()
-                            .position(|item| *item == crate::semantic_core::Requirement::Operand)
-                    }) else {
-                        return false;
-                    };
-                    can_execute_elaborated_tree(&expression.children[operand_index])
-                }
-                ObjectNativeRoute::AlgebraTransform => expression
-                    .children
-                    .first()
-                    .is_some_and(can_execute_elaborated_tree),
-                ObjectNativeRoute::MatrixSolve => {
-                    expression.children.len() == 2
-                        && expression.children.iter().all(can_execute_elaborated_tree)
-                }
-                ObjectNativeRoute::Substitute => {
-                    expression.children.len() == 3
-                        && can_execute_elaborated_tree(&expression.children[1])
-                        && can_execute_elaborated_tree(&expression.children[2])
-                }
-                ObjectNativeRoute::Approximate => {
-                    matches!(expression.children.len(), 1 | 2)
-                        && can_execute_elaborated_tree(&expression.children[0])
-                }
-                ObjectNativeRoute::Taylor => {
-                    let Some(operand_index) = crate::semantic_core::signature_requirements(
-                        head,
-                        expression.children.len(),
-                    )
-                    .and_then(|requirements| {
-                        requirements
-                            .iter()
-                            .position(|item| *item == crate::semantic_core::Requirement::Operand)
-                    }) else {
-                        return false;
-                    };
-                    can_execute_elaborated_tree(&expression.children[operand_index])
-                }
-                ObjectNativeRoute::EquationSolve => {
-                    expression.children.len() == 2
-                        && can_execute_elaborated_tree(&expression.children[0])
-                }
-                ObjectNativeRoute::OdeSolve
-                | ObjectNativeRoute::MatrixUnary
-                | ObjectNativeRoute::FactorProjection => {
-                    expression.children.len() == 1
-                        && can_execute_elaborated_tree(&expression.children[0])
-                }
-                ObjectNativeRoute::Series => {
-                    expression.children.len() == 4
-                        && can_execute_elaborated_tree(&expression.children[3])
-                }
-                ObjectNativeRoute::DefinedIntegral => {
-                    matches!(expression.children.len(), 4 | 5)
-                        && can_execute_elaborated_tree(&expression.children[0])
-                }
-                ObjectNativeRoute::MultipleIntegral => {
-                    matches!(expression.children.len(), 7 | 9)
-                        && can_execute_elaborated_tree(&expression.children[0])
-                }
-                ObjectNativeRoute::NumericOde => {
-                    expression.children.len() == 6
-                        && can_execute_elaborated_tree(&expression.children[0])
-                }
-                ObjectNativeRoute::NumericRoot => {
-                    expression.children.len() == 3
-                        && can_execute_elaborated_tree(&expression.children[0])
-                }
-                ObjectNativeRoute::PlotEffect => false,
-                ObjectNativeRoute::Extrema => {
-                    matches!(expression.children.len(), 3 | 4)
-                        && can_execute_elaborated_tree(&expression.children[0])
-                        && (expression.children.len() == 3
-                            || can_execute_elaborated_tree(&expression.children[1]))
-                }
-            }
-        }
-        crate::elaboration::MathematicalForm::Application { head } => {
-            !crate::semantic_core::is_known_operator(head)
-                && expression.children.iter().all(can_execute_elaborated_tree)
-        }
-        crate::elaboration::MathematicalForm::EffectApplication { .. } => true,
-        crate::elaboration::MathematicalForm::OpaqueEngineValue { .. } => false,
-        crate::elaboration::MathematicalForm::Relation { .. }
-        | crate::elaboration::MathematicalForm::Collection => {
-            expression.children.iter().all(can_execute_elaborated_tree)
-        }
-        _ => true,
-    }
-}
-
 pub fn has_object_native_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
     expression.children.iter().any(|child| {
         matches!(&child.form,
@@ -2308,7 +2193,6 @@ mod tests {
             ("Sin(Integrate(x,0,1)(x^2))", "Sin(1/3)"),
         ] {
             let elaborated = crate::elaboration::elaborate(source).unwrap();
-            assert!(can_execute_elaborated_tree(&elaborated), "{source}");
             let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
             assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
         }
@@ -2324,7 +2208,6 @@ mod tests {
             ("Sin(Factor(x^2-1))", "Sin((x+1)*(x-1))"),
         ] {
             let elaborated = crate::elaboration::elaborate(source).unwrap();
-            assert!(can_execute_elaborated_tree(&elaborated), "{source}");
             let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
             assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
             assert!(result
@@ -2392,7 +2275,6 @@ mod tests {
             ("Subst(x,Limit(t,0)(Sin(t)/t))(x^2+1)", "2"),
         ] {
             let elaborated = crate::elaboration::elaborate(source).unwrap();
-            assert!(can_execute_elaborated_tree(&elaborated), "{source}");
             let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
             assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
             assert!(result
@@ -2422,7 +2304,6 @@ mod tests {
             "N(Pi,20)+1",
         ] {
             let elaborated = crate::elaboration::elaborate(source).unwrap();
-            assert!(can_execute_elaborated_tree(&elaborated), "{source}");
             let result = execute_elaborated_structure(&mut engine, &elaborated).unwrap();
             assert!(
                 matches!(result.output, ComputationOutput::Value(_)),
