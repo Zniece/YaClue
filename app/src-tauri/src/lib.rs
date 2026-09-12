@@ -1401,6 +1401,31 @@ mod tests {
     }
 
     #[test]
+    fn unified_input_preserves_known_formal_special_function_derivatives() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for expression in [
+            "D(x)Zeta(Sin(x))",
+            "D(x)EllipticK(x^2)",
+            "D(x)EllipticE(x)",
+            "D(x)HypergeometricPFQ({a,b},{c},x)",
+        ] {
+            let result =
+                process_expression_with_engine(request(expression, true), &mut engine).unwrap();
+            assert_eq!(result.kind, "derivative", "{expression}");
+            assert!(result.expression.starts_with("D(x,1)"), "{expression}");
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Unresolved,
+                "{expression}"
+            );
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "derivative-known-formal-function"));
+        }
+    }
+
+    #[test]
     fn unified_input_exposes_typed_partials_and_reclassifies_final_symbols() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for (expression, operator) in [("D(x)", "derivative"), ("Integrate(x)", "integral")] {

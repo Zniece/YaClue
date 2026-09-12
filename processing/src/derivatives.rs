@@ -387,7 +387,7 @@ struct FunctionDerivativeRule {
     head: &'static str,
     arity: usize,
     parameter_roles: &'static [FunctionParameterRole],
-    partial_derivative: PartialDerivativeBuilder,
+    partial_derivative: Option<PartialDerivativeBuilder>,
 }
 
 pub(crate) fn preserves_registered_function_identity(head: &str, arity: usize) -> bool {
@@ -550,14 +550,14 @@ const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
         head: "Gamma",
         arity: 1,
         parameter_roles: &[FunctionParameterRole::Argument],
-        partial_derivative: gamma_partial,
+        partial_derivative: Some(gamma_partial),
     },
     FunctionDerivativeRule {
         id: "function.erf.derivative",
         head: "Erf",
         arity: 1,
         parameter_roles: &[FunctionParameterRole::Argument],
-        partial_derivative: erf_partial,
+        partial_derivative: Some(erf_partial),
     },
     FunctionDerivativeRule {
         id: "function.poly-gamma.derivative",
@@ -567,14 +567,14 @@ const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
             FunctionParameterRole::Order,
             FunctionParameterRole::Argument,
         ],
-        partial_derivative: poly_gamma_partial,
+        partial_derivative: Some(poly_gamma_partial),
     },
     FunctionDerivativeRule {
         id: "function.lambert-w.derivative",
         head: "LambertW",
         arity: 1,
         parameter_roles: &[FunctionParameterRole::Argument],
-        partial_derivative: lambert_w_partial,
+        partial_derivative: Some(lambert_w_partial),
     },
     FunctionDerivativeRule {
         id: "function.beta.derivative",
@@ -584,7 +584,7 @@ const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
             FunctionParameterRole::ContinuousParameter,
             FunctionParameterRole::ContinuousParameter,
         ],
-        partial_derivative: beta_partial,
+        partial_derivative: Some(beta_partial),
     },
     FunctionDerivativeRule {
         id: "function.incomplete-gamma.derivative",
@@ -594,7 +594,7 @@ const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
             FunctionParameterRole::Argument,
             FunctionParameterRole::ContinuousParameter,
         ],
-        partial_derivative: incomplete_gamma_partial,
+        partial_derivative: Some(incomplete_gamma_partial),
     },
     FunctionDerivativeRule {
         id: "function.bessel-j.derivative",
@@ -604,18 +604,119 @@ const FUNCTION_DERIVATIVE_RULES: &[FunctionDerivativeRule] = &[
             FunctionParameterRole::Order,
             FunctionParameterRole::Argument,
         ],
-        partial_derivative: bessel_j_partial,
+        partial_derivative: Some(bessel_j_partial),
+    },
+    FunctionDerivativeRule {
+        id: "function.zeta.formal-derivative",
+        head: "Zeta",
+        arity: 1,
+        parameter_roles: &[FunctionParameterRole::Argument],
+        partial_derivative: None,
+    },
+    FunctionDerivativeRule {
+        id: "function.elliptic-k.formal-derivative",
+        head: "EllipticK",
+        arity: 1,
+        parameter_roles: &[FunctionParameterRole::Argument],
+        partial_derivative: None,
+    },
+    FunctionDerivativeRule {
+        id: "function.elliptic-e.formal-derivative",
+        head: "EllipticE",
+        arity: 1,
+        parameter_roles: &[FunctionParameterRole::Argument],
+        partial_derivative: None,
+    },
+    FunctionDerivativeRule {
+        id: "function.hypergeometric-pfq.formal-derivative",
+        head: "HypergeometricPFQ",
+        arity: 3,
+        parameter_roles: &[
+            FunctionParameterRole::ContinuousParameter,
+            FunctionParameterRole::ContinuousParameter,
+            FunctionParameterRole::Argument,
+        ],
+        partial_derivative: None,
     },
 ];
+
+fn held_derivative_of_registered_function(
+    operand: &crate::semantic_core::MathematicalObject,
+    request: &DerivativeRequest,
+    rule: &FunctionDerivativeRule,
+) -> Result<Computation, EngineError> {
+    let source = format!(
+        "D({},{}){}",
+        request.variable,
+        request.order,
+        operand.print_source()
+    );
+    let expression = crate::semantic_core::parse_engine_expression(&source)?.raw_expression();
+    let mut output = operand.clone();
+    let mut semantics = SemanticState {
+        kind: ValueKind::Unevaluated,
+        interpretation: SemanticInterpretation::HeldApplication {
+            operator: "D".into(),
+        },
+        metadata: ResultMetadata::unresolved(
+            Exactness::Symbolic,
+            OutcomeReason::AlgorithmUncovered,
+        ),
+        capabilities: CapabilitySet::symbolic_expression(),
+        requirements: Vec::new(),
+    };
+    semantics.metadata.conditions = operand.semantics.metadata.conditions.clone();
+    crate::semantic_core::promote_held_application("D", &expression, &mut semantics)?;
+    let input = output.reference(None);
+    output.apply(ObjectDelta {
+        expression: Some(expression),
+        semantics: Some(semantics),
+        overlay: None,
+        normalization: None,
+    });
+    let event = RuleEvent {
+        rule: "derivative-known-formal-function".into(),
+        input,
+        additional_inputs: Vec::new(),
+        output: output.reference(None),
+        bindings: vec![
+            ("variable".into(), request.variable.clone()),
+            ("order".into(), request.order.to_string()),
+            ("function".into(), rule.head.into()),
+            ("derivative_rule".into(), rule.id.into()),
+            (
+                "parameter_roles".into(),
+                rule.parameter_roles
+                    .iter()
+                    .map(|role| role.label())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        ],
+        conditions: operand.semantics.metadata.conditions.conditions().to_vec(),
+        payload: RulePayload::Structural,
+        importance: RuleImportance::Key,
+        presentation: Some(RulePresentation {
+            expression: output.print_source(),
+            explanation: "该已知特殊函数暂无可靠闭式导数规则，保留类型化形式导数。".into(),
+            tex_override: None,
+        }),
+    };
+    Ok(Computation {
+        output: ComputationOutput::Held(output),
+        trace: Some(RuleTrace {
+            events: vec![event],
+        }),
+        certificates: Vec::new(),
+        effects: Vec::new(),
+    })
+}
 
 fn derivative_of_registered_function(
     engine: &mut dyn Engine,
     operand: &crate::semantic_core::MathematicalObject,
     request: &DerivativeRequest,
 ) -> Result<Option<Computation>, EngineError> {
-    if request.order != 1 {
-        return Ok(None);
-    }
     let function = crate::input::with_parse_env(|env| {
         let view = operand.view(env);
         Ok(view.head().map(|head| {
@@ -638,6 +739,12 @@ fn derivative_of_registered_function(
         return Ok(None);
     };
     debug_assert_eq!(rule.parameter_roles.len(), rule.arity);
+    let Some(partial_derivative) = rule.partial_derivative else {
+        return held_derivative_of_registered_function(operand, request, rule).map(Some);
+    };
+    if request.order != 1 {
+        return Ok(None);
+    }
     let mut terms = Vec::with_capacity(arguments.len());
     let mut events = Vec::new();
     let mut certificates = Vec::new();
@@ -650,7 +757,7 @@ fn derivative_of_registered_function(
             return Ok(None);
         };
         let inner_source = inner_value.print_source();
-        let Some(partial) = (rule.partial_derivative)(&arguments, index) else {
+        let Some(partial) = partial_derivative(&arguments, index) else {
             // A missing partial marks a discrete or otherwise unsupported slot,
             // not an implicit zero. It is safe to omit only for a constant slot.
             if inner_source != "0" {
@@ -1312,6 +1419,54 @@ mod tests {
         for rule in FUNCTION_DERIVATIVE_RULES {
             assert_eq!(rule.parameter_roles.len(), rule.arity, "{}", rule.id);
         }
+    }
+
+    #[test]
+    fn known_unclosed_special_functions_return_typed_formal_derivatives() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for source in [
+            "D(x)Zeta(Sin(x))",
+            "D(x)EllipticK(x^2)",
+            "D(x)EllipticE(x)",
+            "D(x)HypergeometricPFQ({a,b},{c},x)",
+            "D(x,2)Zeta(x)",
+        ] {
+            let expression = crate::elaboration::elaborate(source).unwrap();
+            let result =
+                crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+            assert!(
+                matches!(result.output, ComputationOutput::Held(_)),
+                "{source}"
+            );
+            let output = result.subject().unwrap();
+            assert!(matches!(
+                output.semantics.interpretation,
+                SemanticInterpretation::HeldTypedApplication(ref application)
+                    if application.operator == OperatorId::Derivative
+            ));
+            assert!(output.print_source().starts_with("D(x,"), "{source}");
+            assert!(result.trace.as_ref().unwrap().events.iter().any(|event| {
+                event.rule == "derivative-known-formal-function"
+                    && event.bindings.iter().any(|(key, value)| {
+                        key == "derivative_rule" && value.ends_with("formal-derivative")
+                    })
+            }));
+        }
+    }
+
+    #[test]
+    fn formal_special_derivatives_remain_structured_inside_outer_composition() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let expression = crate::elaboration::elaborate("1+D(x)Zeta(x^2)").unwrap();
+        let result =
+            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+        assert!(matches!(result.output, ComputationOutput::Held(_)));
+        let source = result.subject().unwrap().print_source();
+        assert!(source.contains("D(x,1)Zeta(x^2)"), "{source}");
+        assert!(
+            source.contains("+1") || source.starts_with("1+"),
+            "{source}"
+        );
     }
 
     #[test]
