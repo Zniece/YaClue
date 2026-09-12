@@ -234,14 +234,9 @@ fn elaborate_node(node: &Rc<LispObject>, next_id: &mut u64) -> ElaboratedObject 
                     SemanticInterpretation::Equation,
                     CapabilitySet::equation_input(),
                 )
-            } else if crate::semantic_core::operator_descriptor(&head).is_some_and(|descriptor| {
-                matches!(
-                    descriptor.availability,
-                    crate::semantic_core::OperatorAvailability::Pending(
-                        crate::semantic_core::PendingDomain::Plot
-                    )
-                )
-            }) {
+            } else if crate::semantic_core::operator_descriptor(&head)
+                .is_some_and(|descriptor| descriptor.id == crate::semantic_core::OperatorId::Plot)
+            {
                 (
                     MathematicalForm::EffectApplication { head: head.clone() },
                     children,

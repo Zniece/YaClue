@@ -104,6 +104,7 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                     expression.children.len() == 3
                         && can_execute_elaborated_tree(&expression.children[0])
                 }
+                ObjectNativeRoute::PlotEffect => false,
             }
         }
         crate::elaboration::MathematicalForm::Application { head } => {
@@ -202,6 +203,7 @@ pub fn execute_elaborated_structure(
                     execute_numeric_ode_application(engine, expression)
                 }
                 ObjectNativeRoute::NumericRoot => execute_find_root_application(engine, expression),
+                ObjectNativeRoute::PlotEffect => unreachable!("Plot uses the effect form"),
             };
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -215,16 +217,8 @@ pub fn execute_elaborated_structure(
     ) {
         return execute_container(expression, engine);
     }
-    if matches!(
-        expression.form,
-        crate::elaboration::MathematicalForm::EffectApplication { .. }
-    ) {
-        return Ok(Computation {
-            output: ComputationOutput::EffectsOnly,
-            trace: None,
-            certificates: Vec::new(),
-            effects: Vec::new(),
-        });
+    if let crate::elaboration::MathematicalForm::EffectApplication { head } = &expression.form {
+        return execute_effect_application(engine, expression, head);
     }
     let crate::elaboration::MathematicalForm::Structural { operator } = &expression.form else {
         return Ok(Computation {
@@ -353,6 +347,42 @@ pub fn execute_elaborated_structure(
         trace.events = child_traces;
     }
     Ok(computation)
+}
+
+fn execute_effect_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    head: &str,
+) -> Result<Computation, EngineError> {
+    if head != "Plot" {
+        return Err(EngineError::InvalidInput(format!("未知效果运算 {head}")));
+    }
+    let [operand_node, variable, min, max] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(
+            "Plot 需要表达式、变量和区间上下界".into(),
+        ));
+    };
+    let operand = execute_elaborated_structure(engine, operand_node)?;
+    let ComputationOutput::Value(input) = operand.output else {
+        return Err(EngineError::InvalidInput(
+            "Plot 的表达式必须先成为可计算的数学值".into(),
+        ));
+    };
+    let bound = |node: &crate::elaboration::ElaboratedObject, label: &str| {
+        node.object
+            .print_source()
+            .parse::<f64>()
+            .map_err(|_| EngineError::InvalidInput(format!("绘图区间{label}必须是有限数字")))
+    };
+    crate::plot::PlotOperation.compute(
+        engine,
+        &input,
+        &crate::plot::PlotRequest {
+            variable: variable.object.print_source(),
+            range: (bound(min, "下界")?, bound(max, "上界")?),
+            options: crate::plot::SampleOptions::default(),
+        },
+    )
 }
 
 fn execute_sum_application(

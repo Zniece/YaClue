@@ -46,6 +46,8 @@ pub struct CompositionResult {
     pub conditions: ConditionSet,
     pub outcome: Option<ResultMetadata>,
     pub sampled_data: Option<crate::semantic_core::SampledTrajectory>,
+    pub plot: Option<crate::plot::PlotEffect>,
+    pub effect_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +106,10 @@ pub fn execute_elaborated(
     let root_is_native = matches!(&input.root.form,
         crate::elaboration::MathematicalForm::Application { head }
             if crate::semantic_core::is_object_native_operator(head));
+    let root_is_effect = matches!(
+        input.root.form,
+        crate::elaboration::MathematicalForm::EffectApplication { .. }
+    );
     let structural_context = matches!(
         input.root.form,
         crate::elaboration::MathematicalForm::Structural { .. }
@@ -116,6 +122,31 @@ pub fn execute_elaborated(
             crate::elaboration::MathematicalForm::Application { head }
                 if !is_known_operator(head))
             && (has_native_descendant || has_effect_descendant));
+    if root_is_effect {
+        let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
+        let plot = computation
+            .effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                crate::semantic_core::Effect::Plot(plot) => Some(plot),
+                crate::semantic_core::Effect::Ui(_) => None,
+            });
+        return Ok(Some(CompositionResult {
+            status: CompositionStatus::Completed,
+            value: input.root.object.print_source(),
+            tex: String::new(),
+            steps: Vec::new(),
+            operators: vec![CompositionOperator::Plot],
+            reason: None,
+            arbitrary_constants: Vec::new(),
+            held: None,
+            conditions: ConditionSet::empty(),
+            outcome: None,
+            sampled_data: None,
+            plot,
+            effect_only: true,
+        }));
+    }
     if (structural_context || root_is_native)
         && crate::arithmetic::can_execute_elaborated_tree(&input.root)
     {
@@ -206,6 +237,8 @@ pub fn execute_elaborated(
                 SemanticInterpretation::NumericTrajectory(trajectory) => Some(trajectory.clone()),
                 _ => None,
             },
+            plot: None,
+            effect_only: false,
         }));
     }
     let mut operations = Vec::new();
@@ -270,6 +303,8 @@ fn execute_collected(
                 conditions: ConditionSet::empty(),
                 outcome: None,
                 sampled_data: None,
+                plot: None,
+                effect_only: false,
             }));
         }
     };
@@ -307,6 +342,8 @@ fn execute_collected(
                 conditions: ConditionSet::empty(),
                 outcome: None,
                 sampled_data: None,
+                plot: None,
+                effect_only: false,
             }));
         }
         return Ok(None);
@@ -379,6 +416,8 @@ fn execute_collected(
         conditions: ConditionSet::empty(),
         outcome: None,
         sampled_data: None,
+        plot: None,
+        effect_only: false,
     }))
 }
 
@@ -424,6 +463,8 @@ fn execute_limit_then_derivative(
                 conditions: ConditionSet::empty(),
                 outcome: None,
                 sampled_data: None,
+                plot: None,
+                effect_only: false,
             }));
         }
         ComputationOutput::EffectsOnly => unreachable!("Limit always returns an object"),
@@ -453,6 +494,8 @@ fn execute_limit_then_derivative(
             conditions: limit_object.semantics.metadata.conditions.clone(),
             outcome: Some(limit_object.semantics.metadata.clone()),
             sampled_data: None,
+            plot: None,
+            effect_only: false,
         }));
     }
     let differentiated =
@@ -497,6 +540,8 @@ fn execute_limit_then_derivative(
         conditions: result_conditions,
         outcome: result_outcome,
         sampled_data: None,
+        plot: None,
+        effect_only: false,
     }))
 }
 

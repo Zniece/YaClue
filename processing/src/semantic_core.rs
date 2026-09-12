@@ -347,12 +347,12 @@ pub enum ObjectNativeRoute {
     MultipleIntegral,
     NumericOde,
     NumericRoot,
+    PlotEffect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingDomain {
-    Plot,
     Extrema,
 }
 
@@ -1003,7 +1003,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::First,
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::RenderPlot,
-        availability: OperatorAvailability::Pending(PendingDomain::Plot),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::PlotEffect),
         product_kind: "plot",
         title: "函数图像",
     },
@@ -2155,9 +2155,10 @@ pub struct Certificate {
     pub payload: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Effect {
     Ui(String),
+    Plot(crate::plot::PlotEffect),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2315,7 +2316,7 @@ mod tests {
             .iter()
             .flat_map(|capability| capability.names.iter().copied())
             .collect();
-        let expected_names: BTreeSet<_> = ["Plot", "Extrema", "Lagrange"].into_iter().collect();
+        let expected_names: BTreeSet<_> = ["Extrema", "Lagrange"].into_iter().collect();
         assert_eq!(generated_names, expected_names);
         assert!(generated
             .iter()

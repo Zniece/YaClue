@@ -1,7 +1,6 @@
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::linear_algebra::MatrixOperation;
-use processing::plot::SampleOptions;
 use processing::protocol::{
     Condition, ConditionSet, Conditionality, OutcomeReason, ResultCompleteness, ResultMetadata,
 };
@@ -198,6 +197,12 @@ fn project_domain_semantic(
     input: &SemanticSummary,
     result: &DispatchExpressionResult,
 ) -> Result<SemanticSummary, ErrorResponse> {
+    if result.data.get("effect_only").and_then(Value::as_bool) == Some(true) {
+        let mut semantic = input.clone();
+        semantic.kind = ValueKind::Unevaluated;
+        semantic.completeness = None;
+        return Ok(semantic);
+    }
     if result
         .data
         .get("status")
@@ -426,6 +431,9 @@ fn dispatch_expression_with_engine(
     if matches!(
         elaborated.root.form,
         processing::elaboration::MathematicalForm::Structural { .. }
+    ) || matches!(
+        elaborated.root.form,
+        processing::elaboration::MathematicalForm::EffectApplication { .. }
     ) || matches!(&elaborated.root.form,
             processing::elaboration::MathematicalForm::Application { head }
                 if processing::semantic_core::is_object_native_operator(head))
@@ -436,7 +444,8 @@ fn dispatch_expression_with_engine(
             .is_some_and(processing::composition::is_candidate)
     {
         let root_descriptor = match &elaborated.root.form {
-            processing::elaboration::MathematicalForm::Application { head } => {
+            processing::elaboration::MathematicalForm::Application { head }
+            | processing::elaboration::MathematicalForm::EffectApplication { head } => {
                 processing::semantic_core::operator_descriptor(head)
                     .filter(|_| processing::semantic_core::is_object_native_operator(head))
             }
@@ -480,7 +489,8 @@ fn dispatch_expression_with_engine(
                         | OperatorId::DoubleIntegral
                         | OperatorId::PolarIntegral
                         | OperatorId::OdeSolveNumeric
-                        | OperatorId::FindRoot => (descriptor.product_kind, descriptor.title),
+                        | OperatorId::FindRoot
+                        | OperatorId::Plot => (descriptor.product_kind, descriptor.title),
                         OperatorId::Factor | OperatorId::AlgebraTransform
                             if result.status
                                 == processing::composition::CompositionStatus::Completed =>
@@ -504,30 +514,6 @@ fn dispatch_expression_with_engine(
     }
     if let Some(call) = call {
         match (call.head.as_str(), call.arguments.as_slice()) {
-            ("Plot", [expression, variable, min, max]) => {
-                let min = min
-                    .parse::<f64>()
-                    .map_err(|_| invalid_input("绘图区间下界必须是有限数字"))?;
-                let max = max
-                    .parse::<f64>()
-                    .map_err(|_| invalid_input("绘图区间上界必须是有限数字"))?;
-                let result = processing::plot::sample(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    (min, max),
-                    &SampleOptions::default(),
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "plot",
-                    "函数图像",
-                    request.expression.clone(),
-                    String::new(),
-                    vec![],
-                    &result,
-                );
-            }
             ("Extrema", [expression, x, y]) => {
                 if request.steps {
                     let result = processing::extrema::analyze_steps_with_verbosity(
@@ -1774,6 +1760,31 @@ mod tests {
             process_expression_with_engine(request("D(x)FindRoot(x^2-2,x,1)", false), &mut engine)
                 .unwrap();
         assert_eq!(differentiated.expression, "0");
+    }
+
+    #[test]
+    fn unified_input_exposes_plot_as_a_terminal_structured_effect() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let result =
+            process_expression_with_engine(request("Plot(Sin(x),x,0,3.14)", false), &mut engine)
+                .unwrap();
+        assert_eq!(result.kind, "plot");
+        assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
+        assert_eq!(result.data["effect_only"], true);
+        assert_eq!(result.data["plot"]["expression"], "Sin(x)");
+        assert_eq!(result.data["plot"]["variable"], "x");
+        assert!(result.data["plot"]["sampled"]["points"]
+            .as_array()
+            .is_some_and(|points| !points.is_empty()));
+
+        for expression in ["Plot(x,x,0,1)+1", "Sin(Plot(x,x,0,1))"] {
+            let error =
+                match process_expression_with_engine(request(expression, false), &mut engine) {
+                    Ok(_) => panic!("plot effects cannot enter mathematical composition"),
+                    Err(error) => error,
+                };
+            assert!(error.message.contains("副作用"), "{}", error.message);
+        }
     }
 
     #[test]
