@@ -365,12 +365,80 @@ pub fn run() {
 mod tests {
     use super::*;
     use processing::binding::SymbolRole;
+    use std::collections::BTreeSet;
 
     fn request(expression: &str, steps: bool) -> ProcessExpressionRequest {
         ProcessExpressionRequest {
             expression: expression.into(),
             steps,
             verbosity: "standard".into(),
+        }
+    }
+
+    #[test]
+    fn every_registered_operator_family_reaches_the_structured_product_exit() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let cases = [
+            ("D(x)(x^2)", "D"),
+            ("Factor(x^2-1)", "Factor"),
+            ("Expand((x+1)^2)", "Expand"),
+            ("Apart((x+1)/(x^2-1),x)", "Apart"),
+            ("Integrate(x)(x)", "Integrate"),
+            ("Subst(x,2)(x^2+1)", "Subst"),
+            ("Limit(x,0)(Sin(x)/x)", "Limit"),
+            ("Taylor(Exp(x),0,2)", "Taylor"),
+            ("Solve(x^2==1,x)", "Solve"),
+            ("Transpose({{1,2},{3,4}})", "Transpose"),
+            ("MatrixSolve({{1,0},{0,1}},{2,3})", "MatrixSolve"),
+            ("Rank({{1,2},{2,4}})", "Rank"),
+            ("PLDU({{4,2},{2,2}})", "PLDU"),
+            ("Factors(PLDU({{4,2},{2,2}}))", "Factors"),
+            ("OdeSolve(y'==y)", "OdeSolve"),
+            ("N(Pi,12)", "N"),
+            ("Sum(k,1,3,k)", "Sum"),
+            ("ImproperIntegral(Exp(-x),x,0,Infinity)", "ImproperIntegral"),
+            (
+                "PrincipalValueIntegral(1/x,x,-1,1,{0})",
+                "PrincipalValueIntegral",
+            ),
+            ("DoubleIntegral(x+y,y,0,2,x,0,1)", "DoubleIntegral"),
+            ("PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)", "PolarIntegral"),
+            ("OdeSolveNumeric(y'==y,x,y,0,1,0.1)", "OdeSolveNumeric"),
+            ("FindRoot(x^2-2,x,1)", "FindRoot"),
+            ("Plot(x^2,x,0,1)", "Plot"),
+            ("Extrema(x^2+y^2,x,y)", "Extrema"),
+            ("Lagrange(x+y,x^2+y^2-1,x,y)", "Lagrange"),
+            ("Gradient(x^2+y^2,{x,y})", "Gradient"),
+            (
+                "DirectionalDerivative(x^2+y^2,{x,y},{1,0})",
+                "DirectionalDerivative",
+            ),
+            (
+                "ScalarLineIntegral(x,{x,y},{t,0},t,0,1)",
+                "ScalarLineIntegral",
+            ),
+            (
+                "ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{1,1})",
+                "ScalarSurfaceIntegral",
+            ),
+        ];
+        let covered = cases.iter().map(|(_, name)| *name).collect::<BTreeSet<_>>();
+        let registered = processing::semantic_core::OPERATOR_DESCRIPTORS
+            .iter()
+            .map(|descriptor| descriptor.names[0])
+            .collect::<BTreeSet<_>>();
+        assert_eq!(covered, registered, "update the D3 acceptance matrix");
+
+        for (source, name) in cases {
+            let result = process_expression_with_engine(request(source, false), &mut engine)
+                .unwrap_or_else(|error| panic!("{name} ({source}): {}", error.message));
+            assert!(!result.expression.is_empty(), "{name}");
+            assert!(!result.tex.is_empty(), "{name}");
+            assert!(result.steps.is_empty(), "{name}");
+            assert!(result.data.get("status").is_some(), "{name}");
+            assert!(result.data.get("outcome").is_some(), "{name}");
+            assert!(result.data.get("semantic").is_some(), "{name}");
+            assert!(result.data.get("conditions").is_some(), "{name}");
         }
     }
 
