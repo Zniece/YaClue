@@ -84,6 +84,10 @@ pub fn can_execute_elaborated_tree(expression: &crate::elaboration::ElaboratedOb
                     expression.children.len() == 1
                         && can_execute_elaborated_tree(&expression.children[0])
                 }
+                ObjectNativeRoute::Series => {
+                    expression.children.len() == 4
+                        && can_execute_elaborated_tree(&expression.children[3])
+                }
             }
         }
         crate::elaboration::MathematicalForm::Application { head } => {
@@ -171,6 +175,7 @@ pub fn execute_elaborated_structure(
                 ObjectNativeRoute::MatrixSolve => {
                     execute_matrix_solve_application(engine, expression)
                 }
+                ObjectNativeRoute::Series => execute_sum_application(engine, expression),
             };
         }
         if !crate::semantic_core::is_known_operator(head) {
@@ -322,6 +327,33 @@ pub fn execute_elaborated_structure(
         trace.events = child_traces;
     }
     Ok(computation)
+}
+
+fn execute_sum_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let [variable, lower, upper, term_node] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput(
+            "Sum 需要变量、下限、上限和求和项".into(),
+        ));
+    };
+    let mut term = execute_elaborated_structure(engine, term_node)?;
+    if !matches!(term.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, term, "Sum", 3);
+    }
+    let input = term.value().expect("checked sum term").clone();
+    let mut current = crate::series::SumOperation.compute(
+        engine,
+        &input,
+        &crate::series::SumRequest {
+            variable: variable.object.print_source(),
+            lower: lower.object.print_source(),
+            upper: upper.object.print_source(),
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut term);
+    Ok(current)
 }
 
 fn execute_numeric_application(

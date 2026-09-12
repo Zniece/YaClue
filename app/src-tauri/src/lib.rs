@@ -151,6 +151,9 @@ fn result_metadata(
         ResultMetadata::unresolved(exactness, OutcomeReason::UnsupportedOperation)
     } else if status == "divergent" {
         ResultMetadata::no_result(exactness, OutcomeReason::Divergent)
+    } else if status == "no_value" && result.data["outcome"]["reason"].as_str() == Some("divergent")
+    {
+        ResultMetadata::no_result(exactness, OutcomeReason::Divergent)
     } else if matches!(
         status,
         "does_not_exist" | "no_solution" | "no_points" | "no_critical_points" | "no_value"
@@ -219,6 +222,7 @@ fn project_domain_semantic(
     if result.kind != "ode"
         && result.kind != "composition"
         && result.kind != "integral"
+        && result.kind != "series"
         && generated.is_empty()
     {
         return Ok(input.clone());
@@ -262,7 +266,7 @@ fn project_domain_semantic(
         },
     )
     .map_err(message)?;
-    if result.kind == "composition"
+    if matches!(result.kind.as_str(), "composition" | "series")
         && result
             .data
             .get("status")
@@ -469,6 +473,7 @@ fn dispatch_expression_with_engine(
                         | OperatorId::FactorProjection => {
                             (descriptor.product_kind, descriptor.title)
                         }
+                        OperatorId::Sum => (descriptor.product_kind, descriptor.title),
                         OperatorId::Factor | OperatorId::AlgebraTransform
                             if result.status
                                 == processing::composition::CompositionStatus::Completed =>
@@ -1796,6 +1801,49 @@ mod tests {
             absent.outcome.resolution,
             processing::protocol::ResolutionState::NoResult
         );
+    }
+
+    #[test]
+    fn unified_input_routes_object_native_sums_and_compositions() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let direct =
+            process_expression_with_engine(request("Sum(k,1,10,k)", true), &mut engine).unwrap();
+        assert_eq!(direct.kind, "series");
+        assert_eq!(direct.expression, "55");
+        assert_eq!(direct.semantic.kind, ValueKind::Scalar);
+        assert!(direct.semantic.symbols.is_empty());
+        assert!(direct.semantic.bound_symbols.is_empty());
+        assert!(direct.steps.iter().any(|step| step.rule == "finite-sum"));
+
+        let nested =
+            process_expression_with_engine(request("D(x)Sum(k,1,3,x*k)", true), &mut engine)
+                .unwrap();
+        assert_eq!(nested.kind, "composition");
+        assert_eq!(nested.expression, "6");
+        assert!(nested.semantic.symbols.is_empty());
+        assert!(nested.steps.iter().any(|step| step.rule == "finite-sum"));
+
+        let divergent =
+            process_expression_with_engine(request("Sum(k,1,Infinity,1/k)", true), &mut engine)
+                .unwrap();
+        assert_eq!(
+            divergent.outcome.resolution,
+            processing::protocol::ResolutionState::NoResult
+        );
+        assert_eq!(
+            divergent.outcome.reason,
+            Some(processing::protocol::OutcomeReason::Divergent)
+        );
+
+        let held =
+            process_expression_with_engine(request("Sum(k,0,Infinity,1/k^2)", false), &mut engine)
+                .unwrap();
+        assert_eq!(held.semantic.kind, ValueKind::Unevaluated);
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(held.expression.starts_with("Sum("));
     }
 
     #[test]

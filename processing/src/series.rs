@@ -7,6 +7,248 @@ use crate::input::{
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
+use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+use crate::semantic_core::{
+    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SumRequest {
+    pub variable: String,
+    pub lower: String,
+    pub upper: String,
+}
+
+impl SumRequest {
+    fn validate(&self) -> Result<(), EngineError> {
+        validate_symbol(&self.variable, "求和变量")?;
+        validate_expression(&self.lower, "求和下限")?;
+        validate_expression(&self.upper, "求和上限")
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SumOperation;
+
+impl SemanticOperation<SumRequest> for SumOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &SumRequest,
+    ) -> Result<Computation, EngineError> {
+        request.validate()?;
+        if !input
+            .semantics
+            .capabilities
+            .contains(crate::semantic_core::ObjectCapability::SumSeries)
+        {
+            return Err(EngineError::InvalidInput("该数学对象不具备求和能力".into()));
+        }
+        let term = input.print_source();
+        let held_source = format!(
+            "Sum({},{},{},{term})",
+            request.variable, request.lower, request.upper
+        );
+        let (source, metadata, held, no_value, steps) = if request.upper == "Infinity" {
+            let stepped = infinite_series_steps_with_verbosity(
+                engine,
+                &term,
+                &request.variable,
+                &request.lower,
+                StepVerbosity::Detailed,
+            )?;
+            let conditions = ConditionSet::new(
+                stepped
+                    .result
+                    .conditions
+                    .iter()
+                    .map(|description| Condition::Unknown {
+                        description: description.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            )?;
+            let (metadata, held, no_value) = match stepped.result.status {
+                SeriesStatus::AbsolutelyConvergent | SeriesStatus::ConditionallyConvergent => (
+                    ResultMetadata::solved(Exactness::Symbolic, conditions),
+                    false,
+                    false,
+                ),
+                SeriesStatus::Conditional => (
+                    ResultMetadata::solved(Exactness::Symbolic, conditions),
+                    false,
+                    false,
+                ),
+                SeriesStatus::Divergent => (
+                    ResultMetadata::no_result(Exactness::Symbolic, OutcomeReason::Divergent),
+                    false,
+                    true,
+                ),
+                SeriesStatus::Inconclusive => (
+                    ResultMetadata::unresolved(
+                        Exactness::Symbolic,
+                        OutcomeReason::AlgorithmUncovered,
+                    ),
+                    true,
+                    false,
+                ),
+            };
+            (
+                stepped.result.value.unwrap_or_else(|| held_source.clone()),
+                metadata,
+                held,
+                no_value,
+                stepped.steps,
+            )
+        } else {
+            let result = finite_sum(
+                engine,
+                &term,
+                &request.variable,
+                &request.lower,
+                &request.upper,
+            )?;
+            let (metadata, held, no_value) = match result.status {
+                SumStatus::Evaluated => (
+                    ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                    false,
+                    false,
+                ),
+                SumStatus::Unresolved => (
+                    ResultMetadata::unresolved(
+                        Exactness::Symbolic,
+                        OutcomeReason::AlgorithmUncovered,
+                    ),
+                    true,
+                    false,
+                ),
+                SumStatus::Undefined => (
+                    ResultMetadata::no_result(
+                        Exactness::Symbolic,
+                        OutcomeReason::MathematicalAbsence,
+                    ),
+                    false,
+                    true,
+                ),
+            };
+            let presentation = Step {
+                rule: if held { "hold-sum" } else { "finite-sum" }.into(),
+                expr: if held {
+                    held_source.clone()
+                } else {
+                    result.value.clone()
+                },
+                why: if held {
+                    "保留尚无闭式结果的求和对象。".into()
+                } else {
+                    "计算有限求和。".into()
+                },
+                tex: result.tex.clone(),
+                importance: StepImportance::Key,
+            };
+            (
+                if held {
+                    held_source.clone()
+                } else {
+                    result.value
+                },
+                metadata,
+                held,
+                no_value,
+                vec![presentation],
+            )
+        };
+
+        let mut semantics = SemanticState {
+            kind: if held || no_value {
+                ValueKind::Unevaluated
+            } else {
+                crate::input::with_parse_env(|env| {
+                    let parsed = yacas_rs::parser::parse_expression(env, &format!("{source};"))
+                        .expect("sum output parses")
+                        .expect("sum output exists");
+                    crate::semantic::analyze_tree(env, &parsed).semantic.kind
+                })
+            },
+            interpretation: if held {
+                SemanticInterpretation::HeldApplication {
+                    operator: "Sum".into(),
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata,
+            capabilities: if no_value {
+                CapabilitySet::empty()
+            } else {
+                CapabilitySet::symbolic_expression()
+            },
+            requirements: Vec::new(),
+        };
+        let parsed = object_from_source(input.id, &source, semantics.clone())?;
+        if held {
+            crate::semantic_core::promote_held_application(
+                "Sum",
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!held && !no_value).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::Sum),
+            }),
+        });
+        let events = steps
+            .into_iter()
+            .map(|step| RuleEvent {
+                rule: step.rule,
+                input: input.reference(None),
+                additional_inputs: Vec::new(),
+                output: output.reference(None),
+                bindings: vec![
+                    ("variable".into(), request.variable.clone()),
+                    ("lower".into(), request.lower.clone()),
+                    ("upper".into(), request.upper.clone()),
+                ],
+                conditions: output.semantics.metadata.conditions.conditions().to_vec(),
+                payload: RulePayload::Structural,
+                importance: match step.importance {
+                    StepImportance::Routine => RuleImportance::Routine,
+                    StepImportance::Normal => RuleImportance::Normal,
+                    StepImportance::Key => RuleImportance::Key,
+                },
+                presentation: Some(RulePresentation {
+                    expression: step.expr,
+                    explanation: step.why,
+                    tex_override: Some(step.tex),
+                }),
+            })
+            .collect();
+        Ok(Computation {
+            output: if no_value {
+                ComputationOutput::NoValue(output)
+            } else if held {
+                ComputationOutput::Held(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace { events }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SumStatus {
@@ -522,6 +764,84 @@ fn parse_bool(expr: &Expr, label: &str) -> Result<bool, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+
+    fn object(source: &str) -> crate::semantic_core::MathematicalObject {
+        object_from_source(
+            crate::semantic_core::ObjectId(91),
+            source,
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn sum_operation_returns_typed_values_held_objects_and_absence() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let finite = SumOperation
+            .compute(
+                &mut engine,
+                &object("k"),
+                &SumRequest {
+                    variable: "k".into(),
+                    lower: "1".into(),
+                    upper: "10".into(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(finite.output, ComputationOutput::Value(_)));
+        assert_eq!(finite.subject().unwrap().print_source(), "55");
+        assert_eq!(finite.subject().unwrap().revision.0, 1);
+
+        let convergent = SumOperation
+            .compute(
+                &mut engine,
+                &object("1/k^2"),
+                &SumRequest {
+                    variable: "k".into(),
+                    lower: "1".into(),
+                    upper: "Infinity".into(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(convergent.output, ComputationOutput::Value(_)));
+        assert!(convergent.subject().unwrap().print_source().contains("Pi"));
+
+        let divergent = SumOperation
+            .compute(
+                &mut engine,
+                &object("1/k"),
+                &SumRequest {
+                    variable: "k".into(),
+                    lower: "1".into(),
+                    upper: "Infinity".into(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(divergent.output, ComputationOutput::NoValue(_)));
+
+        let held = SumOperation
+            .compute(
+                &mut engine,
+                &object("1/k^2"),
+                &SumRequest {
+                    variable: "k".into(),
+                    lower: "0".into(),
+                    upper: "Infinity".into(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(held.output, ComputationOutput::Held(_)));
+        assert!(matches!(
+            held.subject().unwrap().semantics.interpretation,
+            SemanticInterpretation::HeldTypedApplication(_)
+        ));
+    }
 
     #[test]
     fn computes_finite_symbolic_and_numeric_sums() {

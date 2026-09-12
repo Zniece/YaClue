@@ -342,12 +342,12 @@ pub enum ObjectNativeRoute {
     MatrixUnary,
     MatrixSolve,
     FactorProjection,
+    Series,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingDomain {
-    Series,
     DefinedIntegral,
     MultipleIntegral,
     NumericOde,
@@ -912,7 +912,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         value_argument: ValueArgument::Last,
         binders: FIRST_ARGUMENT_BINDS_LAST,
         capability: CapabilityId::SumSeries,
-        availability: OperatorAvailability::Pending(PendingDomain::Series),
+        availability: OperatorAvailability::ObjectNative(ObjectNativeRoute::Series),
         product_kind: "series",
         title: "级数",
     },
@@ -1501,6 +1501,7 @@ pub enum ObjectCapability {
     NumericEvaluate,
     Plot,
     ExpandTaylor,
+    SumSeries,
     SolveEquation,
     SolveOde,
     MatrixAdd,
@@ -1538,6 +1539,7 @@ impl CapabilitySet {
                 | (1 << ObjectCapability::NumericEvaluate as u8)
                 | (1 << ObjectCapability::Plot as u8)
                 | (1 << ObjectCapability::ExpandTaylor as u8)
+                | (1 << ObjectCapability::SumSeries as u8)
                 | (1 << ObjectCapability::SolveEquation as u8),
         )
     }
@@ -2287,7 +2289,6 @@ mod tests {
             .flat_map(|capability| capability.names.iter().copied())
             .collect();
         let expected_names: BTreeSet<_> = [
-            "Sum",
             "ImproperIntegral",
             "PrincipalValueIntegral",
             "DoubleIntegral",

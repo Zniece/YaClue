@@ -44,6 +44,7 @@ pub struct CompositionResult {
     pub arbitrary_constants: Vec<String>,
     pub held: Option<HeldApplication>,
     pub conditions: ConditionSet,
+    pub outcome: Option<ResultMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,6 +200,7 @@ pub fn execute_elaborated(
             arbitrary_constants,
             held: None,
             conditions: subject.semantics.metadata.conditions.clone(),
+            outcome: Some(subject.semantics.metadata.clone()),
         }));
     }
     let mut operations = Vec::new();
@@ -261,6 +263,7 @@ fn execute_collected(
                 arbitrary_constants: Vec::new(),
                 held: None,
                 conditions: ConditionSet::empty(),
+                outcome: None,
             }));
         }
     };
@@ -296,6 +299,7 @@ fn execute_collected(
                     pending_operators,
                 }),
                 conditions: ConditionSet::empty(),
+                outcome: None,
             }));
         }
         return Ok(None);
@@ -366,6 +370,7 @@ fn execute_collected(
         arbitrary_constants,
         held: None,
         conditions: ConditionSet::empty(),
+        outcome: None,
     }))
 }
 
@@ -409,6 +414,7 @@ fn execute_limit_then_derivative(
                 arbitrary_constants: Vec::new(),
                 held: None,
                 conditions: ConditionSet::empty(),
+                outcome: None,
             }));
         }
         ComputationOutput::EffectsOnly => unreachable!("Limit always returns an object"),
@@ -436,6 +442,7 @@ fn execute_limit_then_derivative(
             arbitrary_constants: Vec::new(),
             held: None,
             conditions: limit_object.semantics.metadata.conditions.clone(),
+            outcome: Some(limit_object.semantics.metadata.clone()),
         }));
     }
     let differentiated =
@@ -452,6 +459,9 @@ fn execute_limit_then_derivative(
         .metadata
         .conditions
         .clone();
+    let result_outcome = differentiated
+        .subject()
+        .map(|object| object.semantics.metadata.clone());
     let mut events = limited.trace.expect("Limit records a trace").events;
     events.extend(
         differentiated
@@ -475,6 +485,7 @@ fn execute_limit_then_derivative(
         arbitrary_constants: Vec::new(),
         held: None,
         conditions: result_conditions,
+        outcome: result_outcome,
     }))
 }
 
@@ -923,8 +934,10 @@ fn apply(
         CompositionOperator::FactorProjection => Err(EngineError::InvalidInput(
             "分解因子必须通过类型化分解对象提取".into(),
         )),
-        CompositionOperator::Sum
-        | CompositionOperator::ImproperIntegral
+        CompositionOperator::Sum => Err(EngineError::InvalidInput(
+            "求和必须通过类型化数学对象执行".into(),
+        )),
+        CompositionOperator::ImproperIntegral
         | CompositionOperator::PrincipalValueIntegral
         | CompositionOperator::DoubleIntegral
         | CompositionOperator::PolarIntegral
@@ -1016,6 +1029,26 @@ mod tests {
             .unwrap();
         assert_eq!(result.status, CompositionStatus::Completed);
         assert!(result.value.contains("f(0)"));
+    }
+
+    #[test]
+    fn sum_values_compose_inside_out_and_divergence_stops_outer_operations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let input = crate::elaboration::elaborate_input("D(x)Sum(k,1,3,x*k)").unwrap();
+        let result = execute_elaborated(&mut engine, &input, StepVerbosity::Detailed, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.value, "6");
+        assert!(result.operators.contains(&CompositionOperator::Sum));
+        assert!(result.operators.contains(&CompositionOperator::Derivative));
+        assert!(result.steps.iter().any(|step| step.rule == "finite-sum"));
+
+        let divergent = crate::elaboration::elaborate_input("D(x)Sum(k,1,Infinity,1/k)").unwrap();
+        let result = execute_elaborated(&mut engine, &divergent, StepVerbosity::Detailed, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::NoValue);
     }
 
     #[test]
