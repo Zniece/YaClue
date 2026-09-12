@@ -442,7 +442,7 @@ mod tests {
         assert!(result
             .steps
             .iter()
-            .any(|step| step.rule == "intrinsic-gamma-lowering"));
+            .any(|step| step.rule == "recognize-gamma-integral"));
 
         let ordinary =
             crate::elaboration::elaborate_input("D(x)ImproperIntegral(1/t,t,-1,1,{0})").unwrap();
@@ -566,6 +566,14 @@ mod tests {
                 result.steps
             );
             assert_eq!(result.steps.last().unwrap().expr, result.value, "{source}");
+            for step in &result.steps {
+                let product_text = format!("{} {}", step.rule, step.why).to_ascii_lowercase();
+                for internal in ["typed", "ast", "container", "rebuild", "lowering"] {
+                    assert!(!product_text.contains(internal), "{source}: {step:#?}");
+                }
+                assert!(!product_text.contains("类型化"), "{source}: {step:#?}");
+                assert!(!product_text.contains("重建"), "{source}: {step:#?}");
+            }
         }
     }
 

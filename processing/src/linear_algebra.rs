@@ -342,7 +342,7 @@ impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
             transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
-                explanation: "按矩阵形状规则组合两个矩阵对象。".into(),
+                explanation: "按照矩阵运算规则计算结果。".into(),
                 tex_override: Some(result.tex),
             }),
         };
@@ -619,7 +619,7 @@ impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
             transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
-                explanation: "从类型化矩阵对象计算结构不变量。".into(),
+                explanation: "计算矩阵的结构不变量。".into(),
                 tex_override: Some(tex),
             }),
         };
@@ -817,7 +817,7 @@ impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation
             transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
-                explanation: "构造经过验证、可组合的类型化线性代数对象。".into(),
+                explanation: "得到经过验证的线性代数结果。".into(),
                 tex_override: Some(tex),
             }),
         };
@@ -905,7 +905,7 @@ impl SemanticOperation<()> for FactorProjectionOperation {
             transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
-                explanation: "从类型化矩阵分解对象投影出有序因子列表。".into(),
+                explanation: "按分解顺序列出矩阵因子。".into(),
                 tex_override: None,
             }),
         };

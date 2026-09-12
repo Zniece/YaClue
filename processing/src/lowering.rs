@@ -153,7 +153,7 @@ fn lower_euler_gamma(
     });
     let event = RuleEvent {
         class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-        rule: "intrinsic-gamma-lowering".into(),
+        rule: "recognize-gamma-integral".into(),
         input: input.reference(None),
         additional_inputs: Vec::new(),
         output: output.reference(None),
@@ -362,7 +362,7 @@ mod tests {
             assert_eq!(result.certificates.len(), 1);
             assert_eq!(
                 result.trace.as_ref().unwrap().events[0].rule,
-                "intrinsic-gamma-lowering"
+                "recognize-gamma-integral"
             );
         }
     }
@@ -383,7 +383,7 @@ mod tests {
             .iter()
             .map(|event| event.rule.as_str())
             .collect::<Vec<_>>();
-        assert!(rules.contains(&"intrinsic-gamma-lowering"));
+        assert!(rules.contains(&"recognize-gamma-integral"));
         assert!(rules.contains(&"derivative-registered-function-chain-rule"));
     }
 

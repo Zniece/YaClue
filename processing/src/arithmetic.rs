@@ -1279,7 +1279,7 @@ fn execute_container(
         transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
-            explanation: "用已类型化的成员重建数学容器。".into(),
+            explanation: "保留各成员的数学值并组成整体。".into(),
             tex_override: None,
         }),
     });
@@ -1450,7 +1450,7 @@ fn execute_function_application(
         transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
-            explanation: "将已类型化的参数应用到数学函数。".into(),
+            explanation: "将参数代入函数。".into(),
             tex_override: None,
         }),
     };
@@ -1913,7 +1913,7 @@ impl BinarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor 
             transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
-                explanation: "组合两个已类型化的数学对象。".into(),
+                explanation: "计算这个代数运算。".into(),
                 tex_override: None,
             }),
         };
@@ -2020,7 +2020,7 @@ impl UnarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor {
             transformation: None,
             presentation: Some(RulePresentation {
                 expression: output.print_source(),
-                explanation: "对已类型化的数学对象取负。".into(),
+                explanation: "取相反数。".into(),
                 tex_override: None,
             }),
         };

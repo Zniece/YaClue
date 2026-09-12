@@ -702,7 +702,7 @@ fn held_derivative_of_registered_function(
         transformation: None,
         presentation: Some(RulePresentation {
             expression: output.print_source(),
-            explanation: "该已知特殊函数暂无可靠闭式导数规则，保留类型化形式导数。".into(),
+            explanation: "该特殊函数暂无可靠的闭式导数规则，保留形式导数。".into(),
             tex_override: None,
         }),
     };
@@ -1251,7 +1251,7 @@ mod tests {
             .iter()
             .map(|event| event.rule.as_str())
             .collect::<Vec<_>>();
-        assert!(rules.contains(&"intrinsic-gamma-lowering"));
+        assert!(rules.contains(&"recognize-gamma-integral"));
         assert!(rules.contains(&"derivative-registered-function-chain-rule"));
     }
 
