@@ -6,6 +6,7 @@
 //! semantic overlay.  Domains will gradually return `Transition`s and
 //! `RuleEvent`s through this boundary.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -2429,6 +2430,48 @@ pub enum TraceMode {
     Detailed,
 }
 
+/// Request-scoped execution policy shared by recursive composition and every
+/// semantic operation. Mathematical behavior must not branch on `trace_mode`;
+/// only trace materialization may do so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComputationContext {
+    pub trace_mode: TraceMode,
+}
+
+impl ComputationContext {
+    pub const fn new(trace_mode: TraceMode) -> Self {
+        Self { trace_mode }
+    }
+}
+
+thread_local! {
+    static ACTIVE_TRACE_MODE: Cell<TraceMode> = const { Cell::new(TraceMode::Detailed) };
+}
+
+pub fn current_computation_context() -> ComputationContext {
+    ComputationContext::new(ACTIVE_TRACE_MODE.with(Cell::get))
+}
+
+pub fn with_computation_context<T>(
+    context: ComputationContext,
+    operation: impl FnOnce() -> T,
+) -> T {
+    ACTIVE_TRACE_MODE.with(|active| {
+        let previous = active.replace(context.trace_mode);
+        struct Restore<'a> {
+            active: &'a Cell<TraceMode>,
+            previous: TraceMode,
+        }
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.active.set(self.previous);
+            }
+        }
+        let _restore = Restore { active, previous };
+        operation()
+    })
+}
+
 #[derive(Debug, Default)]
 pub struct VecEventSink {
     pub events: Vec<RuleEvent>,
@@ -2522,6 +2565,16 @@ pub trait SemanticOperation<Request> {
         input: &MathematicalObject,
         request: &Request,
     ) -> Result<Computation, crate::engine::EngineError>;
+
+    fn compute_with_context(
+        &self,
+        engine: &mut dyn crate::engine::Engine,
+        input: &MathematicalObject,
+        request: &Request,
+        _context: &ComputationContext,
+    ) -> Result<Computation, crate::engine::EngineError> {
+        self.compute(engine, input, request)
+    }
 }
 
 /// The minimal counterpart for structural operators such as `+` and `*`.
@@ -2539,6 +2592,17 @@ pub trait BinarySemanticOperation<Request> {
         right: &MathematicalObject,
         request: &Request,
     ) -> Result<Computation, crate::engine::EngineError>;
+
+    fn compute_with_context(
+        &self,
+        engine: &mut dyn crate::engine::Engine,
+        left: &MathematicalObject,
+        right: &MathematicalObject,
+        request: &Request,
+        _context: &ComputationContext,
+    ) -> Result<Computation, crate::engine::EngineError> {
+        self.compute(engine, left, right, request)
+    }
 }
 
 pub trait UnarySemanticOperation<Request> {
@@ -2552,6 +2616,16 @@ pub trait UnarySemanticOperation<Request> {
         input: &MathematicalObject,
         request: &Request,
     ) -> Result<Computation, crate::engine::EngineError>;
+
+    fn compute_with_context(
+        &self,
+        engine: &mut dyn crate::engine::Engine,
+        input: &MathematicalObject,
+        request: &Request,
+        _context: &ComputationContext,
+    ) -> Result<Computation, crate::engine::EngineError> {
+        self.compute(engine, input, request)
+    }
 }
 
 #[cfg(test)]
@@ -3042,6 +3116,25 @@ mod tests {
         assert!(RuleEventClass::ProductEffect.is_product_visible());
         assert!(!RuleEventClass::InternalExecution.is_product_visible());
         assert!(!RuleEventClass::MathematicalConclusion.is_transformation_step());
+    }
+
+    #[test]
+    fn computation_context_is_request_scoped_and_restored_after_nesting() {
+        assert_eq!(
+            current_computation_context().trace_mode,
+            TraceMode::Detailed
+        );
+        with_computation_context(ComputationContext::new(TraceMode::Off), || {
+            assert_eq!(current_computation_context().trace_mode, TraceMode::Off);
+            with_computation_context(ComputationContext::new(TraceMode::Compact), || {
+                assert_eq!(current_computation_context().trace_mode, TraceMode::Compact);
+            });
+            assert_eq!(current_computation_context().trace_mode, TraceMode::Off);
+        });
+        assert_eq!(
+            current_computation_context().trace_mode,
+            TraceMode::Detailed
+        );
     }
 
     #[test]

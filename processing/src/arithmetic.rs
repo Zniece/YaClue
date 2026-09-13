@@ -48,6 +48,27 @@ pub fn execute_elaborated_structure(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
+    execute_elaborated_structure_with_context(
+        engine,
+        expression,
+        crate::semantic_core::ComputationContext::new(crate::semantic_core::TraceMode::Detailed),
+    )
+}
+
+pub fn execute_elaborated_structure_with_context(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    context: crate::semantic_core::ComputationContext,
+) -> Result<Computation, EngineError> {
+    crate::semantic_core::with_computation_context(context, || {
+        execute_elaborated_structure_in_context(engine, expression)
+    })
+}
+
+fn execute_elaborated_structure_in_context(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
     let mut computation = execute_elaborated_node(engine, expression)?;
     if matches!(
         expression.form,
@@ -103,7 +124,7 @@ fn execute_elaborated_node(
         if let Some(lowered) = crate::lowering::try_lower_application(
             engine,
             &expression.object,
-            crate::semantic_core::TraceMode::Detailed,
+            crate::semantic_core::current_computation_context().trace_mode,
         )? {
             return Ok(lowered);
         }

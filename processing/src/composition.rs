@@ -75,7 +75,15 @@ pub fn execute_elaborated(
         crate::elaboration::MathematicalForm::EffectApplication { .. }
     );
     if root_is_effect {
-        let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
+        let computation = crate::arithmetic::execute_elaborated_structure_with_context(
+            engine,
+            &input.root,
+            crate::semantic_core::ComputationContext::new(if include_steps {
+                crate::semantic_core::TraceMode::Detailed
+            } else {
+                crate::semantic_core::TraceMode::Off
+            }),
+        )?;
         validate_trace(&computation)?;
         let steps = if include_steps {
             computation
@@ -128,7 +136,15 @@ pub fn execute_elaborated(
             analysis: None,
         }));
     }
-    let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
+    let computation = crate::arithmetic::execute_elaborated_structure_with_context(
+        engine,
+        &input.root,
+        crate::semantic_core::ComputationContext::new(if include_steps {
+            crate::semantic_core::TraceMode::Detailed
+        } else {
+            crate::semantic_core::TraceMode::Off
+        }),
+    )?;
     validate_trace(&computation)?;
     let subject = computation
         .subject()
