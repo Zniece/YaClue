@@ -44,6 +44,125 @@ pub fn contains_operator(
             .any(|child| contains_operator(child, expected))
 }
 
+pub(crate) fn execute_calculus_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_calculus_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_algebra_transform_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_transform_application(engine, expression, spelling)
+}
+
+macro_rules! execution_adapter {
+    ($adapter:ident, $implementation:ident) => {
+        pub(crate) fn $adapter(
+            engine: &mut dyn Engine,
+            expression: &crate::elaboration::ElaboratedObject,
+            _spelling: &str,
+        ) -> Result<Computation, EngineError> {
+            $implementation(engine, expression)
+        }
+    };
+}
+
+execution_adapter!(
+    execute_substitution_adapter,
+    execute_substitution_application
+);
+execution_adapter!(execute_taylor_adapter, execute_taylor_application);
+execution_adapter!(execute_equation_solve_adapter, execute_solve_application);
+execution_adapter!(execute_ode_solve_adapter, execute_ode_solve_application);
+execution_adapter!(
+    execute_factor_projection_adapter,
+    execute_factor_projection_application
+);
+execution_adapter!(
+    execute_matrix_solve_adapter,
+    execute_matrix_solve_application
+);
+execution_adapter!(execute_series_adapter, execute_sum_application);
+execution_adapter!(execute_numeric_ode_adapter, execute_numeric_ode_application);
+execution_adapter!(execute_numeric_root_adapter, execute_find_root_application);
+
+pub(crate) fn execute_approximate_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_numeric_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_matrix_unary_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_matrix_unary_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_defined_integral_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_defined_integral_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_multiple_integral_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_multiple_integral_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_plot_effect_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_effect_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_extrema_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_extrema_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_multivariate_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_multivariate_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_line_integral_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_line_integral_application(engine, expression, spelling)
+}
+
+pub(crate) fn execute_surface_integral_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_surface_integral_application(engine, expression, spelling)
+}
+
 pub fn execute_elaborated_structure(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
