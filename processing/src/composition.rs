@@ -607,6 +607,19 @@ mod tests {
         assert!(before_tex.contains("D"), "{before_tex}");
         assert!(before_tex.contains("Limit"), "{before_tex}");
         assert!(!before_tex.trim().starts_with("2 x"), "{before_tex}");
+        assert!(
+            result.steps.iter().all(|step| {
+                !step.expr.contains("Undefined")
+                    && !step
+                        .before_expr
+                        .as_deref()
+                        .unwrap_or_default()
+                        .contains("Undefined")
+                    && step.expr != "0/0"
+            }),
+            "{:#?}",
+            result.steps
+        );
     }
 
     #[test]

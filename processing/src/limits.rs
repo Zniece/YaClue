@@ -401,6 +401,14 @@ fn limit_rule_events(
         .collect::<Vec<_>>();
     let make =
         |rule: &'static str, payload, importance, expression: String, explanation: String| {
+            let class = if matches!(
+                payload,
+                RulePayload::Decision | RulePayload::Inference | RulePayload::Verification
+            ) {
+                crate::semantic_core::RuleEventClass::MathematicalAnalysis
+            } else {
+                crate::semantic_core::RuleEventClass::EquivalentTransformation
+            };
             let event = LimitEventData {
                 rule,
                 expression,
@@ -410,7 +418,7 @@ fn limit_rule_events(
                 tex_override: None,
             };
             RuleEvent {
-                class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+                class,
                 rule: event.rule.into(),
                 input: input.clone(),
                 additional_inputs: Vec::new(),
@@ -442,13 +450,20 @@ fn limit_rule_events(
         "建立极限问题".into(),
     )];
     let method_events = match method.as_deref() {
-        Some("Direct") => vec![make(
-            "limit-direct-substitution",
-            RulePayload::Rewrite,
-            RuleImportance::Key,
-            data.args[1].to_string(),
-            format!("直接代入 {} = {}", result.variable, result.at),
-        )],
+        Some("Direct") => {
+            let substituted = data.args[1].to_string();
+            vec![make(
+                "limit-direct-substitution",
+                if substituted == "Undefined" {
+                    RulePayload::Inference
+                } else {
+                    RulePayload::Rewrite
+                },
+                RuleImportance::Key,
+                substituted,
+                format!("直接代入 {} = {}", result.variable, result.at),
+            )]
+        }
         Some("OneSided") => vec![make(
             "limit-one-sided-approach",
             RulePayload::Decision,
@@ -540,7 +555,7 @@ fn limit_rule_events(
     events.extend(method_events);
     let payload = match result.status {
         LimitStatus::Converged | LimitStatus::PositiveInfinity | LimitStatus::NegativeInfinity => {
-            RulePayload::Convergence
+            RulePayload::Rewrite
         }
         LimitStatus::DoesNotExist => RulePayload::Decision,
         LimitStatus::Unresolved => RulePayload::Structural,
@@ -560,7 +575,7 @@ fn limit_rule_events(
             .get(1)
             .is_some_and(|value| value.to_string() == result.value)
         && result.conditions.is_empty();
-    if !direct_is_terminal && !matches!(method.as_deref(), Some("OneSided")) {
+    if !direct_is_terminal {
         events.push(make(
             "limit-result",
             payload,
@@ -888,15 +903,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "limit-start",
-                "limit-indeterminate-form",
                 "limit-factor",
                 "limit-cancel-common-factor",
                 "limit-result"
             ]
         );
-        assert_eq!(cancellation[1].expr, "0/0");
-        assert_eq!(cancellation[3].expr, "(x + 2)");
-        assert_eq!(cancellation[4].expr, "4");
+        assert_eq!(cancellation[2].expr, "(x + 2)");
+        assert_eq!(cancellation[3].expr, "4");
         assert!(cancellation.iter().all(|step| !step.tex.is_empty()));
 
         let higher_degree = limit_steps(
@@ -938,7 +951,7 @@ mod tests {
             (LimitDirection::Left, "(- Infinity)"),
         ] {
             let steps = limit_steps(&mut engine, "1/x", "x", "0", direction).unwrap();
-            assert_eq!(steps.last().unwrap().rule, "limit-one-sided-approach");
+            assert_eq!(steps.last().unwrap().rule, "limit-result");
             assert_eq!(steps.last().unwrap().expr, expected);
             assert!(!steps
                 .iter()
@@ -1086,11 +1099,8 @@ mod tests {
             LimitDirection::Both,
         )
         .unwrap();
-        let condition = steps
-            .iter()
-            .find(|step| step.rule == "limit-condition")
-            .unwrap_or_else(|| panic!("steps: {steps:#?}"));
-        assert_eq!(condition.expr, "n>0");
+        assert!(!steps.iter().any(|step| step.rule == "limit-condition"));
+        assert!(!steps.iter().any(|step| step.expr == "Undefined"));
         assert_eq!(steps.last().unwrap().expr, "Infinity");
     }
 
@@ -1185,7 +1195,15 @@ mod tests {
         assert!(trace.events.len() >= 2);
         assert_eq!(trace.events[0].rule, "limit-start");
         assert_eq!(trace.events[1].rule, "limit-indeterminate-form");
+        assert_eq!(
+            trace.events[1].class,
+            crate::semantic_core::RuleEventClass::MathematicalAnalysis
+        );
         assert_eq!(trace.events.last().unwrap().rule, "limit-result");
+        assert!(trace
+            .events
+            .iter()
+            .all(|event| event.validate_classification().is_ok()));
         assert_eq!(trace.events[1].input.revision.0, 0);
         assert_eq!(trace.events.last().unwrap().output.revision.0, 1);
     }
