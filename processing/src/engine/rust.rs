@@ -63,7 +63,13 @@ pub(super) fn eval_cmd(
 }
 
 /// Rust 引擎单次求值超时(病态输入的兜底;正常用例远低于此值,θ 链最重 ~3s)
+#[cfg(not(test))]
 const RUST_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+// Unit tests exercise several expensive symbolic solvers concurrently. Their
+// correctness must not depend on how much CPU time the test runner gives each
+// thread; explicit timeout tests pass their own deliberately short deadline.
+#[cfg(test)]
+const RUST_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 impl RustEngine {
     /// One deadline covers command evaluation and TeX generation. All Result

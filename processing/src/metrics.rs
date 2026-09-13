@@ -4,6 +4,7 @@
 //! two snapshots around a single-threaded scenario and subtract them; normal
 //! execution never resets shared process state.
 
+use std::cell::Cell;
 use std::ops::Sub;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -14,6 +15,13 @@ static OBJECT_CLONES: AtomicU64 = AtomicU64::new(0);
 static SESSION_AST_HANDLES: AtomicU64 = AtomicU64::new(0);
 static RULE_PRESENTATIONS: AtomicU64 = AtomicU64::new(0);
 static LEGACY_TRACE_ADAPTATIONS: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    /// Per-execution-thread counters used by `measure`. Global atomics remain
+    /// the production observability source; this mirror prevents unrelated
+    /// parallel requests from contaminating one measured scenario.
+    static THREAD_METRICS: Cell<ExecutionMetrics> = const { Cell::new(ExecutionMetrics::ZERO) };
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExecutionMetrics {
@@ -27,6 +35,16 @@ pub struct ExecutionMetrics {
 }
 
 impl ExecutionMetrics {
+    const ZERO: Self = Self {
+        parse_calls: 0,
+        engine_requests: 0,
+        object_transitions: 0,
+        object_clones: 0,
+        session_ast_handles: 0,
+        rule_presentations: 0,
+        legacy_trace_adaptations: 0,
+    };
+
     pub fn snapshot() -> Self {
         Self {
             parse_calls: yacas_rs::parser::parse_call_count(),
@@ -37,6 +55,10 @@ impl ExecutionMetrics {
             rule_presentations: RULE_PRESENTATIONS.load(Ordering::Relaxed),
             legacy_trace_adaptations: LEGACY_TRACE_ADAPTATIONS.load(Ordering::Relaxed),
         }
+    }
+
+    fn thread_snapshot() -> Self {
+        THREAD_METRICS.with(Cell::get)
     }
 }
 
@@ -72,38 +94,56 @@ pub struct Measured<T> {
 }
 
 pub fn measure<T>(operation: impl FnOnce() -> T) -> Measured<T> {
-    let before = ExecutionMetrics::snapshot();
+    let before = ExecutionMetrics::thread_snapshot();
+    let parse_calls_before = yacas_rs::parser::parse_call_count();
     let started = Instant::now();
     let value = operation();
     Measured {
         value,
-        metrics: ExecutionMetrics::snapshot() - before,
+        metrics: ExecutionMetrics {
+            parse_calls: yacas_rs::parser::parse_call_count().saturating_sub(parse_calls_before),
+            ..(ExecutionMetrics::thread_snapshot() - before)
+        },
         elapsed: started.elapsed(),
     }
 }
 
+fn record_thread_metric(update: impl FnOnce(&mut ExecutionMetrics)) {
+    THREAD_METRICS.with(|metrics| {
+        let mut current = metrics.get();
+        update(&mut current);
+        metrics.set(current);
+    });
+}
+
 pub(crate) fn record_engine_request() {
     ENGINE_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    record_thread_metric(|metrics| metrics.engine_requests += 1);
 }
 
 pub(crate) fn record_object_transition() {
     OBJECT_TRANSITIONS.fetch_add(1, Ordering::Relaxed);
+    record_thread_metric(|metrics| metrics.object_transitions += 1);
 }
 
 pub(crate) fn record_object_clone() {
     OBJECT_CLONES.fetch_add(1, Ordering::Relaxed);
+    record_thread_metric(|metrics| metrics.object_clones += 1);
 }
 
 pub(crate) fn record_session_ast_handle() {
     SESSION_AST_HANDLES.fetch_add(1, Ordering::Relaxed);
+    record_thread_metric(|metrics| metrics.session_ast_handles += 1);
 }
 
 pub(crate) fn record_rule_presentation() {
     RULE_PRESENTATIONS.fetch_add(1, Ordering::Relaxed);
+    record_thread_metric(|metrics| metrics.rule_presentations += 1);
 }
 
 pub(crate) fn record_legacy_trace_adaptations(count: usize) {
     LEGACY_TRACE_ADAPTATIONS.fetch_add(count as u64, Ordering::Relaxed);
+    record_thread_metric(|metrics| metrics.legacy_trace_adaptations += count as u64);
 }
 
 #[cfg(test)]
