@@ -452,12 +452,18 @@ fn limit_rule_events(
     let method_events = match method.as_deref() {
         Some("Direct") => {
             let substituted = data.args[1].to_string();
+            let is_result = substituted == result.value
+                && result.conditions.is_empty()
+                && !matches!(
+                    result.status,
+                    LimitStatus::DoesNotExist | LimitStatus::Unresolved
+                );
             vec![make(
                 "limit-direct-substitution",
-                if substituted == "Undefined" {
-                    RulePayload::Inference
-                } else {
+                if is_result {
                     RulePayload::Rewrite
+                } else {
+                    RulePayload::Inference
                 },
                 RuleImportance::Key,
                 substituted,

@@ -935,6 +935,14 @@ mod tests {
             .is_some_and(|reason| reason.contains("不存在")));
         assert!(result.steps.iter().all(|step| step.rule != "limit-result"));
         assert!(result
+            .steps
+            .iter()
+            .all(|step| !step.expr.contains("Infinity")));
+        assert!(result
+            .analyses
+            .iter()
+            .any(|analysis| analysis.rule == "limit-direct-substitution"));
+        assert!(result
             .analyses
             .iter()
             .any(|analysis| analysis.rule == "limit-result"));
