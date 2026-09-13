@@ -244,56 +244,8 @@ fn execute_elaborated_node(
         )? {
             return Ok(lowered);
         }
-        use crate::semantic_core::ObjectNativeRoute;
-        if let Some(route) = crate::semantic_core::object_native_route(head) {
-            return match route {
-                ObjectNativeRoute::Calculus => {
-                    execute_calculus_application(engine, expression, head)
-                }
-                ObjectNativeRoute::AlgebraTransform => {
-                    execute_transform_application(engine, expression, head)
-                }
-                ObjectNativeRoute::Substitute => {
-                    execute_substitution_application(engine, expression)
-                }
-                ObjectNativeRoute::Approximate => {
-                    execute_numeric_application(engine, expression, head)
-                }
-                ObjectNativeRoute::Taylor => execute_taylor_application(engine, expression),
-                ObjectNativeRoute::EquationSolve => execute_solve_application(engine, expression),
-                ObjectNativeRoute::OdeSolve => execute_ode_solve_application(engine, expression),
-                ObjectNativeRoute::MatrixUnary => {
-                    execute_matrix_unary_application(engine, expression, head)
-                }
-                ObjectNativeRoute::FactorProjection => {
-                    execute_factor_projection_application(engine, expression)
-                }
-                ObjectNativeRoute::MatrixSolve => {
-                    execute_matrix_solve_application(engine, expression)
-                }
-                ObjectNativeRoute::Series => execute_sum_application(engine, expression),
-                ObjectNativeRoute::DefinedIntegral => {
-                    execute_defined_integral_application(engine, expression, head)
-                }
-                ObjectNativeRoute::MultipleIntegral => {
-                    execute_multiple_integral_application(engine, expression, head)
-                }
-                ObjectNativeRoute::NumericOde => {
-                    execute_numeric_ode_application(engine, expression)
-                }
-                ObjectNativeRoute::NumericRoot => execute_find_root_application(engine, expression),
-                ObjectNativeRoute::PlotEffect => unreachable!("Plot uses the effect form"),
-                ObjectNativeRoute::Extrema => execute_extrema_application(engine, expression, head),
-                ObjectNativeRoute::MultivariateDifferential => {
-                    execute_multivariate_application(engine, expression, head)
-                }
-                ObjectNativeRoute::LineIntegral => {
-                    execute_line_integral_application(engine, expression, head)
-                }
-                ObjectNativeRoute::SurfaceIntegral => {
-                    execute_surface_integral_application(engine, expression, head)
-                }
-            };
+        if let Some(descriptor) = crate::semantic_core::operator_descriptor(head) {
+            return (descriptor.execution_handler)(engine, expression, head);
         }
         if !crate::semantic_core::is_known_operator(head) {
             return execute_function_application(engine, expression, head);
@@ -307,7 +259,9 @@ fn execute_elaborated_node(
         return execute_container(expression, engine);
     }
     if let crate::elaboration::MathematicalForm::EffectApplication { head } = &expression.form {
-        return execute_effect_application(engine, expression, head);
+        let descriptor = crate::semantic_core::operator_descriptor(head)
+            .ok_or_else(|| EngineError::InvalidInput(format!("未登记的效果运算符: {head}")))?;
+        return (descriptor.execution_handler)(engine, expression, head);
     }
     let crate::elaboration::MathematicalForm::Structural { operator } = &expression.form else {
         return Ok(Computation {
