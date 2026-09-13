@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_trace_adapter_metric_exposes_e4_migration_debt() {
+    fn derivative_rule_facts_do_not_cross_the_legacy_trace_adapter() {
         let input = crate::elaboration::elaborate_input("D(x)(x^2)").unwrap();
         let mut engine = RustEngine::spawn().unwrap();
         let measured = measure(|| {
@@ -177,6 +177,6 @@ mod tests {
             )
             .unwrap()
         });
-        assert!(measured.metrics.legacy_trace_adaptations > 0);
+        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
     }
 }

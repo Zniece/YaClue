@@ -1,16 +1,16 @@
-//! Object-native differentiation over the existing, tested `StepsD'Full`
-//! decision program.  The script remains the algorithm fact source while this
-//! module owns semantic state transitions and rule-trace construction.
+//! Object-native differentiation over the derivative rule program. The script
+//! returns its authoritative result beside its rule emissions; this module
+//! turns those emissions directly into domain facts and semantic transitions.
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{validate_expression, validate_symbol};
 use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, ExpressionView,
+    object_from_source, CapabilitySet, Computation, ComputationOutput, EventSink, ExpressionView,
     NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, ObjectId,
-    OperatorId, Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
-    SemanticInterpretation, SemanticOperation, SemanticState,
+    OperatorId, Requirement, RuleFact, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState, VecEventSink,
 };
 use crate::steps::{Step, StepVerbosity};
 use serde::Serialize;
@@ -129,29 +129,49 @@ impl SemanticOperation<DerivativeRequest> for DerivativeOperation {
 }
 
 #[derive(Clone)]
-struct DerivativeFact {
+struct DerivativeRuleEmission {
     rule: String,
     expression: String,
     explanation: String,
     importance: RuleImportance,
 }
 
-fn facts(
+struct DerivativeEvaluation {
+    result: String,
+    emissions: Vec<DerivativeRuleEmission>,
+}
+
+fn evaluate_derivative_rules(
     engine: &mut dyn Engine,
     expression: &str,
     request: &DerivativeRequest,
-) -> Result<Vec<DerivativeFact>, EngineError> {
+) -> Result<DerivativeEvaluation, EngineError> {
     let command = format!(
-        "StepsD'Full({expression},{},{})",
+        "StepsD'Computation({expression},{},{})",
         request.variable, request.order
     );
     let Expr::Call { head, args } = engine.eval_expr(&command)? else {
-        return Err(EngineError::Parse("求导步骤事实不是列表".into()));
+        return Err(EngineError::Parse("求导规则执行结果不是列表".into()));
     };
-    if head != "List" || args.is_empty() {
-        return Err(EngineError::Eval("未能生成求导步骤".into()));
+    if head != "List" || args.len() != 2 {
+        return Err(EngineError::Parse(
+            "求导规则执行结果必须包含结果和规则发射".into(),
+        ));
     }
-    args.into_iter()
+    let result = args[0].to_string();
+    let Expr::Call {
+        head: emission_head,
+        args: emission_args,
+    } = &args[1]
+    else {
+        return Err(EngineError::Parse("求导规则发射不是列表".into()));
+    };
+    if emission_head != "List" || emission_args.is_empty() {
+        return Err(EngineError::Eval("未能生成求导规则事实".into()));
+    }
+    let emissions = emission_args
+        .iter()
+        .cloned()
         .enumerate()
         .map(|(index, item)| {
             let Expr::Call { head, args } = item else {
@@ -182,14 +202,15 @@ fn facts(
                     )))
                 }
             };
-            Ok(DerivativeFact {
+            Ok(DerivativeRuleEmission {
                 rule: text(&args[0], "rule")?,
                 expression: args[1].to_string(),
                 explanation: text(&args[2], "explanation")?,
                 importance,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(DerivativeEvaluation { result, emissions })
 }
 
 pub fn derivative_computation(
@@ -243,12 +264,8 @@ pub fn derivative_computation_for_object(
         return Ok(computation);
     }
     let source = operand.print_source();
-    let facts = facts(engine, &source, request)?;
-    let final_expression = facts
-        .last()
-        .expect("checked nonempty facts")
-        .expression
-        .clone();
+    let evaluation = evaluate_derivative_rules(engine, &source, request)?;
+    let final_expression = evaluation.result;
     let unresolved = crate::input::with_parse_env(|env| {
         let tree = yacas_rs::parser::parse_expression(env, &format!("{final_expression};"))
             .map_err(|error| EngineError::Parse(format!("求导结果语法异常: {error:?}")))?
@@ -310,50 +327,53 @@ pub fn derivative_computation_for_object(
         }),
     });
     let output_ref = output_object.reference(None);
-    let last = facts.len() - 1;
-    crate::metrics::record_legacy_trace_adaptations(facts.len());
-    let events = facts
+    let last = evaluation.emissions.len() - 1;
+    let mut sink = VecEventSink::default();
+    evaluation
+        .emissions
         .into_iter()
         .enumerate()
-        .map(|(index, fact)| RuleEvent {
-            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-            // Preserve the established rule vocabulary at the compatibility
-            // projection boundary.  The trace itself supplies the missing
-            // object/revision semantics without inventing display-only names.
-            rule: fact.rule,
-            input: input_ref.clone(),
-            additional_inputs: Vec::new(),
-            output: output_ref.clone(),
-            bindings: vec![
-                ("variable".into(), request.variable.clone()),
-                ("order".into(), request.order.to_string()),
-            ],
-            conditions: operand.semantics.metadata.conditions.conditions().to_vec(),
-            payload: if index == last {
-                RulePayload::Rewrite
-            } else {
-                RulePayload::Structural
-            },
-            importance: if index == last {
-                RuleImportance::Key
-            } else {
-                fact.importance
-            },
-            transformation: None,
-            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
-                expression: fact.expression,
-                explanation: fact.explanation,
-                tex_override: None,
-            }),
-        })
-        .collect();
+        .for_each(|(index, emission)| {
+            let fact = RuleFact {
+                class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+                rule: emission.rule,
+                input: input_ref.clone(),
+                additional_inputs: Vec::new(),
+                output: output_ref.clone(),
+                bindings: vec![
+                    ("variable".into(), request.variable.clone()),
+                    ("order".into(), request.order.to_string()),
+                ],
+                conditions: operand.semantics.metadata.conditions.conditions().to_vec(),
+                payload: if index == last {
+                    RulePayload::Rewrite
+                } else {
+                    RulePayload::Structural
+                },
+                importance: if index == last {
+                    RuleImportance::Key
+                } else {
+                    emission.importance
+                },
+                transformation: None,
+            };
+            sink.record_fact(fact, || {
+                Some(RulePresentation {
+                    expression: emission.expression,
+                    explanation: emission.explanation,
+                    tex_override: None,
+                })
+            });
+        });
     Ok(Computation {
         output: if unresolved {
             ComputationOutput::Held(output_object)
         } else {
             ComputationOutput::Value(output_object)
         },
-        trace: Some(RuleTrace { events }),
+        trace: Some(RuleTrace {
+            events: sink.events,
+        }),
         certificates: Vec::new(),
         effects: Vec::new(),
     })
@@ -677,7 +697,7 @@ fn held_derivative_of_registered_function(
         overlay: None,
         normalization: None,
     });
-    let event = RuleEvent {
+    let fact = RuleFact {
         class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
         rule: "derivative-known-formal-function".into(),
         input,
@@ -701,16 +721,19 @@ fn held_derivative_of_registered_function(
         payload: RulePayload::Structural,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+    };
+    let mut sink = VecEventSink::default();
+    sink.record_fact(fact, || {
+        Some(RulePresentation {
             expression: output.print_source(),
             explanation: "该特殊函数暂无可靠的闭式导数规则，保留形式导数。".into(),
             tex_override: None,
-        }),
-    };
+        })
+    });
     Ok(Computation {
         output: ComputationOutput::Held(output),
         trace: Some(RuleTrace {
-            events: vec![event],
+            events: sink.events,
         }),
         certificates: Vec::new(),
         effects: Vec::new(),
@@ -829,7 +852,7 @@ fn derivative_of_registered_function(
             mode: NormalizationMode::Operation(OperatorId::Derivative),
         }),
     });
-    let event = RuleEvent {
+    let fact = RuleFact {
         class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
         rule: "derivative-registered-function-chain-rule".into(),
         input: input_ref,
@@ -852,16 +875,20 @@ fn derivative_of_registered_function(
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+    };
+    let mut sink = VecEventSink { events };
+    sink.record_fact(fact, || {
+        Some(RulePresentation {
             expression: output.print_source(),
             explanation: "应用已登记的函数偏导规则，并由通用链式法则组合参数导数。".into(),
             tex_override: None,
-        }),
-    };
-    events.push(event);
+        })
+    });
     Ok(Some(Computation {
         output: ComputationOutput::Value(output),
-        trace: Some(RuleTrace { events }),
+        trace: Some(RuleTrace {
+            events: sink.events,
+        }),
         certificates,
         effects,
     }))
@@ -1016,7 +1043,7 @@ fn integral_derivative_computation(
     conditions: ConditionSet,
     held: bool,
 ) -> Computation {
-    let event = RuleEvent {
+    let fact = RuleFact {
         class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
         rule: rule.into(),
         input: input.reference(None),
@@ -1027,12 +1054,15 @@ fn integral_derivative_computation(
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+    };
+    let mut sink = VecEventSink::default();
+    sink.record_fact(fact, || {
+        Some(RulePresentation {
             expression: output.print_source(),
             explanation: explanation.into(),
             tex_override: None,
-        }),
-    };
+        })
+    });
     Computation {
         output: if held {
             ComputationOutput::Held(output)
@@ -1040,7 +1070,7 @@ fn integral_derivative_computation(
             ComputationOutput::Value(output)
         },
         trace: Some(RuleTrace {
-            events: vec![event],
+            events: sink.events,
         }),
         certificates: Vec::new(),
         effects: Vec::new(),
