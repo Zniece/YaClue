@@ -311,6 +311,7 @@ pub fn derivative_computation_for_object(
     });
     let output_ref = output_object.reference(None);
     let last = facts.len() - 1;
+    crate::metrics::record_legacy_trace_adaptations(facts.len());
     let events = facts
         .into_iter()
         .enumerate()

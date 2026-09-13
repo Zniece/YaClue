@@ -170,6 +170,7 @@ impl SemanticOperation<MultipleIntegralRequest> for MultipleIntegralOperation {
                 mode: NormalizationMode::Operation(operator_id),
             }),
         });
+        crate::metrics::record_legacy_trace_adaptations(steps.len());
         let events = steps
             .into_iter()
             .map(|step| RuleEvent {

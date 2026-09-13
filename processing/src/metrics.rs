@@ -13,6 +13,7 @@ static OBJECT_TRANSITIONS: AtomicU64 = AtomicU64::new(0);
 static OBJECT_CLONES: AtomicU64 = AtomicU64::new(0);
 static SESSION_AST_HANDLES: AtomicU64 = AtomicU64::new(0);
 static RULE_PRESENTATIONS: AtomicU64 = AtomicU64::new(0);
+static LEGACY_TRACE_ADAPTATIONS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExecutionMetrics {
@@ -22,6 +23,7 @@ pub struct ExecutionMetrics {
     pub object_clones: u64,
     pub session_ast_handles: u64,
     pub rule_presentations: u64,
+    pub legacy_trace_adaptations: u64,
 }
 
 impl ExecutionMetrics {
@@ -33,6 +35,7 @@ impl ExecutionMetrics {
             object_clones: OBJECT_CLONES.load(Ordering::Relaxed),
             session_ast_handles: SESSION_AST_HANDLES.load(Ordering::Relaxed),
             rule_presentations: RULE_PRESENTATIONS.load(Ordering::Relaxed),
+            legacy_trace_adaptations: LEGACY_TRACE_ADAPTATIONS.load(Ordering::Relaxed),
         }
     }
 }
@@ -54,6 +57,9 @@ impl Sub for ExecutionMetrics {
             rule_presentations: self
                 .rule_presentations
                 .saturating_sub(earlier.rule_presentations),
+            legacy_trace_adaptations: self
+                .legacy_trace_adaptations
+                .saturating_sub(earlier.legacy_trace_adaptations),
         }
     }
 }
@@ -94,6 +100,10 @@ pub(crate) fn record_session_ast_handle() {
 
 pub(crate) fn record_rule_presentation() {
     RULE_PRESENTATIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_legacy_trace_adaptations(count: usize) {
+    LEGACY_TRACE_ADAPTATIONS.fetch_add(count as u64, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -153,5 +163,20 @@ mod tests {
             .events
             .iter()
             .all(|event| event.presentation.is_none()));
+    }
+
+    #[test]
+    fn legacy_trace_adapter_metric_exposes_e4_migration_debt() {
+        let input = crate::elaboration::elaborate_input("D(x)(x^2)").unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let measured = measure(|| {
+            crate::arithmetic::execute_elaborated_structure_with_context(
+                &mut engine,
+                &input.root,
+                crate::semantic_core::ComputationContext::new(crate::semantic_core::TraceMode::Off),
+            )
+            .unwrap()
+        });
+        assert!(measured.metrics.legacy_trace_adaptations > 0);
     }
 }

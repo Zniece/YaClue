@@ -212,6 +212,7 @@ impl SemanticOperation<SumRequest> for SumOperation {
                 mode: NormalizationMode::Operation(OperatorId::Sum),
             }),
         });
+        crate::metrics::record_legacy_trace_adaptations(steps.len());
         let events = steps
             .into_iter()
             .map(|step| RuleEvent {

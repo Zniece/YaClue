@@ -176,6 +176,7 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
                 mode: NormalizationMode::Operation(OperatorId::Integral),
             }),
         });
+        crate::metrics::record_legacy_trace_adaptations(derivation.steps.len());
         let events = derivation
             .steps
             .into_iter()
@@ -336,41 +337,43 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
                 mode: NormalizationMode::Operation(OperatorId::Integral),
             }),
         });
-        let events = crate::steps::derive_definite_with_verbosity(
+        let legacy_steps = crate::steps::derive_definite_with_verbosity(
             engine,
             &source,
             &request.variable,
             &request.lower,
             &request.upper,
             crate::steps::StepVerbosity::Detailed,
-        )?
-        .into_iter()
-        .map(|step| RuleEvent {
-            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-            rule: step.rule,
-            input: input.reference(None),
-            additional_inputs: Vec::new(),
-            output: output.reference(None),
-            bindings: vec![
-                ("variable".into(), request.variable.clone()),
-                ("lower".into(), request.lower.clone()),
-                ("upper".into(), request.upper.clone()),
-            ],
-            conditions: Vec::new(),
-            payload: RulePayload::Structural,
-            importance: match step.importance {
-                crate::steps::StepImportance::Routine => RuleImportance::Routine,
-                crate::steps::StepImportance::Normal => RuleImportance::Normal,
-                crate::steps::StepImportance::Key => RuleImportance::Key,
-            },
-            transformation: None,
-            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
-                expression: step.expr,
-                explanation: step.why,
-                tex_override: Some(step.tex),
-            }),
-        })
-        .collect();
+        )?;
+        crate::metrics::record_legacy_trace_adaptations(legacy_steps.len());
+        let events = legacy_steps
+            .into_iter()
+            .map(|step| RuleEvent {
+                class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+                rule: step.rule,
+                input: input.reference(None),
+                additional_inputs: Vec::new(),
+                output: output.reference(None),
+                bindings: vec![
+                    ("variable".into(), request.variable.clone()),
+                    ("lower".into(), request.lower.clone()),
+                    ("upper".into(), request.upper.clone()),
+                ],
+                conditions: Vec::new(),
+                payload: RulePayload::Structural,
+                importance: match step.importance {
+                    crate::steps::StepImportance::Routine => RuleImportance::Routine,
+                    crate::steps::StepImportance::Normal => RuleImportance::Normal,
+                    crate::steps::StepImportance::Key => RuleImportance::Key,
+                },
+                transformation: None,
+                presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+                    expression: step.expr,
+                    explanation: step.why,
+                    tex_override: Some(step.tex),
+                }),
+            })
+            .collect();
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
