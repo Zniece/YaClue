@@ -13,6 +13,7 @@
 //! or rebuilt.
 
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::env::Environment;
 use crate::operators::Operator;
@@ -55,10 +56,18 @@ pub struct InfixParser<'a> {
 }
 
 /// Parse a single expression (up to `;` or EOF).
+static PARSE_CALLS: AtomicU64 = AtomicU64::new(0);
+
+/// Process-wide monotonic parser counter for benchmark instrumentation.
+pub fn parse_call_count() -> u64 {
+    PARSE_CALLS.load(Ordering::Relaxed)
+}
+
 pub fn parse_expression(
     env: &mut Environment,
     src: &str,
 ) -> Result<Option<Rc<LispObject>>, ParseError> {
+    PARSE_CALLS.fetch_add(1, Ordering::Relaxed);
     if src.len() > MAX_INPUT_BYTES {
         return Err(ParseError::Generic(format!(
             "input exceeds {MAX_INPUT_BYTES} bytes"

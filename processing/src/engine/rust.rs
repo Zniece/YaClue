@@ -261,14 +261,17 @@ fn tex_form_value(
 
 impl Engine for RustEngine {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
+        crate::metrics::record_engine_request();
         self.eval_with_timeout(command, RUST_EVAL_TIMEOUT)
     }
 
     fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
+        crate::metrics::record_engine_request();
         self.eval_expr_with_timeout(command, RUST_EVAL_TIMEOUT)
     }
 
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
+        crate::metrics::record_engine_request();
         self.render_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
     }
 
@@ -276,6 +279,7 @@ impl Engine for RustEngine {
         &mut self,
         expressions: &[String],
     ) -> Result<Vec<String>, EngineError> {
+        crate::metrics::record_engine_request();
         self.render_syntax_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
     }
 }

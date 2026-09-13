@@ -1773,7 +1773,6 @@ impl SemanticOverlay {
     }
 }
 
-#[derive(Clone)]
 pub struct MathematicalObject {
     pub id: ObjectId,
     pub revision: ObjectRevision,
@@ -1783,6 +1782,22 @@ pub struct MathematicalObject {
     pub normalization: Option<NormalizationState>,
     representations: RepresentationSet,
     operation_cache: Rc<RefCell<Option<OperationCache>>>,
+}
+
+impl Clone for MathematicalObject {
+    fn clone(&self) -> Self {
+        crate::metrics::record_object_clone();
+        Self {
+            id: self.id,
+            revision: self.revision,
+            expression: self.expression.clone(),
+            semantics: self.semantics.clone(),
+            overlay: self.overlay.clone(),
+            normalization: self.normalization.clone(),
+            representations: self.representations.clone(),
+            operation_cache: self.operation_cache.clone(),
+        }
+    }
 }
 
 impl MathematicalObject {
@@ -1920,6 +1935,7 @@ impl MathematicalObject {
         self.expression = candidate.expression;
         self.overlay = candidate.overlay;
         self.representations.active = id;
+        crate::metrics::record_object_transition();
         self.revision.0 += 1;
         self.normalization = candidate.normalization.map(|metadata| NormalizationState {
             revision: self.revision,
@@ -1932,6 +1948,7 @@ impl MathematicalObject {
         &self,
         representation: Option<RepresentationId>,
     ) -> Result<OperationSessionAst, EngineError> {
+        crate::metrics::record_session_ast_handle();
         let expression = match representation {
             None => self.expression.clone(),
             Some(id) => self
@@ -1955,6 +1972,7 @@ impl MathematicalObject {
         &self,
         expression: Rc<LispObject>,
     ) -> OperationSessionAst {
+        crate::metrics::record_session_ast_handle();
         OperationSessionAst {
             identity: self.identity(),
             revision: self.revision,
@@ -2123,6 +2141,7 @@ impl MathematicalObject {
             self.overlay = overlay;
         }
         if changed {
+            crate::metrics::record_object_transition();
             self.revision.0 += 1;
         }
         if changed {

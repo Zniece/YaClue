@@ -1,0 +1,114 @@
+//! Low-overhead, monotonic counters for semantic-pipeline baselines.
+//!
+//! These counters describe work rather than wall-clock policy. Consumers take
+//! two snapshots around a single-threaded scenario and subtract them; normal
+//! execution never resets shared process state.
+
+use std::ops::Sub;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+static ENGINE_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static OBJECT_TRANSITIONS: AtomicU64 = AtomicU64::new(0);
+static OBJECT_CLONES: AtomicU64 = AtomicU64::new(0);
+static SESSION_AST_HANDLES: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExecutionMetrics {
+    pub parse_calls: u64,
+    pub engine_requests: u64,
+    pub object_transitions: u64,
+    pub object_clones: u64,
+    pub session_ast_handles: u64,
+}
+
+impl ExecutionMetrics {
+    pub fn snapshot() -> Self {
+        Self {
+            parse_calls: yacas_rs::parser::parse_call_count(),
+            engine_requests: ENGINE_REQUESTS.load(Ordering::Relaxed),
+            object_transitions: OBJECT_TRANSITIONS.load(Ordering::Relaxed),
+            object_clones: OBJECT_CLONES.load(Ordering::Relaxed),
+            session_ast_handles: SESSION_AST_HANDLES.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl Sub for ExecutionMetrics {
+    type Output = Self;
+
+    fn sub(self, earlier: Self) -> Self::Output {
+        Self {
+            parse_calls: self.parse_calls.saturating_sub(earlier.parse_calls),
+            engine_requests: self.engine_requests.saturating_sub(earlier.engine_requests),
+            object_transitions: self
+                .object_transitions
+                .saturating_sub(earlier.object_transitions),
+            object_clones: self.object_clones.saturating_sub(earlier.object_clones),
+            session_ast_handles: self
+                .session_ast_handles
+                .saturating_sub(earlier.session_ast_handles),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Measured<T> {
+    pub value: T,
+    pub metrics: ExecutionMetrics,
+    pub elapsed: Duration,
+}
+
+pub fn measure<T>(operation: impl FnOnce() -> T) -> Measured<T> {
+    let before = ExecutionMetrics::snapshot();
+    let started = Instant::now();
+    let value = operation();
+    Measured {
+        value,
+        metrics: ExecutionMetrics::snapshot() - before,
+        elapsed: started.elapsed(),
+    }
+}
+
+pub(crate) fn record_engine_request() {
+    ENGINE_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_object_transition() {
+    OBJECT_TRANSITIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_object_clone() {
+    OBJECT_CLONES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_session_ast_handle() {
+    SESSION_AST_HANDLES.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::composition::execute_steps;
+    use crate::engine::RustEngine;
+    use crate::steps::StepVerbosity;
+
+    #[test]
+    fn semantic_work_is_visible_in_monotonic_metric_deltas() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let measured = measure(|| {
+            execute_steps(
+                &mut engine,
+                "D(x)Limit(t,0)(Sin(t)/t+x^2)",
+                StepVerbosity::Detailed,
+            )
+            .unwrap()
+            .unwrap()
+        });
+        assert!(measured.metrics.parse_calls > 0);
+        assert!(measured.metrics.engine_requests > 0);
+        assert!(measured.metrics.object_transitions > 0);
+        assert!(measured.metrics.object_clones > 0);
+        assert!(!measured.value.steps.is_empty());
+    }
+}
