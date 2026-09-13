@@ -7,12 +7,14 @@ enum EngineRequest {
     Eval(String),
     EvalExpr(String),
     RenderTex(Vec<String>),
+    RenderSyntaxTex(Vec<String>),
 }
 
 enum EngineResponse {
     Eval(Result<EvalResult, EngineError>),
     EvalExpr(Result<Expr, EngineError>),
     RenderTex(Result<Vec<String>, EngineError>),
+    RenderSyntaxTex(Result<Vec<String>, EngineError>),
 }
 
 pub struct RustEngineProxy {
@@ -57,6 +59,11 @@ impl RustEngineProxy {
                         }
                         EngineRequest::RenderTex(expressions) => {
                             EngineResponse::RenderTex(engine.render_tex_batch(&expressions))
+                        }
+                        EngineRequest::RenderSyntaxTex(expressions) => {
+                            EngineResponse::RenderSyntaxTex(
+                                engine.render_syntax_tex_batch(&expressions),
+                            )
                         }
                     };
                     if res_tx.send(response).is_err() {
@@ -131,6 +138,26 @@ impl Engine for RustEngineProxy {
             .map_err(|e| EngineError::Io(e.to_string()))?;
         match self.rx.recv().map_err(|e| EngineError::Io(e.to_string()))? {
             EngineResponse::RenderTex(result) => result,
+            _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
+        }
+    }
+
+    fn render_syntax_tex_batch(
+        &mut self,
+        expressions: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        let tx = self
+            .tx
+            .as_ref()
+            .ok_or_else(|| EngineError::Io("引擎线程已退出".into()))?;
+        tx.send(EngineRequest::RenderSyntaxTex(expressions.to_vec()))
+            .map_err(|error| EngineError::Io(error.to_string()))?;
+        match self
+            .rx
+            .recv()
+            .map_err(|error| EngineError::Io(error.to_string()))?
+        {
+            EngineResponse::RenderSyntaxTex(result) => result,
             _ => Err(EngineError::Io("引擎响应类型不匹配".into())),
         }
     }

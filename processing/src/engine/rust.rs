@@ -162,6 +162,40 @@ impl RustEngine {
         }
     }
 
+    fn render_syntax_tex_batch_with_timeout(
+        &mut self,
+        expressions: &[String],
+        timeout: Duration,
+    ) -> Result<Vec<String>, EngineError> {
+        let first_unique_id = self.env.last_unique_id;
+        let loaded_files = loaded_def_file_count(&self.env);
+        self.env.set_eval_timeout(Some(timeout));
+        let response = expressions
+            .iter()
+            .map(|expression| {
+                let parsed =
+                    yacas_rs::parser::parse_expression(&mut self.env, &format!("{expression};"))
+                        .map_err(|error| self.eval_error(error.into(), "TeX 语法解析失败", false))?
+                        .ok_or_else(|| EngineError::Parse("TeX 语法表达式为空".into()))?;
+                let tex_value = tex_form_value(&mut self.env, &parsed)
+                    .map_err(|error| self.eval_error(error, "未求值 TeXForm 失败", false))?;
+                Ok(unquote_printed(&yacas_rs::printer::infix_print(
+                    &self.env, &tex_value,
+                )))
+            })
+            .collect::<Result<Vec<_>, _>>();
+        let expired = self.deadline_expired();
+        self.env.set_eval_timeout(None);
+        if loaded_def_file_count(&self.env) == loaded_files {
+            self.env.clear_unique_globals_since(first_unique_id);
+        }
+        if response.is_ok() && expired {
+            Err(EngineError::Timeout("未求值 TeX 排版超过时限".into()))
+        } else {
+            response
+        }
+    }
+
     fn deadline_expired(&self) -> bool {
         self.env
             .eval_deadline
@@ -236,5 +270,12 @@ impl Engine for RustEngine {
 
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
         self.render_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
+    }
+
+    fn render_syntax_tex_batch(
+        &mut self,
+        expressions: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        self.render_syntax_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
     }
 }

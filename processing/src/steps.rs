@@ -327,12 +327,26 @@ pub fn validate_step_chain(initial: &str, steps: &[Step]) -> Result<(), EngineEr
 }
 
 fn render_product_tex(engine: &mut dyn Engine, expression: &str) -> String {
+    if crate::elaboration::elaborate(expression)
+        .is_ok_and(|root| contains_registered_operation(&root))
+    {
+        return literal_tex(expression);
+    }
     engine
-        .render_tex_batch(&[expression.to_string()])
+        .render_syntax_tex_batch(&[expression.to_string()])
         .ok()
         .and_then(|mut rendered| rendered.pop())
         .map(|tex| strip_tex_delimiters(&tex))
         .unwrap_or_else(|| literal_tex(expression))
+}
+
+fn contains_registered_operation(object: &crate::elaboration::ElaboratedObject) -> bool {
+    matches!(
+        &object.form,
+        crate::elaboration::MathematicalForm::Application { head }
+            | crate::elaboration::MathematicalForm::EffectApplication { head }
+            if crate::semantic_core::is_known_operator(head)
+    ) || object.children.iter().any(contains_registered_operation)
 }
 
 fn render_product_tex_cached(

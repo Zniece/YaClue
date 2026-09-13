@@ -590,7 +590,23 @@ mod tests {
             .expect("2^2 changes the complete equation");
         assert_eq!(power.before_expr.as_deref(), Some("y+2^2*y==Sin(x)"));
         assert_eq!(power.expr, "y+4*y==Sin(x)");
+        let before_tex = power.before_tex.as_deref().unwrap();
+        assert!(before_tex.contains("2 ^{2}"), "{before_tex}");
+        assert!(!before_tex.contains("5 y"), "{before_tex}");
         assert!(!power.expr.trim().starts_with("4"));
+    }
+
+    #[test]
+    fn semantic_operations_are_rendered_before_they_are_evaluated() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let source = "D(x)Limit(t,0)(Sin(t)/t+x^2)";
+        let result = execute_steps(&mut engine, source, StepVerbosity::Detailed)
+            .unwrap()
+            .unwrap();
+        let before_tex = result.steps[0].before_tex.as_deref().unwrap();
+        assert!(before_tex.contains("D"), "{before_tex}");
+        assert!(before_tex.contains("Limit"), "{before_tex}");
+        assert!(!before_tex.trim().starts_with("2 x"), "{before_tex}");
     }
 
     #[test]
