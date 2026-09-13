@@ -136,7 +136,11 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
             }),
         });
         let event = RuleEvent {
-            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            class: if no_value {
+                crate::semantic_core::RuleEventClass::MathematicalConclusion
+            } else {
+                crate::semantic_core::RuleEventClass::EquivalentTransformation
+            },
             rule: if unresolved {
                 "hold-numeric-evaluation"
             } else if no_value {

@@ -2438,6 +2438,14 @@ pub struct RuleTrace {
     pub events: Vec<RuleEvent>,
 }
 
+impl RuleTrace {
+    pub fn validate_classifications(&self) -> Result<(), &'static str> {
+        self.events
+            .iter()
+            .try_for_each(RuleEvent::validate_classification)
+    }
+}
+
 #[derive(Clone)]
 pub enum ComputationOutput {
     /// A mathematical value that may be passed to a later semantic operation.

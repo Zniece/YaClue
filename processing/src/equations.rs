@@ -181,7 +181,11 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             }),
         });
         let event = RuleEvent {
-            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            class: if no_value {
+                crate::semantic_core::RuleEventClass::MathematicalConclusion
+            } else {
+                crate::semantic_core::RuleEventClass::EquivalentTransformation
+            },
             rule: match result.status {
                 SolveStatus::Solved => "solve-equations",
                 SolveStatus::NoSolution => "solve-no-solution",

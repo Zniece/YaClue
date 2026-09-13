@@ -76,6 +76,7 @@ pub fn execute_elaborated(
     );
     if root_is_effect {
         let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
+        validate_trace(&computation)?;
         let steps = if include_steps {
             computation
                 .trace
@@ -128,6 +129,7 @@ pub fn execute_elaborated(
         }));
     }
     let computation = crate::arithmetic::execute_elaborated_structure(engine, &input.root)?;
+    validate_trace(&computation)?;
     let subject = computation
         .subject()
         .expect("mathematical computation always owns an object");
@@ -306,6 +308,16 @@ pub fn execute_elaborated(
         effect_only: false,
         analysis,
     }))
+}
+
+fn validate_trace(computation: &crate::semantic_core::Computation) -> Result<(), EngineError> {
+    computation
+        .trace
+        .as_ref()
+        .map(crate::semantic_core::RuleTrace::validate_classifications)
+        .transpose()
+        .map_err(|message| EngineError::Parse(format!("规则事件分类无效: {message}")))?;
+    Ok(())
 }
 
 fn collect_migrated_operator_ids(
@@ -921,7 +933,11 @@ mod tests {
             .reason
             .as_deref()
             .is_some_and(|reason| reason.contains("不存在")));
-        assert!(result.steps.iter().any(|step| step.rule == "limit-result"));
+        assert!(result.steps.iter().all(|step| step.rule != "limit-result"));
+        assert!(result
+            .analyses
+            .iter()
+            .any(|analysis| analysis.rule == "limit-result"));
         assert!(result.steps.iter().all(|step| step.rule != "const-rule"));
     }
 
