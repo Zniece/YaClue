@@ -157,15 +157,17 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: (!unresolved).then(|| RulePresentation {
-                expression: output.print_source(),
-                explanation: if no_value {
-                    "数值计算没有定义。"
-                } else {
-                    "按指定有效数字计算数值近似。"
+            presentation: crate::semantic_core::materialize_presentation_if(!unresolved, || {
+                RulePresentation {
+                    expression: output.print_source(),
+                    explanation: if no_value {
+                        "数值计算没有定义。"
+                    } else {
+                        "按指定有效数字计算数值近似。"
+                    }
+                    .into(),
+                    tex_override: Some(result.tex),
                 }
-                .into(),
-                tex_override: Some(result.tex),
             }),
         };
         Ok(Computation {
@@ -309,10 +311,12 @@ impl SemanticOperation<FindRootRequest> for FindRootOperation {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: converged.then(|| RulePresentation {
-                expression: result.output,
-                explanation: "从给定初值求得数值根。".into(),
-                tex_override: Some(result.tex),
+            presentation: crate::semantic_core::materialize_presentation_if(converged, || {
+                RulePresentation {
+                    expression: result.output,
+                    explanation: "从给定初值求得数值根。".into(),
+                    tex_override: Some(result.tex),
+                }
             }),
         };
         Ok(Computation {
@@ -450,11 +454,14 @@ impl SemanticOperation<TaylorRequest> for TaylorOperation {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: (!result.unresolved).then(|| RulePresentation {
-                expression: output.print_source(),
-                explanation: "在指定点展开 Taylor 多项式。".into(),
-                tex_override: Some(result.tex),
-            }),
+            presentation: crate::semantic_core::materialize_presentation_if(
+                !result.unresolved,
+                || RulePresentation {
+                    expression: output.print_source(),
+                    explanation: "在指定点展开 Taylor 多项式。".into(),
+                    tex_override: Some(result.tex),
+                },
+            ),
         };
         Ok(Computation {
             output: if result.unresolved {

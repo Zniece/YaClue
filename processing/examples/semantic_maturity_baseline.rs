@@ -36,19 +36,20 @@ fn run(
 
 fn print_metrics(source: &str, mode: &str, metrics: ExecutionMetrics, micros: u128, events: usize) {
     println!(
-        "{source}\t{mode}\t{micros}\t{}\t{}\t{}\t{}\t{}\t{events}",
+        "{source}\t{mode}\t{micros}\t{}\t{}\t{}\t{}\t{}\t{}\t{events}",
         metrics.parse_calls,
         metrics.engine_requests,
         metrics.object_transitions,
         metrics.object_clones,
         metrics.session_ast_handles,
+        metrics.rule_presentations,
     );
 }
 
 fn main() {
     let mut engine = RustEngine::spawn().expect("persistent engine");
     println!(
-        "expression\tmode\tmicros\tparses\tengine_requests\ttransitions\tobject_clones\tsession_ast_handles\tvisible_events"
+        "expression\tmode\tmicros\tparses\tengine_requests\ttransitions\tobject_clones\tsession_ast_handles\trule_presentations\tvisible_events"
     );
     for source in CASES {
         let off = run(&mut engine, source, false);

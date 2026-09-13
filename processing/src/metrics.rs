@@ -12,6 +12,7 @@ static ENGINE_REQUESTS: AtomicU64 = AtomicU64::new(0);
 static OBJECT_TRANSITIONS: AtomicU64 = AtomicU64::new(0);
 static OBJECT_CLONES: AtomicU64 = AtomicU64::new(0);
 static SESSION_AST_HANDLES: AtomicU64 = AtomicU64::new(0);
+static RULE_PRESENTATIONS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExecutionMetrics {
@@ -20,6 +21,7 @@ pub struct ExecutionMetrics {
     pub object_transitions: u64,
     pub object_clones: u64,
     pub session_ast_handles: u64,
+    pub rule_presentations: u64,
 }
 
 impl ExecutionMetrics {
@@ -30,6 +32,7 @@ impl ExecutionMetrics {
             object_transitions: OBJECT_TRANSITIONS.load(Ordering::Relaxed),
             object_clones: OBJECT_CLONES.load(Ordering::Relaxed),
             session_ast_handles: SESSION_AST_HANDLES.load(Ordering::Relaxed),
+            rule_presentations: RULE_PRESENTATIONS.load(Ordering::Relaxed),
         }
     }
 }
@@ -48,6 +51,9 @@ impl Sub for ExecutionMetrics {
             session_ast_handles: self
                 .session_ast_handles
                 .saturating_sub(earlier.session_ast_handles),
+            rule_presentations: self
+                .rule_presentations
+                .saturating_sub(earlier.rule_presentations),
         }
     }
 }
@@ -86,6 +92,10 @@ pub(crate) fn record_session_ast_handle() {
     SESSION_AST_HANDLES.fetch_add(1, Ordering::Relaxed);
 }
 
+pub(crate) fn record_rule_presentation() {
+    RULE_PRESENTATIONS.fetch_add(1, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,5 +120,38 @@ mod tests {
         assert!(measured.metrics.object_transitions > 0);
         assert!(measured.metrics.object_clones > 0);
         assert!(!measured.value.steps.is_empty());
+    }
+
+    #[test]
+    fn trace_off_does_not_materialize_rule_presentations() {
+        let input = crate::elaboration::elaborate_input("D(x)Limit(t,0)(Sin(t)/t+x^2)").unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let off = measure(|| {
+            crate::arithmetic::execute_elaborated_structure_with_context(
+                &mut engine,
+                &input.root,
+                crate::semantic_core::ComputationContext::new(crate::semantic_core::TraceMode::Off),
+            )
+            .unwrap()
+        });
+        let detailed = measure(|| {
+            crate::arithmetic::execute_elaborated_structure_with_context(
+                &mut engine,
+                &input.root,
+                crate::semantic_core::ComputationContext::new(
+                    crate::semantic_core::TraceMode::Detailed,
+                ),
+            )
+            .unwrap()
+        });
+        assert_eq!(off.metrics.rule_presentations, 0);
+        assert!(detailed.metrics.rule_presentations > 0);
+        assert!(off
+            .value
+            .trace
+            .unwrap()
+            .events
+            .iter()
+            .all(|event| event.presentation.is_none()));
     }
 }

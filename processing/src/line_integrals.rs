@@ -144,7 +144,7 @@ impl SemanticOperation<LineIntegralObjectRequest> for LineIntegralOperation {
                     StepImportance::Key => RuleImportance::Key,
                 },
                 transformation: None,
-                presentation: Some(RulePresentation {
+                presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                     expression: step.expr,
                     explanation: step.why,
                     tex_override: Some(step.tex),

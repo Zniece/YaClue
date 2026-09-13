@@ -204,16 +204,18 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: (!unresolved).then(|| RulePresentation {
-                expression: output.print_source(),
-                explanation: match result.status {
-                    SolveStatus::Solved => "求得并验证方程解集。",
-                    SolveStatus::NoSolution => "方程组没有解。",
-                    SolveStatus::Infinite => "方程对指定变量恒成立。",
-                    SolveStatus::Unresolved => unreachable!(),
+            presentation: crate::semantic_core::materialize_presentation_if(!unresolved, || {
+                RulePresentation {
+                    expression: output.print_source(),
+                    explanation: match result.status {
+                        SolveStatus::Solved => "求得并验证方程解集。",
+                        SolveStatus::NoSolution => "方程组没有解。",
+                        SolveStatus::Infinite => "方程对指定变量恒成立。",
+                        SolveStatus::Unresolved => unreachable!(),
+                    }
+                    .into(),
+                    tex_override: Some(result.tex),
                 }
-                .into(),
-                tex_override: Some(result.tex),
             }),
         };
         Ok(Computation {

@@ -431,7 +431,7 @@ fn limit_rule_events(
                 payload: event.payload,
                 importance: event.importance,
                 transformation: None,
-                presentation: Some(RulePresentation {
+                presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                     expression: event.expression,
                     explanation: event.explanation,
                     tex_override: event.tex_override,

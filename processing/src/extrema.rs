@@ -334,7 +334,7 @@ fn structured_extrema_output(
                 StepImportance::Routine => RuleImportance::Routine,
             },
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: event.expr,
                 explanation: event.why,
                 tex_override: None,

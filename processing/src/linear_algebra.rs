@@ -198,10 +198,12 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: (!held).then(|| RulePresentation {
-                expression: output.print_source(),
-                explanation: "执行类型检查后的矩阵运算。".into(),
-                tex_override: Some(result.tex),
+            presentation: crate::semantic_core::materialize_presentation_if(!held, || {
+                RulePresentation {
+                    expression: output.print_source(),
+                    explanation: "执行类型检查后的矩阵运算。".into(),
+                    tex_override: Some(result.tex),
+                }
             }),
         };
         Ok(Computation {
@@ -340,7 +342,7 @@ impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "按照矩阵运算规则计算结果。".into(),
                 tex_override: Some(result.tex),
@@ -425,7 +427,7 @@ impl BinarySemanticOperation<crate::semantic_core::ObjectId> for MatrixSolveOper
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "求解形状兼容的线性方程组。".into(),
                 tex_override: Some(result.tex),
@@ -617,7 +619,7 @@ impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "计算矩阵的结构不变量。".into(),
                 tex_override: Some(tex),
@@ -815,7 +817,7 @@ impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "得到经过验证的线性代数结果。".into(),
                 tex_override: Some(tex),
@@ -903,7 +905,7 @@ impl SemanticOperation<()> for FactorProjectionOperation {
             payload: RulePayload::Structural,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "按分解顺序列出矩阵因子。".into(),
                 tex_override: None,

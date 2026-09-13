@@ -190,7 +190,7 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: if result.unresolved {
                     "保留当前无法完成的代数变换。"

@@ -162,7 +162,7 @@ impl SemanticOperation<NumericOdeRequest> for NumericOdeOperation {
             payload: RulePayload::Structural,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: if completed {
                     "在误差与资源预算内生成数值初值问题轨迹。"

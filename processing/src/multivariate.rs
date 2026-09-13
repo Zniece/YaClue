@@ -136,7 +136,7 @@ impl SemanticOperation<MultivariateObjectRequest> for MultivariateDifferentialOp
             payload: RulePayload::Structural,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: source,
                 explanation: format!("执行 {:?} 多元微分运算。", request.operation),
                 tex_override: Some(result.tex),

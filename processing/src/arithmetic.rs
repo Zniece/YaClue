@@ -48,11 +48,7 @@ pub fn execute_elaborated_structure(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
-    execute_elaborated_structure_with_context(
-        engine,
-        expression,
-        crate::semantic_core::ComputationContext::new(crate::semantic_core::TraceMode::Detailed),
-    )
+    execute_elaborated_structure_in_context(engine, expression)
 }
 
 pub fn execute_elaborated_structure_with_context(
@@ -1299,7 +1295,7 @@ fn execute_container(
         payload: RulePayload::Structural,
         importance: RuleImportance::Normal,
         transformation: None,
-        presentation: Some(RulePresentation {
+        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
             expression: output.print_source(),
             explanation: "保留各成员的数学值并组成整体。".into(),
             tex_override: None,
@@ -1470,7 +1466,7 @@ fn execute_function_application(
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: Some(RulePresentation {
+        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
             expression: output.print_source(),
             explanation: "将参数代入函数。".into(),
             tex_override: None,
@@ -1933,7 +1929,7 @@ impl BinarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor 
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "计算这个代数运算。".into(),
                 tex_override: None,
@@ -2040,7 +2036,7 @@ impl UnarySemanticOperation<ArithmeticRequest> for ArithmeticOperationExecutor {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: output.print_source(),
                 explanation: "取相反数。".into(),
                 tex_override: None,
@@ -2214,7 +2210,7 @@ fn no_value_structure(
         payload: RulePayload::Inference,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: Some(RulePresentation {
+        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
             expression: output.print_source(),
             explanation: "操作数没有数学值，因此结构运算也没有值。".into(),
             tex_override: None,

@@ -227,10 +227,12 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Key,
             transformation: None,
-            presentation: solved.then(|| RulePresentation {
-                expression: output.print_source(),
-                explanation: "求得并验证常微分方程解集。".into(),
-                tex_override: Some(result.tex),
+            presentation: crate::semantic_core::materialize_presentation_if(solved, || {
+                RulePresentation {
+                    expression: output.print_source(),
+                    explanation: "求得并验证常微分方程解集。".into(),
+                    tex_override: Some(result.tex),
+                }
             }),
         };
         Ok(Computation {

@@ -2472,6 +2472,25 @@ pub fn with_computation_context<T>(
     })
 }
 
+pub fn materialize_presentation(
+    build: impl FnOnce() -> RulePresentation,
+) -> Option<RulePresentation> {
+    (!matches!(current_computation_context().trace_mode, TraceMode::Off)).then(|| {
+        crate::metrics::record_rule_presentation();
+        build()
+    })
+}
+
+pub fn materialize_presentation_if(
+    enabled: bool,
+    build: impl FnOnce() -> RulePresentation,
+) -> Option<RulePresentation> {
+    (enabled && !matches!(current_computation_context().trace_mode, TraceMode::Off)).then(|| {
+        crate::metrics::record_rule_presentation();
+        build()
+    })
+}
+
 #[derive(Debug, Default)]
 pub struct VecEventSink {
     pub events: Vec<RuleEvent>,
@@ -3224,7 +3243,7 @@ mod tests {
             payload: RulePayload::Rewrite,
             importance: RuleImportance::Normal,
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: "4".into(),
                 explanation: "计算幂".into(),
                 tex_override: None,

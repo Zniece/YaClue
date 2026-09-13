@@ -339,7 +339,7 @@ pub fn derivative_computation_for_object(
                 fact.importance
             },
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: fact.expression,
                 explanation: fact.explanation,
                 tex_override: None,
@@ -700,7 +700,7 @@ fn held_derivative_of_registered_function(
         payload: RulePayload::Structural,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: Some(RulePresentation {
+        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
             expression: output.print_source(),
             explanation: "该特殊函数暂无可靠的闭式导数规则，保留形式导数。".into(),
             tex_override: None,
@@ -851,7 +851,7 @@ fn derivative_of_registered_function(
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: Some(RulePresentation {
+        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
             expression: output.print_source(),
             explanation: "应用已登记的函数偏导规则，并由通用链式法则组合参数导数。".into(),
             tex_override: None,
@@ -1026,7 +1026,7 @@ fn integral_derivative_computation(
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: Some(RulePresentation {
+        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
             expression: output.print_source(),
             explanation: explanation.into(),
             tex_override: None,

@@ -212,18 +212,20 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
                         crate::steps::StepImportance::Key => RuleImportance::Key,
                     },
                     transformation: None,
-                    presentation: Some(RulePresentation {
-                        expression: if held_family {
-                            output.print_source()
-                        } else {
-                            step.expr
-                        },
-                        explanation: if held_family {
-                            "保留尚无闭式结果的积分对象。".into()
-                        } else {
-                            step.why
-                        },
-                        tex_override: (!held_family).then_some(step.tex),
+                    presentation: crate::semantic_core::materialize_presentation(|| {
+                        RulePresentation {
+                            expression: if held_family {
+                                output.print_source()
+                            } else {
+                                step.expr
+                            },
+                            explanation: if held_family {
+                                "保留尚无闭式结果的积分对象。".into()
+                            } else {
+                                step.why
+                            },
+                            tex_override: (!held_family).then_some(step.tex),
+                        }
                     }),
                 }
             })
@@ -362,7 +364,7 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
                 crate::steps::StepImportance::Key => RuleImportance::Key,
             },
             transformation: None,
-            presentation: Some(RulePresentation {
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: step.expr,
                 explanation: step.why,
                 tex_override: Some(step.tex),

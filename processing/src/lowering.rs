@@ -54,7 +54,10 @@ pub fn try_lower_application(
     input: &MathematicalObject,
     trace_mode: TraceMode,
 ) -> Result<Option<Computation>, EngineError> {
-    dispatch_registered(engine, input, trace_mode, LOWERING_RULES)
+    crate::semantic_core::with_computation_context(
+        crate::semantic_core::ComputationContext::new(trace_mode),
+        || dispatch_registered(engine, input, trace_mode, LOWERING_RULES),
+    )
 }
 
 /// Lower an operation-local equivalent AST without inserting it into the
@@ -172,7 +175,7 @@ fn lower_euler_gamma(
         payload: RulePayload::Rewrite,
         importance: RuleImportance::Key,
         transformation: None,
-        presentation: Some(RulePresentation {
+        presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
             expression: output.print_source(),
             explanation: "识别 Euler 型积分核，在成立条件下使用原生 Gamma 对象。".into(),
             tex_override: Some(lowered.tex),
