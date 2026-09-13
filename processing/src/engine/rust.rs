@@ -63,7 +63,13 @@ pub(super) fn eval_cmd(
 }
 
 /// Rust 引擎单次求值超时(病态输入的兜底;正常用例远低于此值,θ 链最重 ~3s)
+#[cfg(not(test))]
 const RUST_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+// Unit tests exercise several expensive symbolic solvers concurrently. Their
+// correctness must not depend on how much CPU time the test runner gives each
+// thread; explicit timeout tests pass their own deliberately short deadline.
+#[cfg(test)]
+const RUST_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 impl RustEngine {
     /// One deadline covers command evaluation and TeX generation. All Result
@@ -162,6 +168,40 @@ impl RustEngine {
         }
     }
 
+    fn render_syntax_tex_batch_with_timeout(
+        &mut self,
+        expressions: &[String],
+        timeout: Duration,
+    ) -> Result<Vec<String>, EngineError> {
+        let first_unique_id = self.env.last_unique_id;
+        let loaded_files = loaded_def_file_count(&self.env);
+        self.env.set_eval_timeout(Some(timeout));
+        let response = expressions
+            .iter()
+            .map(|expression| {
+                let parsed =
+                    yacas_rs::parser::parse_expression(&mut self.env, &format!("{expression};"))
+                        .map_err(|error| self.eval_error(error.into(), "TeX 语法解析失败", false))?
+                        .ok_or_else(|| EngineError::Parse("TeX 语法表达式为空".into()))?;
+                let tex_value = tex_form_value(&mut self.env, &parsed)
+                    .map_err(|error| self.eval_error(error, "未求值 TeXForm 失败", false))?;
+                Ok(unquote_printed(&yacas_rs::printer::infix_print(
+                    &self.env, &tex_value,
+                )))
+            })
+            .collect::<Result<Vec<_>, _>>();
+        let expired = self.deadline_expired();
+        self.env.set_eval_timeout(None);
+        if loaded_def_file_count(&self.env) == loaded_files {
+            self.env.clear_unique_globals_since(first_unique_id);
+        }
+        if response.is_ok() && expired {
+            Err(EngineError::Timeout("未求值 TeX 排版超过时限".into()))
+        } else {
+            response
+        }
+    }
+
     fn deadline_expired(&self) -> bool {
         self.env
             .eval_deadline
@@ -227,14 +267,25 @@ fn tex_form_value(
 
 impl Engine for RustEngine {
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError> {
+        crate::metrics::record_engine_request();
         self.eval_with_timeout(command, RUST_EVAL_TIMEOUT)
     }
 
     fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
+        crate::metrics::record_engine_request();
         self.eval_expr_with_timeout(command, RUST_EVAL_TIMEOUT)
     }
 
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
+        crate::metrics::record_engine_request();
         self.render_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
+    }
+
+    fn render_syntax_tex_batch(
+        &mut self,
+        expressions: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        crate::metrics::record_engine_request();
+        self.render_syntax_tex_batch_with_timeout(expressions, RUST_EVAL_TIMEOUT)
     }
 }

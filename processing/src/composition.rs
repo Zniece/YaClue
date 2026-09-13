@@ -1,179 +1,26 @@
-//! Bounded, inside-out dispatch for teaching chains made from a small set of
-//! product operations. This is an execution protocol, not a second CAS AST.
+//! Bounded, inside-out execution of elaborated mathematical objects. This is
+//! an execution protocol over the shared AST, not a second CAS AST.
 
 use serde::Serialize;
 
-use crate::algebra::{self, TransformKind};
 use crate::engine::{Engine, EngineError};
-use crate::input::{
-    analyze_expression, root_call, strip_tex_delimiters, validate_expression, RootCall,
+use crate::input::strip_tex_delimiters;
+use crate::protocol::{ConditionSet, ResultMetadata};
+use crate::semantic::SemanticSummary;
+pub use crate::semantic_core::OperatorId as CompositionOperator;
+use crate::semantic_core::{
+    operator_descriptor, ComputationOutput, ObjectCapability, SemanticInterpretation,
 };
-use crate::numeric;
-use crate::ode::{self, OdeStatus};
 use crate::steps::{
-    derive_antiderivative_family_with_verbosity, derive_steps_order_with_verbosity, Step,
-    StepImportance, StepVerbosity,
+    ConclusionKind, MathematicalAnalysis, MathematicalConclusion, Step, StepVerbosity,
 };
-
-const MAX_COMPOSITION_DEPTH: usize = 16;
-const DEFAULT_PRECISION: u32 = 10;
-
-/// Structured product operations are valid operands even before a lowering
-/// rule exists for a particular outer operation. They must remain held rather
-/// than falling through to raw Yacas evaluation.
-const STRUCTURED_OPERATOR_NAMES: &[&str] = &[
-    "Determinant",
-    "DoubleIntegral",
-    "EigenValues",
-    "Extrema",
-    "FindRoot",
-    "ImproperIntegral",
-    "Inverse",
-    "Lagrange",
-    "MatrixSolve",
-    "OdeSolve",
-    "OdeSolveNumeric",
-    "Plot",
-    "PolarIntegral",
-    "PrincipalValueIntegral",
-    "Solve",
-    "SolveMatrix",
-    "Transpose",
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CompositionOperator {
-    Derivative,
-    Factor,
-    AlgebraTransform,
-    Integral,
-    Substitute,
-    Approximate,
-    OdeSolve,
-    Limit,
-    Taylor,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct OperatorSignature {
-    pub name: &'static str,
-    pub operator: CompositionOperator,
-    pub arities: &'static [usize],
-    /// Argument occupied by the value produced by the inner operation.
-    pub value_argument: ValueArgument,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ValueArgument {
-    First,
-    Last,
-}
-
-const D_ARITIES: &[usize] = &[2, 3];
-const UNARY_ARITY: &[usize] = &[1];
-const INTEGRATE_ARITIES: &[usize] = &[2, 4];
-const SUBST_ARITIES: &[usize] = &[3];
-const APPROXIMATE_ARITIES: &[usize] = &[1, 2];
-// Product input accepts both the conventional two-argument form
-// `Limit(expression, at)` (with x as the default variable) and Yacas's
-// bodied form `Limit(variable, at[, direction]) expression`.
-const LIMIT_ARITIES: &[usize] = &[2, 3, 4];
-const TAYLOR_ARITIES: &[usize] = &[3, 4];
-
-pub const OPERATOR_SIGNATURES: &[OperatorSignature] = &[
-    OperatorSignature {
-        name: "D",
-        operator: CompositionOperator::Derivative,
-        arities: D_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Deriv",
-        operator: CompositionOperator::Derivative,
-        arities: D_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Factor",
-        operator: CompositionOperator::Factor,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Expand",
-        operator: CompositionOperator::AlgebraTransform,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Simplify",
-        operator: CompositionOperator::AlgebraTransform,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Tidy",
-        operator: CompositionOperator::AlgebraTransform,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Apart",
-        operator: CompositionOperator::AlgebraTransform,
-        arities: &[2],
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Integrate",
-        operator: CompositionOperator::Integral,
-        arities: INTEGRATE_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Subst",
-        operator: CompositionOperator::Substitute,
-        arities: SUBST_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Limit",
-        operator: CompositionOperator::Limit,
-        arities: LIMIT_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "Taylor",
-        operator: CompositionOperator::Taylor,
-        arities: TAYLOR_ARITIES,
-        value_argument: ValueArgument::Last,
-    },
-    OperatorSignature {
-        name: "OdeSolve",
-        operator: CompositionOperator::OdeSolve,
-        arities: UNARY_ARITY,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "N",
-        operator: CompositionOperator::Approximate,
-        arities: APPROXIMATE_ARITIES,
-        value_argument: ValueArgument::First,
-    },
-    OperatorSignature {
-        name: "Approximate",
-        operator: CompositionOperator::Approximate,
-        arities: APPROXIMATE_ARITIES,
-        value_argument: ValueArgument::First,
-    },
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompositionStatus {
     Completed,
     Unresolved,
+    NoValue,
     Unsupported,
 }
 
@@ -183,10 +30,19 @@ pub struct CompositionResult {
     pub value: String,
     pub tex: String,
     pub steps: Vec<Step>,
+    pub analyses: Vec<MathematicalAnalysis>,
+    pub conclusions: Vec<MathematicalConclusion>,
     pub operators: Vec<CompositionOperator>,
     pub reason: Option<String>,
     pub arbitrary_constants: Vec<String>,
     pub held: Option<HeldApplication>,
+    pub conditions: ConditionSet,
+    pub semantic: SemanticSummary,
+    pub outcome: ResultMetadata,
+    pub sampled_data: Option<crate::semantic_core::SampledTrajectory>,
+    pub plot: Option<crate::plot::PlotEffect>,
+    pub effect_only: bool,
+    pub analysis: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -196,210 +52,303 @@ pub struct HeldApplication {
     pub pending_operators: Vec<CompositionOperator>,
 }
 
-struct Operation {
-    signature: &'static OperatorSignature,
-    arguments: Vec<String>,
-}
-
-/// Cheap gate over the root analysis already performed by the product input
-/// path. Ordinary single-operation requests do not enter the composition
-/// parser or pay another traversal.
-pub fn is_candidate(call: &RootCall) -> bool {
-    let Some(signature) = OPERATOR_SIGNATURES
-        .iter()
-        .find(|signature| signature.name == call.head)
-    else {
-        return false;
-    };
-    if !signature.arities.contains(&call.arguments.len()) {
-        return true;
-    }
-    if is_conventional_value_form(signature, call.arguments.len()) {
-        return true;
-    }
-    let value_index = value_index(signature, call.arguments.len());
-    call.argument_heads
-        .get(value_index)
-        .and_then(|head| head.as_deref())
-        .is_some_and(|head| {
-            OPERATOR_SIGNATURES.iter().any(|item| item.name == head)
-                || STRUCTURED_OPERATOR_NAMES.contains(&head)
-        })
-}
-
-/// Execute a supported nested chain. `None` means the expression contains
-/// fewer than two registered operations, so callers can retain their existing
-/// single-operation fast path.
+/// Parse and execute a complete mathematical input through the object-native
+/// path. The `Option` remains for source compatibility; successful complete
+/// inputs now always return `Some`.
 pub fn execute_steps(
     engine: &mut dyn Engine,
     expression: &str,
     verbosity: StepVerbosity,
 ) -> Result<Option<CompositionResult>, EngineError> {
-    validate_expression(expression, "组合表达式")?;
-    let mut operations = Vec::new();
-    let leaf = match collect_operations(expression, &mut operations, 0)? {
-        Ok(leaf) => leaf,
-        Err(reason) => {
-            return Ok(Some(CompositionResult {
-                status: CompositionStatus::Unsupported,
-                value: expression.into(),
-                tex: String::new(),
-                steps: Vec::new(),
-                operators: operations
-                    .iter()
-                    .map(|operation: &Operation| operation.signature.operator)
-                    .collect(),
-                reason: Some(reason),
-                arbitrary_constants: Vec::new(),
-                held: None,
-            }));
+    let elaborated = crate::elaboration::elaborate_input(expression)?;
+    execute_elaborated(engine, &elaborated, verbosity, true)
+}
+
+pub fn execute_elaborated(
+    engine: &mut dyn Engine,
+    input: &crate::elaboration::ElaboratedInput,
+    verbosity: StepVerbosity,
+    include_steps: bool,
+) -> Result<Option<CompositionResult>, EngineError> {
+    let root_is_effect = matches!(
+        input.root.form,
+        crate::elaboration::MathematicalForm::EffectApplication { .. }
+    );
+    if root_is_effect {
+        let computation = crate::arithmetic::execute_elaborated_structure_with_context(
+            engine,
+            &input.root,
+            crate::semantic_core::ComputationContext::new(if include_steps {
+                crate::semantic_core::TraceMode::Detailed
+            } else {
+                crate::semantic_core::TraceMode::Off
+            }),
+        )?;
+        validate_trace(&computation)?;
+        let steps = if include_steps {
+            computation
+                .trace
+                .as_ref()
+                .map(|trace| {
+                    crate::steps::render_rule_trace_in_root(engine, trace, verbosity, &input.root)
+                })
+                .transpose()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let plot = computation
+            .effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                crate::semantic_core::Effect::Plot(plot) => Some(plot),
+                crate::semantic_core::Effect::Ui(_) => None,
+            });
+        let value = plot
+            .as_ref()
+            .map(|effect| effect.expression.clone())
+            .unwrap_or_else(|| input.root.object.print_source());
+        let tex = strip_tex_delimiters(&engine.eval(&value)?.tex);
+        let semantic = crate::semantic::analyze_input(&value, "绘图表达式")?.semantic;
+        let outcome = ResultMetadata::solved(semantic.exactness, ConditionSet::empty());
+        return Ok(Some(CompositionResult {
+            status: CompositionStatus::Completed,
+            value: value.clone(),
+            tex: tex.clone(),
+            steps,
+            analyses: Vec::new(),
+            conclusions: vec![MathematicalConclusion {
+                kind: ConclusionKind::ProductEffect,
+                expression: value.clone(),
+                tex: tex.clone(),
+                message: "在标准数学结果之外附加函数图像。".into(),
+            }],
+            operators: vec![CompositionOperator::Plot],
+            reason: None,
+            arbitrary_constants: Vec::new(),
+            held: None,
+            conditions: ConditionSet::empty(),
+            semantic,
+            outcome,
+            sampled_data: None,
+            plot,
+            effect_only: true,
+            analysis: None,
+        }));
+    }
+    let computation = crate::arithmetic::execute_elaborated_structure_with_context(
+        engine,
+        &input.root,
+        crate::semantic_core::ComputationContext::new(if include_steps {
+            crate::semantic_core::TraceMode::Detailed
+        } else {
+            crate::semantic_core::TraceMode::Off
+        }),
+    )?;
+    validate_trace(&computation)?;
+    let subject = computation
+        .subject()
+        .expect("mathematical computation always owns an object");
+    let value = subject.print_source();
+    let status = match computation.output {
+        ComputationOutput::Held(_) => CompositionStatus::Unresolved,
+        ComputationOutput::NoValue(_) => CompositionStatus::NoValue,
+        ComputationOutput::Value(_) => CompositionStatus::Completed,
+        ComputationOutput::EffectsOnly => {
+            unreachable!("calculus and structures are mathematical")
         }
     };
-    let executable_single = operations.len() == 1
-        && is_conventional_value_form(operations[0].signature, operations[0].arguments.len());
-    if operations.len() < 2 && !executable_single {
-        let structured_operand = (!operations.is_empty())
-            .then(|| root_call(&leaf, "组合内层表达式"))
+    let tex = if matches!(
+        status,
+        CompositionStatus::Unresolved | CompositionStatus::NoValue
+    ) {
+        tex_code(&value)
+    } else {
+        strip_tex_delimiters(&engine.eval(&value)?.tex)
+    };
+    let steps = if include_steps {
+        computation
+            .trace
+            .as_ref()
+            .map(|trace| {
+                crate::steps::render_rule_trace_in_root(engine, trace, verbosity, &input.root)
+            })
             .transpose()?
-            .flatten()
-            .filter(|call| STRUCTURED_OPERATOR_NAMES.contains(&call.head.as_str()));
-        if let Some(operand) = structured_operand {
-            let pending_operators = operations
-                .iter()
-                .rev()
-                .map(|operation| operation.signature.operator)
-                .collect();
-            let step = operation_step(
-                "held-operator-application",
-                expression.into(),
-                "保留尚未降低的数学对象与外层运算，等待适用的组合规则。",
-                tex_code(expression),
-            );
-            return Ok(Some(CompositionResult {
-                status: CompositionStatus::Unresolved,
-                value: expression.into(),
-                tex: step.tex.clone(),
-                steps: vec![step],
-                operators: operations
-                    .iter()
-                    .map(|operation| operation.signature.operator)
-                    .collect(),
-                reason: Some("组合在语义上有效，但当前没有适用的降低规则".into()),
-                arbitrary_constants: Vec::new(),
-                held: Some(HeldApplication {
-                    source: expression.into(),
-                    operand_head: operand.head,
-                    pending_operators,
-                }),
-            }));
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let analyses = if include_steps {
+        computation
+            .trace
+            .as_ref()
+            .map(|trace| crate::steps::render_rule_analyses(engine, trace, verbosity))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let reason = match status {
+        CompositionStatus::NoValue => Some("内层数学结论不存在，外层运算未执行。".into()),
+        CompositionStatus::Unresolved
+            if matches!(&input.root.form,
+                    crate::elaboration::MathematicalForm::Application { head }
+                        if operator_descriptor(head)
+                            .is_some_and(|descriptor| descriptor.id == CompositionOperator::Derivative))
+                && !subject
+                    .semantics
+                    .capabilities
+                    .contains(ObjectCapability::Differentiate) =>
+        {
+            Some("内层结果属于不可求导的扩展实数，外层求导保持未解析。".into())
         }
-        return Ok(None);
+        CompositionStatus::Unresolved => Some("数学对象保持未解析，等待适用能力。".into()),
+        _ => None,
+    };
+    let conclusions = match status {
+        CompositionStatus::NoValue => vec![MathematicalConclusion {
+            kind: ConclusionKind::NoValue,
+            expression: value.clone(),
+            tex: tex.clone(),
+            message: reason
+                .clone()
+                .unwrap_or_else(|| "该数学对象没有值。".into()),
+        }],
+        CompositionStatus::Unresolved => vec![MathematicalConclusion {
+            kind: if subject.semantics.metadata.conditions.is_empty() {
+                ConclusionKind::Held
+            } else {
+                ConclusionKind::ConditionsUnmet
+            },
+            expression: value.clone(),
+            tex: tex.clone(),
+            message: reason
+                .clone()
+                .unwrap_or_else(|| "数学对象保持未解析。".into()),
+        }],
+        CompositionStatus::Completed | CompositionStatus::Unsupported => Vec::new(),
+    };
+    let mut operators = Vec::new();
+    collect_migrated_operator_ids(&input.root, &mut operators);
+    let present_symbols = crate::input::with_parse_env(|env| {
+        let semantic = crate::semantic::analyze_tree(env, &subject.raw_expression()).semantic;
+        semantic
+            .symbols
+            .into_iter()
+            .chain(semantic.constants)
+            .collect::<Vec<_>>()
+    });
+    let arbitrary_constants = computation
+        .trace
+        .as_ref()
+        .into_iter()
+        .flat_map(|trace| &trace.events)
+        .flat_map(|event| &event.bindings)
+        .filter(|(name, value)| name == "constant" && present_symbols.contains(value))
+        .map(|(_, value)| value.clone())
+        .fold(Vec::new(), |mut constants, value| {
+            if !constants.contains(&value) {
+                constants.push(value);
+            }
+            constants
+        });
+    let analysis = computation.certificates.iter().find_map(|certificate| {
+        matches!(
+            certificate.kind.as_str(),
+            "extrema_analysis"
+                | "lagrange_analysis"
+                | "multivariate_shape"
+                | "line_integral"
+                | "surface_integral"
+        )
+        .then(|| serde_json::from_str(&certificate.payload).ok())
+        .flatten()
+    });
+    let mut result_binders = match subject.semantics.kind {
+        crate::semantic::ValueKind::FunctionFamily => input.analyzed.semantic.bound_symbols.clone(),
+        _ => Vec::new(),
+    };
+    let dependent = if let SemanticInterpretation::FunctionFamily {
+        variable,
+        dependent,
+        ..
+    } = &subject.semantics.interpretation
+    {
+        if !result_binders.contains(variable) {
+            result_binders.push(variable.clone());
+        }
+        dependent.as_ref()
+    } else {
+        None
+    };
+    let binder_refs = result_binders
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut semantic = crate::semantic::project_result(
+        &input.analyzed.semantic,
+        &value,
+        &arbitrary_constants,
+        &binder_refs,
+        Some(subject.semantics.kind),
+    )?;
+    semantic.exactness = subject.semantics.metadata.exactness;
+    if subject.semantics.kind == crate::semantic::ValueKind::Unevaluated {
+        semantic.completeness = None;
     }
-
-    let mut current = leaf;
-    let mut steps = Vec::new();
-    let mut unresolved = false;
-    let mut arbitrary_constants = Vec::new();
-    let mut occupied_symbols = analyze_expression(expression, "组合表达式")?.symbols;
-    for index in (0..operations.len()).rev() {
-        let operation = &operations[index];
-        occupied_symbols.extend(arbitrary_constants.iter().cloned());
-        occupied_symbols.sort();
-        occupied_symbols.dedup();
-        let new_constant = (operation.signature.operator == CompositionOperator::Integral
-            && operation.arguments.len() == 2)
-            .then(|| {
-                crate::semantic::display_arbitrary_constants(&occupied_symbols, 1)
-                    .into_iter()
-                    .next()
-                    .expect("one arbitrary constant was requested")
-            });
-        let outcome = apply(
-            engine,
-            operation,
-            &current,
-            new_constant.as_deref(),
-            verbosity,
-        )?;
-        current = outcome.value;
-        unresolved |= outcome.unresolved;
-        arbitrary_constants.extend(outcome.arbitrary_constants);
-        let active_symbols = analyze_expression(&current, "组合中间结果")?.symbols;
-        arbitrary_constants.retain(|constant| active_symbols.contains(constant));
-        steps.extend(wrap_pending_steps(outcome.steps, &operations[..index]));
+    if let Some(dependent) = dependent {
+        semantic.symbols.retain(|name| name != dependent);
+        semantic
+            .symbol_identities
+            .retain(|identity| identity.name != *dependent);
     }
-    let tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    arbitrary_constants.sort();
-    arbitrary_constants.dedup();
+    let outcome = subject.semantics.metadata.clone();
     Ok(Some(CompositionResult {
-        status: if unresolved {
-            CompositionStatus::Unresolved
-        } else {
-            CompositionStatus::Completed
-        },
-        value: current,
+        status,
+        value,
         tex,
         steps,
-        operators: operations
-            .iter()
-            .rev()
-            .map(|operation| operation.signature.operator)
-            .collect(),
-        reason: unresolved.then(|| "至少一个运算保持未求值".into()),
+        analyses,
+        conclusions,
+        operators,
+        reason,
         arbitrary_constants,
         held: None,
+        conditions: subject.semantics.metadata.conditions.clone(),
+        semantic,
+        outcome,
+        sampled_data: match &subject.semantics.interpretation {
+            SemanticInterpretation::NumericTrajectory(trajectory) => Some(trajectory.clone()),
+            _ => None,
+        },
+        plot: None,
+        effect_only: false,
+        analysis,
     }))
 }
 
-fn wrap_pending_steps(mut steps: Vec<Step>, pending: &[Operation]) -> Vec<Step> {
-    for step in &mut steps {
-        for operation in pending.iter().rev() {
-            step.expr = wrap_expression(operation, &step.expr);
-            step.tex = wrap_tex(operation, &step.tex);
-        }
-    }
-    steps
+fn validate_trace(computation: &crate::semantic_core::Computation) -> Result<(), EngineError> {
+    computation
+        .trace
+        .as_ref()
+        .map(crate::semantic_core::RuleTrace::validate_classifications)
+        .transpose()
+        .map_err(|message| EngineError::Parse(format!("规则事件分类无效: {message}")))?;
+    Ok(())
 }
 
-fn wrap_expression(operation: &Operation, inner: &str) -> String {
-    let value_index = value_index(operation.signature, operation.arguments.len());
-    if is_conventional_value_form(operation.signature, operation.arguments.len()) {
-        let mut arguments = operation.arguments.clone();
-        arguments[0] = inner.into();
-        return format!("{}({})", operation.signature.name, arguments.join(","));
+fn collect_migrated_operator_ids(
+    expression: &crate::elaboration::ElaboratedObject,
+    output: &mut Vec<CompositionOperator>,
+) {
+    for child in &expression.children {
+        collect_migrated_operator_ids(child, output);
     }
-    match operation.signature.value_argument {
-        ValueArgument::First => {
-            let mut arguments = operation.arguments.clone();
-            arguments[value_index] = inner.into();
-            format!("{}({})", operation.signature.name, arguments.join(","))
+    if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
+        if crate::semantic_core::is_object_native_operator(head) {
+            if let Some(descriptor) = operator_descriptor(head) {
+                output.push(descriptor.id);
+            }
         }
-        ValueArgument::Last => format!(
-            "{}({})({inner})",
-            operation.signature.name,
-            operation.arguments[..value_index].join(",")
-        ),
-    }
-}
-
-fn wrap_tex(operation: &Operation, inner: &str) -> String {
-    let value_index = value_index(operation.signature, operation.arguments.len());
-    let fixed = operation
-        .arguments
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index != value_index)
-        .map(|(_, argument)| tex_code(argument))
-        .collect::<Vec<_>>()
-        .join(",");
-    let head = operation.signature.name;
-    if fixed.is_empty() {
-        format!(r"\operatorname{{{head}}}\!\left[{inner}\right]")
-    } else {
-        format!(r"\operatorname{{{head}}}_{{{fixed}}}\!\left[{inner}\right]")
     }
 }
 
@@ -423,296 +372,160 @@ fn tex_code(value: &str) -> String {
     format!(r"\mathtt{{{escaped}}}")
 }
 
-fn collect_operations(
-    expression: &str,
-    operations: &mut Vec<Operation>,
-    depth: usize,
-) -> Result<Result<String, String>, EngineError> {
-    if depth >= MAX_COMPOSITION_DEPTH {
-        return Ok(Err(format!("组合深度超过上限 {MAX_COMPOSITION_DEPTH}")));
-    }
-    let Some(call) = root_call(expression, "组合表达式")? else {
-        return Ok(Ok(expression.into()));
-    };
-    let Some(signature) = OPERATOR_SIGNATURES
-        .iter()
-        .find(|signature| signature.name == call.head)
-    else {
-        return Ok(Ok(expression.into()));
-    };
-    if !signature.arities.contains(&call.arguments.len()) {
-        return Ok(Err(format!(
-            "{} 不支持 {} 个参数",
-            call.head,
-            call.arguments.len()
-        )));
-    }
-    let value_index = value_index(signature, call.arguments.len());
-    let Some(inner) = call.arguments.get(value_index).cloned() else {
-        return Ok(Err(format!("{} 缺少值参数", call.head)));
-    };
-    operations.push(Operation {
-        signature,
-        arguments: call.arguments,
-    });
-    collect_operations(&inner, operations, depth + 1)
-}
-
-fn value_index(signature: &OperatorSignature, argument_count: usize) -> usize {
-    if is_conventional_value_form(signature, argument_count) {
-        return 0;
-    }
-    match signature.value_argument {
-        ValueArgument::First => 0,
-        ValueArgument::Last => argument_count.saturating_sub(1),
-    }
-}
-
-fn is_conventional_value_form(signature: &OperatorSignature, argument_count: usize) -> bool {
-    matches!(
-        (signature.operator, argument_count),
-        (CompositionOperator::Limit, 2) | (CompositionOperator::Taylor, 3)
-    )
-}
-
-struct ApplyOutcome {
-    value: String,
-    steps: Vec<Step>,
-    unresolved: bool,
-    arbitrary_constants: Vec<String>,
-}
-
-fn apply(
-    engine: &mut dyn Engine,
-    operation: &Operation,
-    current: &str,
-    new_constant: Option<&str>,
-    verbosity: StepVerbosity,
-) -> Result<ApplyOutcome, EngineError> {
-    let arguments = &operation.arguments;
-    match operation.signature.operator {
-        CompositionOperator::Derivative => {
-            let order = if arguments.len() == 3 {
-                arguments[1]
-                    .parse::<u32>()
-                    .map_err(|_| EngineError::InvalidInput("组合求导阶数必须是非负整数".into()))?
-            } else {
-                1
-            };
-            let mut steps = derive_steps_order_with_verbosity(
-                engine,
-                current,
-                &arguments[0],
-                order,
-                verbosity,
-            )?;
-            if let Some(first) = steps.first_mut() {
-                first.why = format!("对上一结果应用外层求导。{}", first.why);
-            }
-            from_steps(steps)
-        }
-        CompositionOperator::Integral => {
-            if arguments.len() == 4 {
-                let steps = crate::steps::derive_definite_with_verbosity(
-                    engine,
-                    current,
-                    &arguments[0],
-                    &arguments[1],
-                    &arguments[2],
-                    verbosity,
-                )?;
-                from_steps(steps)
-            } else {
-                let constant = new_constant
-                    .ok_or_else(|| EngineError::Parse("组合不定积分缺少生成常数身份".into()))?;
-                let result = derive_antiderivative_family_with_verbosity(
-                    engine,
-                    current,
-                    &arguments[0],
-                    constant.into(),
-                    verbosity,
-                )?;
-                Ok(ApplyOutcome {
-                    value: result.result.expression,
-                    steps: result.steps,
-                    unresolved: result.result.representative.starts_with("Integrate("),
-                    arbitrary_constants: result.result.arbitrary_constants,
-                })
-            }
-        }
-        CompositionOperator::Factor => {
-            let result = algebra::transform(engine, current, TransformKind::Factor, None)?;
-            Ok(ApplyOutcome {
-                value: result.output.clone(),
-                steps: vec![operation_step(
-                    "compose_factor",
-                    result.output,
-                    "对上一结果进行因式分解。",
-                    result.tex,
-                )],
-                unresolved: result.unresolved,
-                arbitrary_constants: Vec::new(),
-            })
-        }
-        CompositionOperator::AlgebraTransform => {
-            let (kind, variable) = match operation.signature.name {
-                "Expand" => (TransformKind::Expand, None),
-                "Simplify" => (TransformKind::Simplify, None),
-                "Tidy" => (TransformKind::Tidy, None),
-                "Apart" => (TransformKind::Apart, arguments.get(1).map(String::as_str)),
-                _ => unreachable!("registered algebra transform"),
-            };
-            let result = algebra::transform(engine, current, kind, variable)?;
-            Ok(ApplyOutcome {
-                value: result.output.clone(),
-                steps: vec![operation_step(
-                    "compose_algebra_transform",
-                    result.output,
-                    "对上一结果应用代数变换。",
-                    result.tex,
-                )],
-                unresolved: result.unresolved,
-                arbitrary_constants: Vec::new(),
-            })
-        }
-        CompositionOperator::Substitute => {
-            let result = engine.eval(&format!(
-                "Subst({},{})({current})",
-                arguments[0], arguments[1]
-            ))?;
-            let value = result.expr.to_string();
-            Ok(ApplyOutcome {
-                steps: vec![operation_step(
-                    "compose_substitute",
-                    value.clone(),
-                    "把指定值代入上一结果。",
-                    strip_tex_delimiters(&result.tex),
-                )],
-                unresolved: value.starts_with("Subst("),
-                value,
-                arbitrary_constants: Vec::new(),
-            })
-        }
-        CompositionOperator::Approximate => {
-            let precision = arguments
-                .get(1)
-                .map(|value| {
-                    value
-                        .parse::<u32>()
-                        .map_err(|_| EngineError::InvalidInput("组合近似精度必须是正整数".into()))
-                })
-                .transpose()?
-                .unwrap_or(DEFAULT_PRECISION);
-            let result = numeric::approximate(engine, current, precision)?;
-            Ok(ApplyOutcome {
-                value: result.output.clone(),
-                steps: vec![operation_step(
-                    "compose_approximate",
-                    result.output,
-                    "按指定精度计算上一结果的数值近似。",
-                    result.tex,
-                )],
-                unresolved: matches!(result.kind, numeric::NumericKind::Unresolved),
-                arbitrary_constants: Vec::new(),
-            })
-        }
-        CompositionOperator::OdeSolve => {
-            let result =
-                ode::solve_steps_with_verbosity(engine, current, "x", "y", &[], verbosity)?;
-            Ok(ApplyOutcome {
-                value: result.result.solution.clone(),
-                steps: result.steps,
-                unresolved: result.result.status != OdeStatus::Solved,
-                arbitrary_constants: result.result.constants,
-            })
-        }
-        CompositionOperator::Limit => {
-            let (variable, at) = if arguments.len() == 2 {
-                ("x", arguments[1].as_str())
-            } else {
-                (arguments[0].as_str(), arguments[1].as_str())
-            };
-            let direction = if arguments.len() == 4 {
-                match arguments[2].as_str() {
-                    "Left" => crate::limits::LimitDirection::Left,
-                    "Right" => crate::limits::LimitDirection::Right,
-                    _ => {
-                        return Err(EngineError::InvalidInput(
-                            "组合极限方向应为 Left 或 Right".into(),
-                        ));
-                    }
-                }
-            } else {
-                crate::limits::LimitDirection::Both
-            };
-            let steps = crate::limits::limit_steps_with_verbosity(
-                engine, current, variable, at, direction, verbosity,
-            )?;
-            from_steps(steps)
-        }
-        CompositionOperator::Taylor => {
-            let variable = if arguments.len() == 3 {
-                "x"
-            } else {
-                arguments[0].as_str()
-            };
-            let degree = arguments[2]
-                .parse::<u32>()
-                .map_err(|_| EngineError::InvalidInput("组合 Taylor 次数必须是非负整数".into()))?;
-            let result = numeric::taylor(engine, current, variable, &arguments[1], degree)?;
-            Ok(ApplyOutcome {
-                value: result.output.clone(),
-                steps: vec![operation_step(
-                    "compose_taylor",
-                    result.output,
-                    "对上一结果构造 Taylor 多项式。",
-                    result.tex,
-                )],
-                unresolved: result.unresolved,
-                arbitrary_constants: Vec::new(),
-            })
-        }
-    }
-}
-
-fn from_steps(steps: Vec<Step>) -> Result<ApplyOutcome, EngineError> {
-    let value = steps
-        .last()
-        .map(|step| step.expr.clone())
-        .ok_or_else(|| EngineError::Parse("组合运算没有产生最终步骤".into()))?;
-    let unresolved =
-        value.starts_with("Integrate(") || value.starts_with("D(") || value.starts_with("Limit(");
-    Ok(ApplyOutcome {
-        value,
-        steps,
-        unresolved,
-        arbitrary_constants: Vec::new(),
-    })
-}
-
-fn operation_step(rule: &str, expr: String, why: &str, tex: String) -> Step {
-    Step {
-        rule: rule.into(),
-        expr,
-        why: why.into(),
-        tex,
-        importance: StepImportance::Key,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
 
     #[test]
-    fn declares_a_small_stable_signature_table() {
-        assert!(OPERATOR_SIGNATURES.iter().any(|item| item.name == "D"));
-        assert!(OPERATOR_SIGNATURES
+    fn consumes_the_shared_operator_registry() {
+        assert!(crate::semantic_core::OPERATOR_DESCRIPTORS
             .iter()
-            .any(|item| item.name == "Integrate"));
-        assert!(OPERATOR_SIGNATURES.iter().any(|item| item.name == "Subst"));
-        assert!(OPERATOR_SIGNATURES.iter().any(|item| item.name == "N"));
+            .any(|item| item.names.contains(&"D")));
+        assert!(crate::semantic_core::OPERATOR_DESCRIPTORS
+            .iter()
+            .any(|item| item.names.contains(&"Integrate")));
+        assert!(crate::semantic_core::OPERATOR_DESCRIPTORS
+            .iter()
+            .any(|item| item.names.contains(&"Subst")));
+        assert!(crate::semantic_core::OPERATOR_DESCRIPTORS
+            .iter()
+            .any(|item| item.names.contains(&"N")));
+    }
+
+    #[test]
+    fn executes_root_structures_through_the_typed_object_pipeline() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let input = crate::elaboration::elaborate_input("-(x-1)+2^3").unwrap();
+        let result = execute_elaborated(&mut engine, &input, StepVerbosity::Standard, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert!(result.steps.is_empty());
+        assert_eq!(
+            engine
+                .eval(&format!("Simplify(({})-(9-x))", result.value))
+                .unwrap()
+                .expr
+                .to_string(),
+            "0"
+        );
+
+        let held = crate::elaboration::elaborate_input("(Limit(x,0)(f(x)))+1").unwrap();
+        assert!(
+            matches!(
+                held.root.form,
+                crate::elaboration::MathematicalForm::Structural { .. }
+            ),
+            "{:?}",
+            held.root.form
+        );
+        let result = execute_elaborated(&mut engine, &held, StepVerbosity::Standard, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert!(result.value.contains("f(0)"));
+    }
+
+    #[test]
+    fn executes_every_complete_plain_input_through_the_object_pipeline() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("Gamma(3)", "2"),
+            ("x^2==1", "x^2==1"),
+            ("{1,Sin(x)}", "{1,Sin(x)}"),
+            ("x", "x"),
+            ("3", "3"),
+        ] {
+            let input = crate::elaboration::elaborate_input(source).unwrap();
+            let result = execute_elaborated(&mut engine, &input, StepVerbosity::Standard, false)
+                .unwrap()
+                .expect("every complete mathematical input has an object-native exit");
+            assert_eq!(result.value.replace(' ', ""), expected, "{source}");
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+        }
+    }
+
+    #[test]
+    fn sum_values_compose_inside_out_and_divergence_stops_outer_operations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let input = crate::elaboration::elaborate_input("D(x)Sum(k,1,3,x*k)").unwrap();
+        let result = execute_elaborated(&mut engine, &input, StepVerbosity::Detailed, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.value, "6");
+        assert!(result.operators.contains(&CompositionOperator::Sum));
+        assert!(result.operators.contains(&CompositionOperator::Derivative));
+        assert!(result.steps.iter().any(|step| step.rule == "finite-sum"));
+
+        let divergent = crate::elaboration::elaborate_input("D(x)Sum(k,1,Infinity,1/k)").unwrap();
+        let result = execute_elaborated(&mut engine, &divergent, StepVerbosity::Detailed, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::NoValue);
+    }
+
+    #[test]
+    fn defined_integrals_compose_without_principal_value_fallback() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let gamma = crate::elaboration::elaborate_input(
+            "D(x)ImproperIntegral(t^(x-1)*Exp(-t),t,0,Infinity)",
+        )
+        .unwrap();
+        let result = execute_elaborated(&mut engine, &gamma, StepVerbosity::Detailed, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.value, "Gamma(x)*PolyGamma(0,x)");
+        assert!(result
+            .operators
+            .contains(&CompositionOperator::ImproperIntegral));
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "recognize-gamma-integral"));
+
+        let ordinary =
+            crate::elaboration::elaborate_input("D(x)ImproperIntegral(1/t,t,-1,1,{0})").unwrap();
+        let result = execute_elaborated(&mut engine, &ordinary, StepVerbosity::Detailed, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::NoValue);
+
+        let principal =
+            crate::elaboration::elaborate_input("D(x)PrincipalValueIntegral(x/t,t,-1,1,{0})")
+                .unwrap();
+        let result = execute_elaborated(&mut engine, &principal, StepVerbosity::Detailed, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.value, "0");
+    }
+
+    #[test]
+    fn multiple_integrals_compose_after_scoped_coordinate_evaluation() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected, operator) in [
+            (
+                "D(a)DoubleIntegral(x+y+a,y,0,1,x,0,1)",
+                "1",
+                CompositionOperator::DoubleIntegral,
+            ),
+            (
+                "D(a)PolarIntegral(a,x,y,r,theta,0,1,0,2*Pi)",
+                "Pi",
+                CompositionOperator::PolarIntegral,
+            ),
+        ] {
+            let input = crate::elaboration::elaborate_input(source).unwrap();
+            let result = execute_elaborated(&mut engine, &input, StepVerbosity::Detailed, true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+            assert_eq!(result.value, expected, "{source}");
+            assert!(result.operators.contains(&operator));
+        }
     }
 
     #[test]
@@ -743,13 +556,150 @@ mod tests {
         );
         assert!(result.arbitrary_constants.is_empty());
         assert!(!result.value.contains(" + C"));
-        let family_step = result
+        assert!(result
             .steps
             .iter()
-            .find(|step| step.rule == "antiderivative-family")
+            .any(|step| step.rule == "derivative-of-indefinite-integral"));
+        assert!(result
+            .steps
+            .iter()
+            .all(|step| step.rule != "antiderivative-family"));
+        assert_eq!(
+            result.steps.first().unwrap().before_expr.as_deref(),
+            Some("D(x)Integrate(x)x*Exp(x)")
+        );
+        assert!(result
+            .steps
+            .windows(2)
+            .all(|pair| { pair[1].before_expr.as_deref() == Some(pair[0].expr.as_str()) }));
+        assert!(result.steps.iter().all(|step| {
+            step.kind == crate::steps::StepKind::EquivalentTransformation
+                && step.before_tex.as_ref().is_some_and(|tex| !tex.is_empty())
+        }));
+    }
+
+    #[test]
+    fn nested_domains_project_only_continuous_whole_expressions() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for source in [
+            "D(x)Limit(t,0)(Sin(t)/t+x^2)",
+            "D(x)Integrate(t)(t*x)",
+            "(Limit(t,0)(Sin(t)/t))==1",
+            "Sin(Limit(t,0)(Sin(t)/t))",
+            "{Limit(t,0)(Sin(t)/t),D(x)x^2}",
+        ] {
+            let input = crate::elaboration::elaborate_input(source).unwrap();
+            let initial = input.root.object.print_source();
+            let result = execute_elaborated(&mut engine, &input, StepVerbosity::Detailed, true)
+                .unwrap()
+                .unwrap();
+            assert!(!result.steps.is_empty(), "{source}: {result:#?}");
+            assert_eq!(
+                result.steps[0].before_expr.as_deref(),
+                Some(initial.as_str()),
+                "{source}"
+            );
+            assert!(
+                result
+                    .steps
+                    .windows(2)
+                    .all(|pair| { pair[1].before_expr.as_deref() == Some(pair[0].expr.as_str()) }),
+                "{source}: {:#?}",
+                result.steps
+            );
+            assert_eq!(result.steps.last().unwrap().expr, result.value, "{source}");
+            for step in &result.steps {
+                let product_text = format!("{} {}", step.rule, step.why).to_ascii_lowercase();
+                for internal in ["typed", "ast", "container", "rebuild", "lowering"] {
+                    assert!(!product_text.contains(internal), "{source}: {step:#?}");
+                }
+                assert!(!product_text.contains("类型化"), "{source}: {step:#?}");
+                assert!(!product_text.contains("重建"), "{source}: {step:#?}");
+            }
+        }
+    }
+
+    #[test]
+    fn arithmetic_simplification_is_shown_inside_the_complete_equation() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(&mut engine, "(y+2^2*y)==Sin(x)", StepVerbosity::Detailed)
+            .unwrap()
             .unwrap();
-        assert!(family_step.expr.starts_with("D(x)("));
-        assert!(family_step.expr.contains(" + C)"));
+        let power = result
+            .steps
+            .iter()
+            .find(|step| step.rule == "power")
+            .expect("2^2 changes the complete equation");
+        assert_eq!(power.before_expr.as_deref(), Some("y+2^2*y==Sin(x)"));
+        assert_eq!(power.expr, "y+4*y==Sin(x)");
+        let before_tex = power.before_tex.as_deref().unwrap();
+        assert!(before_tex.contains("2 ^{2}"), "{before_tex}");
+        assert!(!before_tex.contains("5 y"), "{before_tex}");
+        assert!(!power.expr.trim().starts_with("4"));
+    }
+
+    #[test]
+    fn semantic_operations_are_rendered_before_they_are_evaluated() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let source = "D(x)Limit(t,0)(Sin(t)/t+x^2)";
+        let result = execute_steps(&mut engine, source, StepVerbosity::Detailed)
+            .unwrap()
+            .unwrap();
+        let before_tex = result.steps[0].before_tex.as_deref().unwrap();
+        assert!(before_tex.contains("D"), "{before_tex}");
+        assert!(before_tex.contains("Limit"), "{before_tex}");
+        assert!(!before_tex.trim().starts_with("2 x"), "{before_tex}");
+        assert!(
+            result.steps.iter().all(|step| {
+                !step.expr.contains("Undefined")
+                    && !step
+                        .before_expr
+                        .as_deref()
+                        .unwrap_or_default()
+                        .contains("Undefined")
+                    && step.expr != "0/0"
+            }),
+            "{:#?}",
+            result.steps
+        );
+        assert!(
+            result
+                .analyses
+                .iter()
+                .any(|analysis| analysis.rule == "limit-direct-substitution"),
+            "{:#?}",
+            result.analyses
+        );
+        assert!(result
+            .analyses
+            .iter()
+            .any(|analysis| analysis.expression == "Undefined"));
+    }
+
+    #[test]
+    fn terminal_states_are_conclusions_instead_of_equivalence_steps() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("D(x)Limit(t,0)(1/t)", crate::steps::ConclusionKind::NoValue),
+            (
+                "Factor(DoubleIntegral(f(x,y),y,0,x,x,0,1))",
+                crate::steps::ConclusionKind::Held,
+            ),
+            (
+                "Plot(Sin(x),x,-1,1)",
+                crate::steps::ConclusionKind::ProductEffect,
+            ),
+        ] {
+            let result = execute_steps(&mut engine, source, StepVerbosity::Detailed)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.conclusions.len(), 1, "{source}: {result:#?}");
+            assert_eq!(result.conclusions[0].kind, expected, "{source}");
+            assert!(result
+                .steps
+                .iter()
+                .all(|step| step.kind == crate::steps::StepKind::EquivalentTransformation));
+        }
     }
 
     #[test]
@@ -763,7 +713,12 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(repeated.status, CompositionStatus::Completed);
-        assert_eq!(repeated.arbitrary_constants, ["C", "C1"]);
+        assert_eq!(
+            repeated.arbitrary_constants,
+            ["C", "C1"],
+            "{}",
+            repeated.value
+        );
         assert!(repeated.value.contains("C"));
         assert!(repeated.value.contains("C1"));
         assert_eq!(
@@ -862,32 +817,18 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(result.status, CompositionStatus::Completed);
-
-        let factor = result
-            .steps
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert!(result.value.starts_with("D("), "{result:#?}");
+        assert!(result.value.contains("Factor("), "{result:#?}");
+        assert!(result.steps.iter().all(|step| {
+            step.kind == crate::steps::StepKind::EquivalentTransformation
+                && step.before_expr.is_some()
+        }));
+        assert!(result
+            .conclusions
             .iter()
-            .position(|step| step.rule == "compose_factor")
-            .unwrap();
-        assert!(factor > 0);
-        for step in &result.steps[..factor] {
-            assert!(step.expr.starts_with("D(x)(Factor("), "{step:#?}");
-            assert!(step.tex.contains(r"\operatorname{D}"), "{step:#?}");
-            assert!(step.tex.contains(r"\operatorname{Factor}"), "{step:#?}");
-        }
-
-        let factor_step = &result.steps[factor];
-        assert!(factor_step.expr.starts_with("D(x)("), "{factor_step:#?}");
-        assert!(!factor_step.expr.contains("Factor("), "{factor_step:#?}");
-        assert!(
-            factor_step.tex.contains(r"\operatorname{D}"),
-            "{factor_step:#?}"
-        );
-
-        for step in &result.steps[factor + 1..] {
-            assert!(!step.expr.starts_with("D(x)("), "{step:#?}");
-            assert!(!step.tex.contains(r"\operatorname{Factor}"), "{step:#?}");
-        }
+            .any(|conclusion| conclusion.kind == crate::steps::ConclusionKind::Held));
+        assert!(!result.value.contains("FWatom"), "{result:#?}");
     }
 
     #[test]
@@ -937,10 +878,12 @@ mod tests {
                 "0",
                 "{expression}: {result:#?}"
             );
-            assert!(result
-                .steps
-                .iter()
-                .any(|step| step.rule == "compose_algebra_transform"));
+            assert!(result.steps.iter().any(|step| matches!(
+                step.rule.as_str(),
+                "compose_algebra_transform"
+                    | "apply-algebra-transform"
+                    | "confirm-algebra-normal-form"
+            )));
         }
     }
 
@@ -971,9 +914,55 @@ mod tests {
         let derivative = result
             .steps
             .iter()
-            .position(|step| step.why.contains("外层求导"))
+            .position(|step| step.rule == "sum-rule")
             .unwrap();
         assert!(limit_result < derivative);
+    }
+
+    #[test]
+    fn refuses_to_differentiate_an_extended_real_limit_value() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(
+            &mut engine,
+            "D(x)Limit(t,0,Right)(1/t+x^2)",
+            StepVerbosity::Standard,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert_eq!(result.value, "D(x)Infinity");
+        assert!(result
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("未解析")));
+        assert!(result.steps.iter().all(|step| step.rule != "const-rule"));
+    }
+
+    #[test]
+    fn preserves_a_nonexistent_limit_conclusion_without_applying_derivative() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(&mut engine, "D(x)Limit(t,0)(1/t)", StepVerbosity::Standard)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::NoValue);
+        assert!(result
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("不存在")));
+        assert!(result.steps.iter().all(|step| step.rule != "limit-result"));
+        assert!(result
+            .steps
+            .iter()
+            .all(|step| !step.expr.contains("Infinity")));
+        assert!(result
+            .analyses
+            .iter()
+            .any(|analysis| analysis.rule == "limit-direct-substitution"));
+        assert!(result
+            .analyses
+            .iter()
+            .any(|analysis| analysis.rule == "limit-result"));
+        assert!(result.steps.iter().all(|step| step.rule != "const-rule"));
     }
 
     #[test]
@@ -1008,10 +997,7 @@ mod tests {
                 .to_string(),
             "0"
         );
-        assert!(result
-            .steps
-            .iter()
-            .any(|step| step.rule == "compose_taylor"));
+        assert!(result.steps.iter().any(|step| step.rule == "taylor-expand"));
     }
 
     #[test]
@@ -1033,57 +1019,192 @@ mod tests {
                 .to_string(),
             "0"
         );
-        assert!(result
-            .steps
-            .iter()
-            .any(|step| step.rule == "compose_taylor"));
+        assert!(result.steps.iter().any(|step| step.rule == "taylor-expand"));
     }
 
     #[test]
     fn malformed_registered_operation_has_structured_reason() {
         let mut engine = RustEngine::spawn().unwrap();
-        let result = execute_steps(&mut engine, "D(x,1,2,x)", StepVerbosity::Concise)
-            .unwrap()
-            .unwrap();
-        assert_eq!(result.status, CompositionStatus::Unsupported);
-        assert!(result.reason.unwrap().contains("4 个参数"));
+        let error = execute_steps(&mut engine, "D(x,1,2,x)", StepVerbosity::Concise)
+            .expect_err("malformed registered operations must be rejected");
+        assert!(error.to_string().contains("4 个参数"));
     }
 
     #[test]
-    fn single_operation_keeps_existing_fast_path() {
+    fn single_migrated_operation_uses_the_object_native_path() {
         let mut engine = RustEngine::spawn().unwrap();
-        assert!(
-            execute_steps(&mut engine, "D(x)x^2", StepVerbosity::Concise)
-                .unwrap()
-                .is_none()
+        let result = execute_steps(&mut engine, "D(x)x^2", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Completed);
+        assert_eq!(result.value, "2*x");
+    }
+
+    #[test]
+    fn publishes_final_object_semantics_and_outcome_without_product_reinference() {
+        let mut engine = RustEngine::spawn().unwrap();
+
+        let derivative = execute_steps(&mut engine, "D(x)Sin(x)^2", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(derivative.semantic.symbols, ["x"]);
+        assert!(derivative.semantic.bound_symbols.is_empty());
+        assert_eq!(
+            derivative.outcome.resolution,
+            crate::protocol::ResolutionState::Solved
         );
+
+        let limit = execute_steps(&mut engine, "Limit(x,0)", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(limit.value, "0");
+        assert!(limit.semantic.symbols.is_empty());
+        assert!(limit.semantic.bound_symbols.is_empty());
+
+        let ode = execute_steps(&mut engine, "OdeSolve(y'==y)", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ode.semantic.kind,
+            crate::semantic::ValueKind::FunctionFamily
+        );
+        assert_eq!(ode.semantic.bound_symbols, ["x"]);
+        assert!(!ode.semantic.symbols.iter().any(|name| name == "y"));
     }
 
     #[test]
     fn structured_operands_remain_held_when_no_lowering_rule_applies() {
         let mut engine = RustEngine::spawn().unwrap();
-        for expression in [
-            "D(x)Solve({x==1},{x})",
-            "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
-            "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
-            "D(x)OdeSolveNumeric(y'==y,x,y,0,1,2)",
-            "D(x)Plot(Sin(x),x,-1,1)",
+        let migrated = "Factor(DoubleIntegral(f(x,y),y,0,x,x,0,1))";
+        let result = execute_steps(&mut engine, migrated, StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert_eq!(result.value, migrated);
+        assert!(!result.steps.is_empty());
+
+        let expression = "D(x)OdeSolveNumeric(y'==y,x,y,0,1,0.1)";
+        let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert!(result.value.starts_with("D(x)"));
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "numeric-ode-trajectory"));
+    }
+
+    #[test]
+    fn solved_sets_are_typed_values_but_not_differentiable_operands() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(&mut engine, "D(x)Solve({x==1},{x})", StepVerbosity::Concise)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, CompositionStatus::Unresolved);
+        assert!(result.value.starts_with("D(x)"), "{}", result.value);
+        assert!(result.value.contains("x==1"), "{}", result.value);
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "solve-equations"));
+    }
+
+    #[test]
+    fn multivariate_differentials_use_the_object_pipeline_and_compose() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("Gradient(x^2+y^2,{x,y})", "{2*x,2*y}"),
+            ("Jacobian({x+y,x*y},{x,y})", "{{1,1},{y,x}}"),
+            ("Hessian(x^2*y+y^3,{x,y})", "{{2*y,2*x},{2*x,6*y}}"),
+            ("Divergence({x^2,y^2},{x,y})", "2*x+2*y"),
+            ("Curl({y*z,x*z,x*y},{x,y,z})", "{0,0,0}"),
+            (
+                "DirectionalDerivative(x^2+y^2,{x,y},{3,4},True)",
+                "2*(3*x+4*y)/5",
+            ),
+            ("Sin(Divergence({x,y},{x,y}))", "Sin(2)"),
         ] {
-            let result = execute_steps(&mut engine, expression, StepVerbosity::Concise)
-                .unwrap()
+            let result = execute_steps(&mut engine, source, StepVerbosity::Concise)
+                .unwrap_or_else(|error| panic!("{source}: {error}"))
                 .unwrap();
-            assert_eq!(result.status, CompositionStatus::Unresolved, "{expression}");
-            assert_eq!(result.value, expression);
-            assert_eq!(result.steps.len(), 1);
-            assert_eq!(result.steps[0].rule, "held-operator-application");
-            let held = result.held.as_ref().unwrap();
-            assert_eq!(held.source, expression);
-            assert!(!held.operand_head.is_empty());
-            assert!(!held.pending_operators.is_empty());
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+            assert_eq!(
+                engine.eval(&result.value).unwrap().expr.to_string(),
+                engine.eval(expected).unwrap().expr.to_string(),
+                "{source}: {}",
+                result.value
+            );
             assert!(result
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("语义上有效")));
+                .steps
+                .iter()
+                .any(|step| step.rule == "multivariate-differential"));
+        }
+    }
+
+    #[test]
+    fn line_integrals_use_the_object_pipeline_and_compose() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            ("ScalarLineIntegral(x,{x,y},{t,0},t,0,1)", "1/2"),
+            ("VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1)", "1"),
+            (
+                "Sin(VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1))",
+                "Sin(1)",
+            ),
+        ] {
+            let result = execute_steps(&mut engine, source, StepVerbosity::Concise)
+                .unwrap_or_else(|error| panic!("{source}: {error}"))
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+            assert_eq!(
+                engine.eval(&result.value).unwrap().expr.to_string(),
+                engine.eval(expected).unwrap().expr.to_string(),
+                "{source}: {}",
+                result.value
+            );
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "line-integral-result"));
+        }
+    }
+
+    #[test]
+    fn surface_integrals_use_the_object_pipeline_and_compose() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (source, expected) in [
+            (
+                "ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{2,3})",
+                "6",
+            ),
+            (
+                "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,0},{u,v},{0,0},{2,3})",
+                "6",
+            ),
+            (
+                "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,0},{u,v},{0,0},{2,3},Reversed)",
+                "-6",
+            ),
+            (
+                "Sin(ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{2,3}))",
+                "Sin(6)",
+            ),
+        ] {
+            let result = execute_steps(&mut engine, source, StepVerbosity::Concise)
+                .unwrap_or_else(|error| panic!("{source}: {error}"))
+                .unwrap();
+            assert_eq!(result.status, CompositionStatus::Completed, "{source}");
+            assert_eq!(
+                engine.eval(&result.value).unwrap().expr.to_string(),
+                engine.eval(expected).unwrap().expr.to_string(),
+                "{source}: {}",
+                result.value
+            );
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "surface-integral-result"));
         }
     }
 }

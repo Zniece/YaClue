@@ -1,48 +1,17 @@
+use processing::composition::execute_steps;
 use processing::engine::{Engine, RustEngine};
-use processing::line_integrals::{
-    compute as line_integral, compute_steps as line_integral_steps, LineIntegralKind,
-    LineIntegralRequest,
-};
 use processing::multiple_integrals::{
     double_integral, double_integral_steps, polar_integral, polar_integral_steps, triple_integral,
     triple_integral_steps, IntegralBound, IteratedIntegralStatus, PolarRegion,
     TripleIntegralStatus,
 };
-use processing::surface_integrals::{
-    compute as surface_integral, compute_steps as surface_integral_steps, SurfaceIntegralKind,
-    SurfaceIntegralRequest, SurfaceOrientation,
-};
+use processing::steps::StepVerbosity;
 
 fn assert_equivalent(engine: &mut dyn Engine, actual: &str, expected: &str) {
     let check = engine
         .eval(&format!("IsZero(Simplify(({actual})-({expected})))"))
         .unwrap();
     assert_eq!(check.expr.to_string(), "True", "{actual} != {expected}");
-}
-
-fn line_request(kind: LineIntegralKind, field: &[&str]) -> LineIntegralRequest {
-    LineIntegralRequest {
-        kind,
-        field: field.iter().map(|value| (*value).into()).collect(),
-        coordinates: vec!["x".into(), "y".into()],
-        curve: vec!["t".into(), "t^2".into()],
-        parameter: "t".into(),
-        lower: "0".into(),
-        upper: "1".into(),
-    }
-}
-
-fn surface_request(kind: SurfaceIntegralKind, field: &[&str]) -> SurfaceIntegralRequest {
-    SurfaceIntegralRequest {
-        kind,
-        orientation: SurfaceOrientation::ParameterOrder,
-        field: field.iter().map(|value| (*value).into()).collect(),
-        coordinates: ["x".into(), "y".into(), "z".into()],
-        surface: ["u".into(), "v".into(), "u+v".into()],
-        parameters: ["u".into(), "v".into()],
-        lower: ["0".into(), "0".into()],
-        upper: ["1".into(), "1".into()],
-    }
 }
 
 #[test]
@@ -113,25 +82,25 @@ fn coordinate_and_parametric_integrals_return_verified_constructions() {
         polar_steps.result.integral.value
     );
 
-    let line_request = line_request(LineIntegralKind::VectorWork, &["y", "x"]);
-    let line = line_integral(&mut engine, &line_request).unwrap();
-    assert!(line.completed && line.integrand_verified);
+    let line = execute_steps(
+        &mut engine,
+        "VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1)",
+        StepVerbosity::Detailed,
+    )
+    .unwrap()
+    .unwrap();
     assert_equivalent(&mut engine, &line.value, "1");
-    let line_steps = line_integral_steps(&mut engine, &line_request).unwrap();
-    assert_eq!(
-        line_steps.steps.last().unwrap().expr,
-        line_steps.result.value
-    );
+    assert_eq!(line.steps.last().unwrap().expr, line.value);
 
-    let surface_request = surface_request(SurfaceIntegralKind::VectorFlux, &["0", "0", "1"]);
-    let surface = surface_integral(&mut engine, &surface_request).unwrap();
-    assert!(surface.completed && surface.normal_verified && surface.integrand_verified);
+    let surface = execute_steps(
+        &mut engine,
+        "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,u+v},{u,v},{0,0},{1,1})",
+        StepVerbosity::Detailed,
+    )
+    .unwrap()
+    .unwrap();
     assert_equivalent(&mut engine, &surface.value, "1");
-    let surface_steps = surface_integral_steps(&mut engine, &surface_request).unwrap();
-    assert_eq!(
-        surface_steps.steps.last().unwrap().expr,
-        surface_steps.result.value
-    );
+    assert_eq!(surface.steps.last().unwrap().expr, surface.value);
 }
 
 #[test]
@@ -198,10 +167,16 @@ fn invalid_regions_and_parameter_dependencies_are_rejected() {
     )
     .is_err());
 
-    let invalid_line = line_request(LineIntegralKind::ScalarArcLength, &["t"]);
-    assert!(line_integral(&mut engine, &invalid_line).is_err());
-
-    let mut invalid_surface = surface_request(SurfaceIntegralKind::ScalarArea, &["1"]);
-    invalid_surface.upper[0] = "v".into();
-    assert!(surface_integral(&mut engine, &invalid_surface).is_err());
+    assert!(execute_steps(
+        &mut engine,
+        "ScalarLineIntegral(t,{x,y},{t,t^2},t,0,1)",
+        StepVerbosity::Concise,
+    )
+    .is_err());
+    assert!(execute_steps(
+        &mut engine,
+        "ScalarSurfaceIntegral(1,{x,y,z},{u,v,u+v},{u,v},{0,0},{v,1})",
+        StepVerbosity::Concise,
+    )
+    .is_err());
 }

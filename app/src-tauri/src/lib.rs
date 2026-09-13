@@ -1,17 +1,9 @@
-use processing::algebra::TransformKind;
 use processing::assumptions::{AssumptionFact, AssumptionState};
 use processing::engine::{Engine, EngineError, ErrorCode, ErrorResponse, RustEngineProxy};
-use processing::improper_integrals::ImproperIntegralRequest;
-use processing::limits::LimitDirection;
-use processing::linear_algebra::MatrixOperation;
-use processing::multiple_integrals::{IntegralBound, PolarRegion};
-use processing::ode::InitialCondition;
-use processing::ode_numeric::NumericOdeOptions;
-use processing::plot::SampleOptions;
-use processing::protocol::{
-    Condition, ConditionSet, OutcomeReason, ResultCompleteness, ResultMetadata,
-};
-use processing::semantic::{AnalyzedInput, SemanticSummary, ValueKind};
+#[cfg(test)]
+use processing::protocol::{Condition, Conditionality};
+use processing::protocol::{OutcomeReason, ResultMetadata};
+use processing::semantic::{SemanticSummary, ValueKind};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -101,7 +93,16 @@ pub struct ProcessExpressionResult {
     expression: String,
     tex: String,
     steps: Vec<Step>,
-    data: Value,
+    analyses: Vec<processing::steps::MathematicalAnalysis>,
+    conclusions: Vec<processing::steps::MathematicalConclusion>,
+    status: Option<processing::composition::CompositionStatus>,
+    operators: Vec<processing::semantic_core::OperatorId>,
+    held: Option<processing::composition::HeldApplication>,
+    sampled_data: Option<processing::semantic_core::SampledTrajectory>,
+    plot: Option<processing::plot::PlotEffect>,
+    effect_only: bool,
+    analysis: Option<Value>,
+    details: Option<Value>,
     semantic: SemanticSummary,
     outcome: ResultMetadata,
 }
@@ -112,1102 +113,252 @@ struct DispatchExpressionResult {
     expression: String,
     tex: String,
     steps: Vec<Step>,
-    data: Value,
+    analyses: Vec<processing::steps::MathematicalAnalysis>,
+    conclusions: Vec<processing::steps::MathematicalConclusion>,
+    status: processing::composition::CompositionStatus,
+    operators: Vec<processing::semantic_core::OperatorId>,
+    held: Option<processing::composition::HeldApplication>,
+    sampled_data: Option<processing::semantic_core::SampledTrajectory>,
+    plot: Option<processing::plot::PlotEffect>,
+    effect_only: bool,
+    analysis: Option<Value>,
+    semantic: SemanticSummary,
+    outcome: ResultMetadata,
 }
 
-fn unified_result<T: Serialize>(
+fn unified_result(
     kind: &str,
     title: &str,
-    expression: String,
-    tex: String,
-    steps: Vec<Step>,
-    data: &T,
+    result: processing::composition::CompositionResult,
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
     Ok(DispatchExpressionResult {
         kind: kind.into(),
         title: title.into(),
-        expression,
-        tex,
-        steps,
-        data: serde_json::to_value(data)
-            .map_err(|error| invalid_input(format!("结果序列化失败: {error}")))?,
+        expression: result.value,
+        tex: result.tex,
+        steps: result.steps,
+        analyses: result.analyses,
+        conclusions: result.conclusions,
+        status: result.status,
+        operators: result.operators,
+        held: result.held,
+        sampled_data: result.sampled_data,
+        plot: result.plot,
+        effect_only: result.effect_only,
+        analysis: result.analysis,
+        semantic: result.semantic,
+        outcome: result.outcome,
     })
-}
-
-fn result_metadata(
-    result: &DispatchExpressionResult,
-    exactness: processing::semantic::Exactness,
-) -> Result<ResultMetadata, ErrorResponse> {
-    let domain = result.data.get("result").unwrap_or(&result.data);
-    let conditions = condition_set_from_value(domain.get("conditions"))?;
-    let status = domain
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("completed");
-    let held_operation = ["Integrate(", "D(", "Deriv(", "Limit(", "Solve("]
-        .iter()
-        .any(|prefix| result.expression.trim_start().starts_with(prefix));
-    let mut metadata = if status == "condition_insufficient" {
-        ResultMetadata::unresolved(exactness, OutcomeReason::ConditionInsufficient)
-    } else if status == "unsupported" {
-        ResultMetadata::unresolved(exactness, OutcomeReason::UnsupportedOperation)
-    } else if status == "divergent" {
-        ResultMetadata::no_result(exactness, OutcomeReason::Divergent)
-    } else if matches!(
-        status,
-        "does_not_exist" | "no_solution" | "no_points" | "no_critical_points"
-    ) {
-        ResultMetadata::no_result(exactness, OutcomeReason::MathematicalAbsence)
-    } else if held_operation
-        || status.contains("unresolved")
-        || matches!(status, "inconclusive" | "no_convergence")
-    {
-        ResultMetadata::unresolved(exactness, OutcomeReason::AlgorithmUncovered)
-    } else {
-        ResultMetadata::solved(exactness, conditions)
-    };
-    if let Some(completeness) = domain.get("completeness").and_then(Value::as_str) {
-        metadata.completeness = match completeness {
-            "complete" | "parametric" | "periodic" => ResultCompleteness::Complete,
-            "representative" => ResultCompleteness::Representative,
-            _ => ResultCompleteness::Unknown,
-        };
-    }
-    Ok(metadata)
-}
-
-fn arbitrary_constants(result: &DispatchExpressionResult) -> Vec<String> {
-    let domain = result.data.get("result").unwrap_or(&result.data);
-    domain
-        .get("constants")
-        .or_else(|| domain.get("arbitrary_constants"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect()
-}
-
-fn project_domain_semantic(
-    input: &SemanticSummary,
-    result: &DispatchExpressionResult,
-) -> Result<SemanticSummary, ErrorResponse> {
-    if result.data.get("held").is_some_and(|held| !held.is_null()) {
-        let mut semantic = input.clone();
-        semantic.kind = ValueKind::Unevaluated;
-        semantic.completeness = None;
-        return Ok(semantic);
-    }
-    let generated = arbitrary_constants(result);
-    if result.kind != "ode" && generated.is_empty() {
-        return Ok(input.clone());
-    }
-    let semantic_expression = result
-        .data
-        .get("semantic_expression")
-        .and_then(Value::as_str)
-        .unwrap_or(&result.expression);
-    processing::semantic::project_result(
-        input,
-        semantic_expression,
-        &generated,
-        if result.kind == "ode" { &["x"] } else { &[] },
-        match result.kind.as_str() {
-            "ode" => Some(ValueKind::SolutionSet),
-            "integral" => Some(ValueKind::FunctionFamily),
-            _ => None,
-        },
-    )
-    .map_err(message)
-}
-
-fn condition_set_from_value(value: Option<&Value>) -> Result<ConditionSet, ErrorResponse> {
-    let mut conditions = Vec::new();
-    let items = match value {
-        Some(Value::Array(items)) => Some(items),
-        Some(Value::Object(object)) => object.get("conditions").and_then(Value::as_array),
-        _ => None,
-    };
-    if let Some(items) = items {
-        for item in items {
-            collect_conditions(item, &mut conditions);
-        }
-    }
-    ConditionSet::new(conditions).map_err(message)
-}
-
-fn collect_conditions(value: &Value, output: &mut Vec<Condition>) {
-    let Some(object) = value.as_object() else {
-        if let Some(description) = value.as_str() {
-            output.push(Condition::Unknown {
-                description: description.into(),
-            });
-        }
-        return;
-    };
-    if let Some(predicate) = object.get("predicate").and_then(Value::as_str) {
-        let expression = object
-            .get("expression")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        output.push(match predicate {
-            "real_part_positive" => Condition::RealPartPositive { expression },
-            "positive" => Condition::Positive { expression },
-            "negative" => Condition::Negative { expression },
-            "non_zero" => Condition::NonZero { expression },
-            "real" => Condition::Real { expression },
-            "integer" => Condition::Integer { expression },
-            _ => Condition::Unknown {
-                description: object
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or("未知条件")
-                    .into(),
-            },
-        });
-        return;
-    }
-    match object.get("kind").and_then(Value::as_str) {
-        Some("property") => {
-            let expression = object
-                .get("expression")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let condition = match object.get("fact").and_then(Value::as_str) {
-                Some("Positive" | "positive") => Condition::Positive { expression },
-                Some("Negative" | "negative") => Condition::Negative { expression },
-                Some("NonZero" | "non_zero") => Condition::NonZero { expression },
-                Some("Real" | "real") => Condition::Real { expression },
-                Some("Integer" | "integer") => Condition::Integer { expression },
-                _ => Condition::Unknown {
-                    description: value.to_string(),
-                },
-            };
-            output.push(condition);
-        }
-        Some("relation")
-            if object.get("relation").and_then(Value::as_str) == Some("greater_than")
-                && object.get("right").and_then(Value::as_str) == Some("0") =>
-        {
-            let left = object
-                .get("left")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if let Some(expression) = left
-                .strip_prefix("Re(")
-                .and_then(|value| value.strip_suffix(')'))
-            {
-                output.push(Condition::RealPartPositive {
-                    expression: expression.into(),
-                });
-            } else {
-                output.push(Condition::Positive {
-                    expression: left.into(),
-                });
-            }
-        }
-        Some("all") => {
-            if let Some(Value::Array(items)) = object.get("conditions") {
-                for item in items {
-                    collect_conditions(item, output);
-                }
-            }
-        }
-        _ => output.push(Condition::Unknown {
-            description: value.to_string(),
-        }),
-    }
-}
-
-fn final_step(steps: &[Step]) -> (String, String) {
-    steps
-        .last()
-        .map(|step| (step.expr.clone(), step.tex.clone()))
-        .unwrap_or_default()
-}
-
-fn list_or_single(expression: &str, label: &str) -> Result<Vec<String>, ErrorResponse> {
-    let call = processing::input::root_call(expression, label).map_err(message)?;
-    Ok(match call {
-        Some(call) if call.head == "List" => call.arguments,
-        _ => vec![expression.to_string()],
-    })
-}
-
-fn lower_composable_operand(
-    engine: &mut RustEngineProxy,
-    expression: &str,
-    verbosity: StepVerbosity,
-) -> Result<(String, Vec<Step>, Vec<String>), ErrorResponse> {
-    let call = processing::input::root_call(expression, "方程操作数").map_err(message)?;
-    if !call
-        .as_ref()
-        .is_some_and(processing::composition::is_candidate)
-    {
-        return Ok((expression.into(), Vec::new(), Vec::new()));
-    }
-    let Some(result) =
-        processing::composition::execute_steps(engine, expression, verbosity).map_err(message)?
-    else {
-        return Ok((expression.into(), Vec::new(), Vec::new()));
-    };
-    if result.status == processing::composition::CompositionStatus::Unsupported {
-        return Err(invalid_input(
-            result
-                .reason
-                .unwrap_or_else(|| "方程中的组合运算不受支持".into()),
-        ));
-    }
-    Ok((result.value, result.steps, result.arbitrary_constants))
 }
 
 fn dispatch_expression_with_engine(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
-    analyzed: &AnalyzedInput,
+    elaborated: &processing::elaboration::ElaboratedInput,
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
-    let call = &analyzed.root_call;
     let verbosity = parse_verbosity(&request.verbosity)?;
-    let conventional_bodied = call.as_ref().is_some_and(|call| {
-        (call.head == "Limit" && call.arguments.len() == 2)
-            || (call.head == "Taylor" && call.arguments.len() == 3)
-    });
-    if (request.steps || conventional_bodied)
-        && call
-            .as_ref()
-            .is_some_and(processing::composition::is_candidate)
-    {
-        if let Some(mut result) =
-            processing::composition::execute_steps(&mut *engine, &request.expression, verbosity)
-                .map_err(message)?
-        {
-            if !request.steps {
-                result.steps.clear();
-            }
-            return unified_result(
-                "composition",
-                "组合运算",
-                result.value.clone(),
-                result.tex.clone(),
-                result.steps.clone(),
-                &result,
-            );
+    let root_descriptor = match &elaborated.root.form {
+        processing::elaboration::MathematicalForm::Application { head }
+        | processing::elaboration::MathematicalForm::EffectApplication { head } => {
+            processing::semantic_core::operator_descriptor(head)
+                .filter(|_| processing::semantic_core::is_object_native_operator(head))
         }
-    }
-    if let Some(call) = call {
-        match (call.head.as_str(), call.arguments.as_slice()) {
-            ("D", [variable, expression]) | ("Deriv", [variable, expression]) => {
-                if request.steps {
-                    let steps = processing::steps::derive_steps_order_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        1,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    let (expression, tex) = final_step(&steps);
-                    return unified_result("derivative", "导数", expression, tex, steps, &());
-                }
-            }
-            ("D", [variable, order, expression]) | ("Deriv", [variable, order, expression]) => {
-                let order = order
-                    .parse::<u32>()
-                    .map_err(|_| invalid_input("导数阶数必须是非负整数"))?;
-                if request.steps {
-                    let steps = processing::steps::derive_steps_order_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        order,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    let (expression, tex) = final_step(&steps);
-                    return unified_result("derivative", "导数", expression, tex, steps, &());
-                }
-            }
-            (head @ ("ImproperIntegral" | "PrincipalValueIntegral"), arguments)
-                if matches!(arguments.len(), 4 | 5) =>
-            {
-                let expression = &arguments[0];
-                let variable = &arguments[1];
-                let lower = &arguments[2];
-                let upper = &arguments[3];
-                let points = if arguments.len() == 5 {
-                    list_or_single(&arguments[4], "奇点列表")?
-                } else {
-                    Vec::new()
-                };
-                let object_request = ImproperIntegralRequest {
-                    expression: expression.clone(),
-                    variable: variable.clone(),
-                    lower: lower.clone(),
-                    upper: upper.clone(),
-                    singular_points: points,
-                };
-                let step_verbosity = request.steps.then_some(verbosity);
-                if head == "ImproperIntegral" {
-                    if let Some(lowered) = processing::intrinsics::try_lower_improper_integral(
-                        &mut *engine,
-                        &object_request,
-                        step_verbosity,
-                    )
-                    .map_err(message)?
-                    {
-                        return unified_result(
-                            "intrinsic",
-                            "原生特殊函数",
-                            lowered.value.clone(),
-                            lowered.tex.clone(),
-                            lowered.steps.clone(),
-                            &lowered,
-                        );
-                    }
-                }
-                let result = if head == "PrincipalValueIntegral" {
-                    processing::improper_integrals::principal_value(
-                        &mut *engine,
-                        &object_request,
-                        step_verbosity,
-                    )
-                } else {
-                    processing::improper_integrals::evaluate(
-                        &mut *engine,
-                        &object_request,
-                        step_verbosity,
-                    )
-                }
-                .map_err(message)?;
-                return unified_result(
-                    "defined_object",
-                    if head == "PrincipalValueIntegral" {
-                        "Cauchy 主值"
-                    } else {
-                        "反常积分"
-                    },
-                    result.value.clone(),
-                    result.tex.clone(),
-                    result.steps.clone(),
-                    &result,
-                );
-            }
-            ("Integrate", [variable, lower, upper, expression])
-                if lower.contains("Infinity") || upper.contains("Infinity") =>
-            {
-                let object_request = ImproperIntegralRequest {
-                    expression: expression.clone(),
-                    variable: variable.clone(),
-                    lower: lower.clone(),
-                    upper: upper.clone(),
-                    singular_points: Vec::new(),
-                };
-                if let Some(lowered) = processing::intrinsics::try_lower_improper_integral(
-                    &mut *engine,
-                    &object_request,
-                    request.steps.then_some(verbosity),
-                )
-                .map_err(message)?
-                {
-                    return unified_result(
-                        "intrinsic",
-                        "原生特殊函数",
-                        lowered.value.clone(),
-                        lowered.tex.clone(),
-                        lowered.steps.clone(),
-                        &lowered,
-                    );
-                }
-                let result = processing::improper_integrals::evaluate(
-                    &mut *engine,
-                    &object_request,
-                    request.steps.then_some(verbosity),
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "defined_object",
-                    "反常积分",
-                    result.value.clone(),
-                    result.tex.clone(),
-                    result.steps.clone(),
-                    &result,
-                );
-            }
-            ("Integrate", [variable, expression]) => {
-                let arbitrary_constant = processing::semantic::display_arbitrary_constants(
-                    &analyzed.semantic.symbols,
-                    1,
-                )
-                .into_iter()
-                .next()
-                .expect("one arbitrary constant was requested");
-                if request.steps {
-                    let result = processing::steps::derive_antiderivative_family_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        arbitrary_constant,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "integral",
-                        "不定积分",
-                        result.result.expression.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let evaluated = engine.eval(&request.expression).map_err(message)?;
-                let result = processing::steps::antiderivative_family(
-                    evaluated.expr.to_string(),
-                    evaluated.tex.trim_matches('$').to_string(),
-                    variable,
-                    arbitrary_constant,
-                );
-                return unified_result(
-                    "integral",
-                    "不定积分",
-                    result.expression.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Integrate", [variable, from, to, expression]) if request.steps => {
-                let steps = processing::steps::derive_definite_with_verbosity(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    from,
-                    to,
-                    verbosity,
-                )
-                .map_err(message)?;
-                let (expression, tex) = final_step(&steps);
-                return unified_result("definite_integral", "定积分", expression, tex, steps, &());
-            }
-            (
-                "DoubleIntegral",
-                [expression, inner_var, inner_from, inner_to, outer_var, outer_from, outer_to],
-            ) => {
-                let inner = IntegralBound {
-                    variable: inner_var,
-                    lower: inner_from,
-                    upper: inner_to,
-                };
-                let outer = IntegralBound {
-                    variable: outer_var,
-                    lower: outer_from,
-                    upper: outer_to,
-                };
-                if request.steps {
-                    let result =
-                        processing::multiple_integrals::double_integral_steps_with_verbosity(
-                            &mut *engine,
-                            expression,
-                            inner,
-                            outer,
-                            verbosity,
-                        )
-                        .map_err(message)?;
-                    return unified_result(
-                        "double_integral",
-                        "二重积分",
-                        result.result.value.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::multiple_integrals::double_integral(
-                    &mut *engine,
-                    expression,
-                    inner,
-                    outer,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "double_integral",
-                    "二重积分",
-                    result.value.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            (
-                "PolarIntegral",
-                [expression, x, y, radius, angle, radial_from, radial_to, angle_from, angle_to],
-            ) => {
-                let region = PolarRegion {
-                    radial_lower: radial_from,
-                    radial_upper: radial_to,
-                    angle_lower: angle_from,
-                    angle_upper: angle_to,
-                };
-                if request.steps {
-                    let result =
-                        processing::multiple_integrals::polar_integral_steps_with_verbosity(
-                            &mut *engine,
-                            expression,
-                            x,
-                            y,
-                            radius,
-                            angle,
-                            region,
-                            verbosity,
-                        )
-                        .map_err(message)?;
-                    return unified_result(
-                        "polar_integral",
-                        "极坐标积分",
-                        result.result.integral.value.clone(),
-                        result.result.integral.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::multiple_integrals::polar_integral(
-                    &mut *engine,
-                    expression,
-                    x,
-                    y,
-                    radius,
-                    angle,
-                    region,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "polar_integral",
-                    "极坐标积分",
-                    result.integral.value.clone(),
-                    result.integral.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Limit", [variable, at, expression]) => {
-                if request.steps {
-                    let steps = processing::limits::limit_steps_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        at,
-                        LimitDirection::Both,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    let (expression, tex) = final_step(&steps);
-                    return unified_result("limit", "极限", expression, tex, steps, &());
-                }
-                let result = processing::limits::limit(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    at,
-                    LimitDirection::Both,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "limit",
-                    "极限",
-                    result.value.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Limit", [variable, at, direction, expression]) => {
-                let direction = match direction.as_str() {
-                    "Left" => LimitDirection::Left,
-                    "Right" => LimitDirection::Right,
-                    _ => return Err(invalid_input("极限方向应为 Left 或 Right")),
-                };
-                if request.steps {
-                    let steps = processing::limits::limit_steps_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        variable,
-                        at,
-                        direction,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    let (expression, tex) = final_step(&steps);
-                    return unified_result("limit", "极限", expression, tex, steps, &());
-                }
-                let result =
-                    processing::limits::limit(&mut *engine, expression, variable, at, direction)
-                        .map_err(message)?;
-                return unified_result(
-                    "limit",
-                    "极限",
-                    result.value.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("OdeSolve", [equation]) => {
-                if request.steps {
-                    let result = processing::ode::solve_steps_with_verbosity(
-                        &mut *engine,
-                        equation,
-                        "x",
-                        "y",
-                        &[],
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "ode",
-                        "常微分方程",
-                        result.result.solution.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::ode::solve(&mut *engine, equation, "x", "y", &[])
-                    .map_err(message)?;
-                return unified_result(
-                    "ode",
-                    "常微分方程",
-                    result.solution.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Solve", [equations, variables]) => {
-                let equations = list_or_single(equations, "方程列表")?;
-                let variables = list_or_single(variables, "变量列表")?;
-                let equation_refs: Vec<_> = equations.iter().map(String::as_str).collect();
-                let variable_refs: Vec<_> = variables.iter().map(String::as_str).collect();
-                let (solved, steps) = if request.steps
-                    && equations.len() == 1
-                    && variables.len() == 1
-                {
-                    let stepped = processing::equations::solve_steps_with_verbosity(
-                        &mut *engine,
-                        &equations[0],
-                        &variables[0],
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    (stepped.result, stepped.steps)
-                } else {
-                    (
-                        processing::equations::solve(&mut *engine, &equation_refs, &variable_refs)
-                            .map_err(message)?,
-                        vec![],
-                    )
-                };
-                return unified_result(
-                    "equation",
-                    if equations.len() == 1 {
-                        "方程"
-                    } else {
-                        "方程组"
-                    },
-                    String::new(),
-                    solved.tex.clone(),
-                    steps,
-                    &solved,
-                );
-            }
-            ("OdeSolveNumeric", [equation, independent, dependent, start, value, end]) => {
-                let end = end
-                    .parse::<f64>()
-                    .map_err(|_| invalid_input("数值 ODE 的终点必须是有限数字"))?;
-                let condition = [InitialCondition {
-                    derivative_order: 0,
-                    point: start,
-                    value,
-                }];
-                let result = processing::ode_numeric::solve_initial_value(
-                    &mut *engine,
-                    equation,
-                    independent,
-                    dependent,
-                    &condition,
-                    NumericOdeOptions {
-                        end,
-                        ..NumericOdeOptions::default()
-                    },
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "numeric_ode",
-                    "常微分方程数值解",
-                    String::new(),
-                    String::new(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("N", [expression, precision]) => {
-                let precision = precision
-                    .parse::<u32>()
-                    .map_err(|_| invalid_input("近似精度必须是正整数"))?;
-                let result = processing::numeric::approximate(&mut *engine, expression, precision)
-                    .map_err(message)?;
-                return unified_result(
-                    "numeric",
-                    "数值近似",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("FindRoot", [expression, variable, initial]) => {
-                let initial = initial
-                    .parse::<f64>()
-                    .map_err(|_| invalid_input("数值求根初值必须是有限数字"))?;
-                let result = processing::numeric::find_root(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    initial,
-                    1e-8,
-                    None,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "numeric_root",
-                    "数值根",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Plot", [expression, variable, min, max]) => {
-                let min = min
-                    .parse::<f64>()
-                    .map_err(|_| invalid_input("绘图区间下界必须是有限数字"))?;
-                let max = max
-                    .parse::<f64>()
-                    .map_err(|_| invalid_input("绘图区间上界必须是有限数字"))?;
-                let result = processing::plot::sample(
-                    &mut *engine,
-                    expression,
-                    variable,
-                    (min, max),
-                    &SampleOptions::default(),
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "plot",
-                    "函数图像",
-                    request.expression.clone(),
-                    String::new(),
-                    vec![],
-                    &result,
-                );
-            }
-            (head @ ("Factor" | "Expand" | "Simplify" | "Tidy"), [expression]) => {
-                let kind = match head {
-                    "Factor" => TransformKind::Factor,
-                    "Expand" => TransformKind::Expand,
-                    "Simplify" => TransformKind::Simplify,
-                    _ => TransformKind::Tidy,
-                };
-                let result = processing::algebra::transform(&mut *engine, expression, kind, None)
-                    .map_err(message)?;
-                return unified_result(
-                    "algebra",
-                    "代数变换",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Apart", [expression, variable]) => {
-                let result = processing::algebra::transform(
-                    &mut *engine,
-                    expression,
-                    TransformKind::Apart,
-                    Some(variable),
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "algebra",
-                    "部分分式分解",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Taylor", [variable, point, degree, expression]) => {
-                let degree = degree
-                    .parse::<u32>()
-                    .map_err(|_| invalid_input("Taylor 次数必须是非负整数"))?;
-                let result =
-                    processing::numeric::taylor(&mut *engine, expression, variable, point, degree)
-                        .map_err(message)?;
-                return unified_result(
-                    "taylor",
-                    "Taylor 多项式",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Extrema", [expression, x, y]) => {
-                if request.steps {
-                    let result = processing::extrema::analyze_steps_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        x,
-                        y,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "extrema",
-                        "无约束极值",
-                        result.result.expression.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::extrema::analyze(&mut *engine, expression, x, y)
-                    .map_err(message)?;
-                return unified_result(
-                    "extrema",
-                    "无约束极值",
-                    result.expression.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("Lagrange", [expression, constraint, x, y]) => {
-                if request.steps {
-                    let result = processing::extrema::analyze_lagrange_steps_with_verbosity(
-                        &mut *engine,
-                        expression,
-                        constraint,
-                        x,
-                        y,
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    return unified_result(
-                        "lagrange",
-                        "约束极值",
-                        result.result.expression.clone(),
-                        result.result.tex.clone(),
-                        result.steps.clone(),
-                        &result,
-                    );
-                }
-                let result = processing::extrema::analyze_lagrange(
-                    &mut *engine,
-                    expression,
-                    constraint,
-                    x,
-                    y,
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "lagrange",
-                    "约束极值",
-                    result.expression.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            (head @ ("Determinant" | "Inverse" | "Transpose" | "EigenValues"), [matrix]) => {
-                let operation = match head {
-                    "Determinant" => MatrixOperation::Determinant,
-                    "Inverse" => MatrixOperation::Inverse,
-                    "Transpose" => MatrixOperation::Transpose,
-                    _ => MatrixOperation::Eigenvalues,
-                };
-                let result =
-                    processing::linear_algebra::compute(&mut *engine, matrix, operation, None)
-                        .map_err(message)?;
-                return unified_result(
-                    "matrix",
-                    "线性代数",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("MatrixSolve" | "SolveMatrix", [matrix, vector]) => {
-                let result = processing::linear_algebra::compute(
-                    &mut *engine,
-                    matrix,
-                    MatrixOperation::Solve,
-                    Some(vector),
-                )
-                .map_err(message)?;
-                return unified_result(
-                    "matrix",
-                    "线性方程组",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            (head @ ("+" | "*"), [left, right])
-                if call
-                    .argument_heads
-                    .iter()
-                    .all(|head| head.as_deref() == Some("List")) =>
-            {
-                let operation = if head == "+" {
-                    MatrixOperation::Add
-                } else {
-                    MatrixOperation::Multiply
-                };
-                let result =
-                    processing::linear_algebra::compute(&mut *engine, left, operation, Some(right))
-                        .map_err(message)?;
-                return unified_result(
-                    "matrix",
-                    "线性代数",
-                    result.output.clone(),
-                    result.tex.clone(),
-                    vec![],
-                    &result,
-                );
-            }
-            ("=" | "==", [left, right]) => {
-                let (left, mut lowering_steps, mut generated_constants) =
-                    lower_composable_operand(engine, left, verbosity)?;
-                let (right, right_steps, right_constants) =
-                    lower_composable_operand(engine, right, verbosity)?;
-                lowering_steps.extend(right_steps);
-                generated_constants.extend(right_constants);
-                let lowered_equation = format!("({left})==({right})");
-                let equations = [&lowered_equation[..]];
-                let preferred_variables = processing::input::validate_symbol(&left, "等式左侧")
-                    .is_ok()
-                    .then_some([left.as_str()]);
-                let variables = preferred_variables
-                    .as_ref()
-                    .map(|variables| &variables[..])
-                    .unwrap_or(&[]);
-                let solved = processing::equations::solve(&mut *engine, &equations, variables)
-                    .map_err(message)?;
-                let (solved, equation_steps) = if request.steps && solved.variables.len() == 1 {
-                    let stepped = processing::equations::solve_steps_with_verbosity(
-                        &mut *engine,
-                        &lowered_equation,
-                        &solved.variables[0],
-                        verbosity,
-                    )
-                    .map_err(message)?;
-                    (stepped.result, stepped.steps)
-                } else {
-                    (solved, vec![])
-                };
-                let steps = if request.steps {
-                    lowering_steps.extend(equation_steps);
-                    lowering_steps
-                } else {
-                    Vec::new()
-                };
-                let mut output = unified_result(
-                    "equation",
-                    "方程",
-                    solved
-                        .solutions
-                        .first()
-                        .map(|solution| format!("{solution:?}"))
-                        .unwrap_or_default(),
-                    solved.tex.clone(),
-                    steps,
-                    &solved,
-                )?;
-                if let Value::Object(data) = &mut output.data {
-                    data.insert(
-                        "semantic_expression".into(),
-                        Value::String(lowered_equation),
-                    );
-                    data.insert(
-                        "arbitrary_constants".into(),
-                        serde_json::to_value(generated_constants).map_err(|error| {
-                            invalid_input(format!("任意常数序列化失败: {error}"))
-                        })?,
-                    );
-                }
-                return Ok(output);
-            }
-            _ => {}
-        }
-    }
-
-    let evaluated = engine.eval(&request.expression).map_err(message)?;
-    unified_result(
-        "evaluation",
-        "计算结果",
-        evaluated.expr.to_string(),
-        evaluated.tex.trim_matches('$').to_string(),
-        vec![],
-        &(),
+        _ => None,
+    };
+    let Some(mut result) = processing::composition::execute_elaborated(
+        &mut *engine,
+        elaborated,
+        verbosity,
+        request.steps,
     )
+    .map_err(message)?
+    else {
+        return Err(ErrorResponse {
+            code: ErrorCode::Internal,
+            message: "完整数学输入未产生结构化计算结果".into(),
+            retryable: false,
+        });
+    };
+    if !request.steps {
+        result.steps.clear();
+    }
+    let has_native_child = processing::arithmetic::has_object_native_descendant(&elaborated.root);
+    let (kind, title) = match (&elaborated.root.form, root_descriptor) {
+        (processing::elaboration::MathematicalForm::Structural { operator }, _)
+            if matches!(operator.as_str(), "+" | "*")
+                && elaborated.root.children.iter().all(|child| {
+                    matches!(
+                        child.form,
+                        processing::elaboration::MathematicalForm::Collection
+                    )
+                }) =>
+        {
+            ("matrix", "线性代数")
+        }
+        (processing::elaboration::MathematicalForm::Relation { .. }, _) => ("equation", "方程"),
+        (_, Some(descriptor)) => descriptor
+            .product_presentation(
+                has_native_child,
+                result.status == processing::composition::CompositionStatus::Completed,
+            )
+            .unwrap_or(("composition", "组合运算")),
+        (
+            processing::elaboration::MathematicalForm::Number
+            | processing::elaboration::MathematicalForm::Symbol
+            | processing::elaboration::MathematicalForm::Collection
+            | processing::elaboration::MathematicalForm::OpaqueEngineValue { .. }
+            | processing::elaboration::MathematicalForm::Application { .. },
+            None,
+        ) if !has_native_child => ("evaluation", "计算结果"),
+        _ => ("composition", "组合运算"),
+    };
+    unified_result(kind, title, result)
 }
 
 pub fn process_expression_with_engine(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
 ) -> Result<ProcessExpressionResult, ErrorResponse> {
-    let analyzed =
-        processing::semantic::analyze_input(&request.expression, "表达式").map_err(message)?;
-    let semantic_input = match analyzed.root_call.as_ref() {
-        Some(call) if call.head == "Limit" && call.arguments.len() == 2 => {
-            processing::semantic::analyze_input(
-                &format!("Limit(x,{}){}", call.arguments[1], call.arguments[0]),
-                "极限表达式",
-            )
-            .map_err(message)?
-            .semantic
+    let elaborated =
+        processing::elaboration::elaborate_input(&request.expression).map_err(message)?;
+    let analyzed = &elaborated.analyzed;
+    if let Some(partial_object) =
+        processing::elaboration::operand_partial(&elaborated.root).map_err(message)?
+    {
+        let processing::semantic_core::SemanticInterpretation::PartialApplication(partial) =
+            &partial_object.semantics.interpretation
+        else {
+            unreachable!("operand_partial returns a partial application")
+        };
+        let mut semantic = analyzed.semantic.clone();
+        semantic.kind = ValueKind::Unevaluated;
+        for scope in &partial.binder_scopes {
+            let Some(name) = elaborated
+                .root
+                .children
+                .get(scope.binder_slot)
+                .map(|child| child.object.print_source())
+            else {
+                continue;
+            };
+            semantic.symbols.retain(|symbol| symbol != &name);
+            if !semantic.bound_symbols.contains(&name) {
+                semantic.bound_symbols.push(name.clone());
+                semantic.bound_symbols.sort();
+            }
+            if let Some(identity) = semantic
+                .symbol_identities
+                .iter_mut()
+                .find(|identity| identity.name == name)
+            {
+                identity.role = processing::binding::SymbolRole::Bound;
+                identity.binder = Some(scope.binder_slot as u32);
+            }
         }
-        _ => analyzed.semantic.clone(),
-    };
-    let result = dispatch_expression_with_engine(request, engine, &analyzed)?;
-    let projected_input = result
-        .data
-        .get("semantic_expression")
-        .and_then(Value::as_str)
-        .map(|expression| processing::semantic::analyze_input(expression, "降低后的表达式"))
-        .transpose()
-        .map_err(message)?;
-    let semantic = project_domain_semantic(
-        projected_input
-            .as_ref()
-            .map(|input| &input.semantic)
-            .unwrap_or(&semantic_input),
-        &result,
-    )?;
-    let outcome = result_metadata(&result, semantic.exactness)?;
+        let outcome =
+            ResultMetadata::unresolved(semantic.exactness, OutcomeReason::AlgorithmUncovered);
+        let parameter_sources = elaborated
+            .root
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect::<Vec<_>>();
+        let parameter_tex = engine
+            .render_tex_batch(&parameter_sources)
+            .map_err(message)?
+            .into_iter()
+            .map(|tex| processing::input::strip_tex_delimiters(&tex))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let tex = format!(
+            "\\operatorname{{{}}}\\left({parameter_tex}\\right)",
+            partial.spelling
+        );
+        return Ok(ProcessExpressionResult {
+            kind: "partial_application".into(),
+            title: "部分应用".into(),
+            expression: request.expression,
+            tex,
+            steps: Vec::new(),
+            analyses: Vec::new(),
+            conclusions: Vec::new(),
+            status: None,
+            operators: Vec::new(),
+            held: None,
+            sampled_data: None,
+            plot: None,
+            effect_only: false,
+            analysis: None,
+            details: Some(serde_json::json!({
+                "status": "partial_application",
+                "partial": partial,
+            })),
+            semantic,
+            outcome,
+        });
+    }
+    if let Some(partials) =
+        processing::elaboration::partial_candidates(&elaborated.root).map_err(message)?
+    {
+        let mut semantic = analyzed.semantic.clone();
+        semantic.kind = ValueKind::Unevaluated;
+        let bound_sources = elaborated
+            .root
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect::<Vec<_>>();
+        let templates = partials
+            .candidates
+            .iter()
+            .map(|candidate| candidate.display_template(&bound_sources))
+            .collect::<Vec<_>>();
+        return Ok(ProcessExpressionResult {
+            kind: "partial_application".into(),
+            title: "部分应用".into(),
+            expression: request.expression,
+            tex: format!("\\operatorname{{{}}}", partials.spelling),
+            steps: Vec::new(),
+            analyses: Vec::new(),
+            conclusions: Vec::new(),
+            status: None,
+            operators: Vec::new(),
+            held: None,
+            sampled_data: None,
+            plot: None,
+            effect_only: false,
+            analysis: None,
+            details: Some(serde_json::json!({
+                "status": "ambiguous_partial_application",
+                "candidates": partials.candidates,
+                "display_templates": templates,
+            })),
+            semantic,
+            outcome: ResultMetadata::unresolved(
+                analyzed.semantic.exactness,
+                OutcomeReason::AlgorithmUncovered,
+            ),
+        });
+    }
+    let result = dispatch_expression_with_engine(request, engine, &elaborated)?;
     Ok(ProcessExpressionResult {
         kind: result.kind,
         title: result.title,
         expression: result.expression,
         tex: result.tex,
         steps: result.steps,
-        data: result.data,
-        semantic,
-        outcome,
+        analyses: result.analyses,
+        conclusions: result.conclusions,
+        status: Some(result.status),
+        operators: result.operators,
+        held: result.held,
+        sampled_data: result.sampled_data,
+        plot: result.plot,
+        effect_only: result.effect_only,
+        analysis: result.analysis,
+        details: None,
+        semantic: result.semantic,
+        outcome: result.outcome,
     })
 }
 
@@ -1264,12 +415,82 @@ pub fn run() {
 mod tests {
     use super::*;
     use processing::binding::SymbolRole;
+    use std::collections::BTreeSet;
 
     fn request(expression: &str, steps: bool) -> ProcessExpressionRequest {
         ProcessExpressionRequest {
             expression: expression.into(),
             steps,
             verbosity: "standard".into(),
+        }
+    }
+
+    #[test]
+    fn every_registered_operator_family_reaches_the_structured_product_exit() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let cases = [
+            ("D(x)(x^2)", "D"),
+            ("Factor(x^2-1)", "Factor"),
+            ("Expand((x+1)^2)", "Expand"),
+            ("Apart((x+1)/(x^2-1),x)", "Apart"),
+            ("Integrate(x)(x)", "Integrate"),
+            ("Subst(x,2)(x^2+1)", "Subst"),
+            ("Limit(x,0)(Sin(x)/x)", "Limit"),
+            ("Taylor(Exp(x),0,2)", "Taylor"),
+            ("Solve(x^2==1,x)", "Solve"),
+            ("Transpose({{1,2},{3,4}})", "Transpose"),
+            ("MatrixSolve({{1,0},{0,1}},{2,3})", "MatrixSolve"),
+            ("Rank({{1,2},{2,4}})", "Rank"),
+            ("PLDU({{4,2},{2,2}})", "PLDU"),
+            ("Factors(PLDU({{4,2},{2,2}}))", "Factors"),
+            ("OdeSolve(y'==y)", "OdeSolve"),
+            ("N(Pi,12)", "N"),
+            ("Sum(k,1,3,k)", "Sum"),
+            ("ImproperIntegral(Exp(-x),x,0,Infinity)", "ImproperIntegral"),
+            (
+                "PrincipalValueIntegral(1/x,x,-1,1,{0})",
+                "PrincipalValueIntegral",
+            ),
+            ("DoubleIntegral(x+y,y,0,2,x,0,1)", "DoubleIntegral"),
+            ("PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)", "PolarIntegral"),
+            ("OdeSolveNumeric(y'==y,x,y,0,1,0.1)", "OdeSolveNumeric"),
+            ("FindRoot(x^2-2,x,1)", "FindRoot"),
+            ("Plot(x^2,x,0,1)", "Plot"),
+            ("Extrema(x^2+y^2,x,y)", "Extrema"),
+            ("Lagrange(x+y,x^2+y^2-1,x,y)", "Lagrange"),
+            ("Gradient(x^2+y^2,{x,y})", "Gradient"),
+            (
+                "DirectionalDerivative(x^2+y^2,{x,y},{1,0})",
+                "DirectionalDerivative",
+            ),
+            (
+                "ScalarLineIntegral(x,{x,y},{t,0},t,0,1)",
+                "ScalarLineIntegral",
+            ),
+            (
+                "ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{1,1})",
+                "ScalarSurfaceIntegral",
+            ),
+        ];
+        let covered = cases.iter().map(|(_, name)| *name).collect::<BTreeSet<_>>();
+        let registered = processing::semantic_core::OPERATOR_DESCRIPTORS
+            .iter()
+            .map(|descriptor| descriptor.names[0])
+            .collect::<BTreeSet<_>>();
+        assert_eq!(covered, registered, "update the D3 acceptance matrix");
+
+        for (source, name) in cases {
+            let result = process_expression_with_engine(request(source, false), &mut engine)
+                .unwrap_or_else(|error| panic!("{name} ({source}): {}", error.message));
+            assert!(!result.expression.is_empty(), "{name}");
+            assert!(!result.tex.is_empty(), "{name}");
+            assert!(result.steps.is_empty(), "{name}");
+            assert!(result.status.is_some(), "{name}");
+            assert_eq!(
+                result.outcome.support,
+                processing::protocol::SupportState::Supported,
+                "{name}"
+            );
         }
     }
 
@@ -1281,24 +502,17 @@ mod tests {
             process_expression_with_engine(request("D(x)Sin(x)^2", true), &mut engine).unwrap();
         assert_eq!(derivative.kind, "derivative");
         assert!(!derivative.steps.is_empty());
-        assert!(derivative.semantic.symbols.is_empty());
-        assert_eq!(derivative.semantic.bound_symbols, ["x".to_string()]);
+        assert_eq!(derivative.semantic.symbols, ["x"]);
+        assert!(derivative.semantic.bound_symbols.is_empty());
 
         let composed =
             process_expression_with_engine(request("D(x)Integrate(x)x*Exp(x)", true), &mut engine)
                 .unwrap();
         assert_eq!(composed.kind, "composition");
-        let integration = composed
+        assert!(composed
             .steps
             .iter()
-            .position(|step| step.rule == "method-parts")
-            .unwrap();
-        let outer_derivative = composed
-            .steps
-            .iter()
-            .position(|step| step.why.contains("外层求导"))
-            .unwrap();
-        assert!(integration < outer_derivative);
+            .any(|step| step.rule == "derivative-of-indefinite-integral"));
         assert!(composed
             .semantic
             .symbol_identities
@@ -1307,7 +521,7 @@ mod tests {
         assert!(composed
             .steps
             .iter()
-            .any(|step| { step.rule == "antiderivative-family" && step.expr.contains(" + C)") }));
+            .all(|step| step.rule != "antiderivative-family"));
 
         let repeated_integral =
             process_expression_with_engine(request("Integrate(x)Integrate(x)x", true), &mut engine)
@@ -1357,16 +571,12 @@ mod tests {
         assert!(!oscillatory.expression.contains("Complex("));
         assert!(oscillatory.expression.contains("Cos"));
         assert_eq!(
-            oscillatory.data["result"]["preferred_representation"],
-            "real_basis"
+            oscillatory.status,
+            Some(processing::composition::CompositionStatus::Completed)
         );
-        assert_eq!(
-            oscillatory.data["result"]["representations"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
+        assert!(oscillatory
+            .operators
+            .contains(&processing::semantic_core::OperatorId::OdeSolve));
         assert!(!oscillatory
             .semantic
             .symbol_identities
@@ -1398,7 +608,7 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(improper.kind, "intrinsic");
+        assert_eq!(improper.kind, "integral");
         assert_eq!(improper.expression, "1");
 
         let parameterized_gamma = process_expression_with_engine(
@@ -1406,7 +616,7 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(parameterized_gamma.kind, "intrinsic");
+        assert_eq!(parameterized_gamma.kind, "integral");
         assert_eq!(
             parameterized_gamma.outcome.conditionality,
             processing::protocol::Conditionality::Conditional
@@ -1417,10 +627,10 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(explicit_gamma.kind, "intrinsic");
+        assert_eq!(explicit_gamma.kind, "defined_object");
         assert!(explicit_gamma.expression.contains("Gamma"));
         assert_eq!(explicit_gamma.semantic.symbols, ["a".to_string()]);
-        assert_eq!(explicit_gamma.semantic.bound_symbols, ["t".to_string()]);
+        assert!(explicit_gamma.semantic.bound_symbols.is_empty());
         assert_eq!(
             explicit_gamma.outcome.conditionality,
             processing::protocol::Conditionality::Conditional
@@ -1441,14 +651,18 @@ mod tests {
         );
         assert_eq!(symbolic_integral.semantic.bound_symbols, ["x".to_string()]);
         assert_eq!(symbolic_integral.semantic.kind, ValueKind::FunctionFamily);
-        assert!(symbolic_integral.expression.ends_with(" + C)"));
+        assert!(
+            symbolic_integral.expression.replace(' ', "").contains("+C"),
+            "{}",
+            symbolic_integral.expression
+        );
         assert_eq!(
             symbolic_integral.steps.last().unwrap().rule,
             "antiderivative-family"
         );
         assert_eq!(
-            symbolic_integral.data["result"]["representative"],
-            symbolic_integral.steps[symbolic_integral.steps.len() - 2].expr
+            symbolic_integral.status,
+            Some(processing::composition::CompositionStatus::Completed)
         );
         assert!(
             symbolic_integral
@@ -1503,13 +717,13 @@ mod tests {
             processing::protocol::ResolutionState::Solved
         );
         assert_eq!(
-            gaussian_disk.data["result"]["integral"]["status"],
-            "evaluated"
+            gaussian_disk.status,
+            Some(processing::composition::CompositionStatus::Completed)
         );
-        assert!(!gaussian_disk.data["result"]["transformed_integrand"]
-            .as_str()
-            .unwrap()
-            .contains("theta"));
+        assert!(gaussian_disk
+            .steps
+            .iter()
+            .any(|step| step.rule == "polar-transform-integrand"));
 
         let principal_value = process_expression_with_engine(
             request("PrincipalValueIntegral(1/x,x,-1,1,{0})", false),
@@ -1530,15 +744,140 @@ mod tests {
     }
 
     #[test]
+    fn unified_plain_inputs_expose_the_structured_computation_exit() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for (source, kind, expected) in [
+            ("Gamma(3)", "evaluation", "2"),
+            ("x^2==1", "equation", "x^2==1"),
+            ("{1,Sin(x)}", "evaluation", "{1,Sin(x)}"),
+            ("3", "evaluation", "3"),
+        ] {
+            let result = process_expression_with_engine(request(source, false), &mut engine)
+                .unwrap_or_else(|error| panic!("{source}: {}", error.message));
+            assert_eq!(result.kind, kind, "{source}");
+            assert_eq!(result.expression.replace(' ', ""), expected, "{source}");
+            assert_eq!(
+                result.status,
+                Some(processing::composition::CompositionStatus::Completed),
+                "{source}"
+            );
+            assert!(!result.effect_only, "{source}");
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Solved,
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn unified_input_exposes_composable_multivariate_differentials() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let gradient = process_expression_with_engine(
+            request("Gradient(x^2+y^2,{x,y},{1,-2})", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(gradient.kind, "multivariate");
+        assert_eq!(gradient.expression.replace(' ', ""), "{2,-4}");
+        assert_eq!(gradient.analysis.as_ref().unwrap(), &serde_json::json!([2]));
+        assert!(gradient
+            .steps
+            .iter()
+            .any(|step| step.rule == "multivariate-differential"));
+        assert_eq!(
+            gradient.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+
+        let composed = process_expression_with_engine(
+            request("Sin(Divergence({x,y},{x,y}))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.kind, "composition");
+        assert_eq!(composed.expression, "Sin(2)");
+        assert_eq!(composed.semantic.kind, ValueKind::Scalar);
+    }
+
+    #[test]
+    fn unified_input_exposes_composable_line_integrals() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let line = process_expression_with_engine(
+            request("VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(line.kind, "line_integral");
+        assert_eq!(line.expression, "1");
+        assert_eq!(line.analysis.as_ref().unwrap()["integrand_verified"], true);
+        assert!(line
+            .steps
+            .iter()
+            .any(|step| step.rule == "line-integral-pullback"));
+        assert_eq!(
+            line.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+
+        let composed = process_expression_with_engine(
+            request("D(a)(a*ScalarLineIntegral(x,{x,y},{t,0},t,0,1))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.kind, "composition");
+        assert_eq!(composed.expression, "1/2");
+    }
+
+    #[test]
+    fn unified_input_exposes_composable_surface_integrals() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let surface = process_expression_with_engine(
+            request(
+                "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,0},{u,v},{0,0},{2,3},Reversed)",
+                true,
+            ),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(surface.kind, "surface_integral");
+        assert_eq!(surface.expression, "-6");
+        assert_eq!(surface.analysis.as_ref().unwrap()["normal_verified"], true);
+        assert_eq!(
+            surface.analysis.as_ref().unwrap()["integrand_verified"],
+            true
+        );
+        assert!(surface
+            .steps
+            .iter()
+            .any(|step| step.rule == "surface-integral-normal"));
+        assert_eq!(
+            surface.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+
+        let composed = process_expression_with_engine(
+            request(
+                "D(a)(a*ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{2,3}))",
+                false,
+            ),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.kind, "composition");
+        assert_eq!(composed.expression, "6");
+    }
+
+    #[test]
     fn unified_input_accepts_two_argument_limit_with_default_x() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for steps in [true, false] {
             let result =
                 process_expression_with_engine(request("Limit(x,0)", steps), &mut engine).unwrap();
-            assert_eq!(result.kind, "composition");
+            assert_eq!(result.kind, "limit");
             assert_eq!(result.expression, "0");
             assert_eq!(result.steps.is_empty(), !steps);
-            assert_eq!(result.semantic.bound_symbols, ["x"]);
+            assert!(result.semantic.bound_symbols.is_empty());
             assert!(result.semantic.symbols.is_empty());
             assert_eq!(
                 result.outcome.support,
@@ -1552,6 +891,72 @@ mod tests {
     }
 
     #[test]
+    fn semantic_calculus_end_to_end_acceptance() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let started = std::time::Instant::now();
+        let cases = [
+            ("Limit(t,0)(Sin(t)/t+x^2)", "x^2+1", "limit"),
+            (
+                "D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t)))",
+                "Gamma(x)*PolyGamma(0,x)",
+                "composition",
+            ),
+            (
+                "D(x)(Integrate(t,0,1)(Sin(x*t)/(1+t^2)))",
+                "Integrate(t,0,1)D(x,1)Sin(x*t)/(1+t^2)",
+                "composition",
+            ),
+        ];
+        for (source, expected, kind) in cases {
+            let without_steps =
+                process_expression_with_engine(request(source, false), &mut engine).unwrap();
+            let with_steps =
+                process_expression_with_engine(request(source, true), &mut engine).unwrap();
+            assert_eq!(without_steps.expression, expected, "{source}");
+            assert_eq!(with_steps.expression, expected, "{source}");
+            assert_eq!(without_steps.kind, kind, "{source}");
+            assert!(without_steps.steps.is_empty(), "{source}");
+            assert!(!with_steps.steps.is_empty(), "{source}");
+            assert_eq!(without_steps.outcome, with_steps.outcome, "{source}");
+            let line = serde_json::to_string(&with_steps).unwrap();
+            assert!(!line.contains('\n'));
+            let decoded: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(decoded["expression"], expected);
+        }
+        let gamma = process_expression_with_engine(
+            request("D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t)))", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(gamma.outcome.conditionality, Conditionality::Conditional);
+        assert!(gamma
+            .outcome
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::RealPartPositive { expression } if expression == "x")));
+        let held = process_expression_with_engine(
+            request("D(x)(Integrate(t,0,1)(Sin(x*t)/(1+t^2)))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(held
+            .outcome
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::Unknown { .. })));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "semantic calculus acceptance exceeded its bounded runtime"
+        );
+    }
+
+    #[test]
     fn unified_input_accepts_three_argument_taylor_with_default_x() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         for steps in [true, false] {
@@ -1559,7 +964,11 @@ mod tests {
                 process_expression_with_engine(request("Taylor(Exp(x),0,6)", steps), &mut engine)
                     .unwrap();
             assert_eq!(result.kind, "composition");
-            assert!(result.expression.contains("x ^ 6"), "{}", result.expression);
+            assert!(
+                result.expression.contains("x ^ 6") || result.expression.contains("x^6"),
+                "{}",
+                result.expression
+            );
             assert_eq!(result.steps.is_empty(), !steps);
             assert!(result.semantic.bound_symbols.is_empty());
             assert_eq!(result.semantic.symbols, ["x"]);
@@ -1571,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn unified_equation_lowers_structured_operands_before_solving() {
+    fn unified_equation_lowers_operands_without_implicitly_solving() {
         let mut engine = RustEngineProxy::spawn().unwrap();
         let result = process_expression_with_engine(
             request("y'==(Integrate(x)Taylor(Exp(x),0,2))", true),
@@ -1590,15 +999,8 @@ mod tests {
             result.expression
         );
         assert!(result.expression.contains("C"), "{}", result.expression);
-        assert!(
-            result.expression.contains("variable: \"y'\""),
-            "{}",
-            result.expression
-        );
-        assert!(result
-            .steps
-            .iter()
-            .any(|step| step.rule == "compose_taylor"));
+        assert!(result.expression.contains("y'"), "{}", result.expression);
+        assert!(result.steps.iter().any(|step| step.rule == "taylor-expand"));
         assert!(result
             .steps
             .iter()
@@ -1631,7 +1033,8 @@ mod tests {
             .symbols
             .iter()
             .any(|name| name.starts_with('y')));
-        assert_eq!(first.semantic.bound_symbols, ["x"]);
+        assert_eq!(first.semantic.symbols, ["x"]);
+        assert!(first.semantic.bound_symbols.is_empty());
         assert!(first.semantic.symbol_identities.iter().any(|identity| {
             identity.name == "C" && identity.role == SymbolRole::ArbitraryConstant
         }));
@@ -1659,10 +1062,10 @@ mod tests {
                 .unwrap();
         assert_eq!(transformed.kind, "composition");
         assert_eq!(transformed.expression, "1");
-        assert!(transformed
-            .steps
-            .iter()
-            .any(|step| step.rule == "compose_algebra_transform"));
+        assert!(transformed.steps.iter().any(|step| matches!(
+            step.rule.as_str(),
+            "apply-algebra-transform" | "confirm-algebra-normal-form"
+        )));
 
         let apart =
             process_expression_with_engine(request("Apart((x+1)/(x^2-1),x)", true), &mut engine)
@@ -1676,21 +1079,60 @@ mod tests {
         )
         .unwrap();
         assert_eq!(limited.kind, "composition");
-        assert!(
-            limited.expression.contains("2 * x"),
-            "{}",
-            limited.expression
+        assert_eq!(limited.expression, "2*x");
+        assert_eq!(limited.semantic.symbols, ["x"]);
+        assert!(limited.semantic.bound_symbols.is_empty());
+
+        let limited_without_steps = process_expression_with_engine(
+            request("D(x)Limit(t,0)(Sin(t)/t+x^2)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(limited_without_steps.kind, "composition");
+        assert_eq!(limited_without_steps.expression, "2*x");
+        assert!(limited_without_steps.steps.is_empty());
+        assert_eq!(limited_without_steps.semantic.symbols, ["x"]);
+        assert!(limited_without_steps.semantic.bound_symbols.is_empty());
+
+        let absent =
+            process_expression_with_engine(request("D(x)Limit(t,0)(1/t)", false), &mut engine)
+                .unwrap();
+        assert_eq!(absent.kind, "composition");
+        assert_eq!(
+            absent.outcome.resolution,
+            processing::protocol::ResolutionState::NoResult
         );
+
+        let singular = process_expression_with_engine(
+            request("Lagrange(x+y,(x^2+y^2)^2,x,y)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(
+            singular.analysis.as_ref().unwrap()["status"],
+            "singular_constraint"
+        );
+        assert_eq!(
+            singular.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(singular.expression.starts_with("Lagrange("));
+
+        let rejected_outer =
+            process_expression_with_engine(request("D(x)Extrema(x^2+y^2,x,y)", false), &mut engine)
+                .unwrap();
+        assert_eq!(
+            rejected_outer.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(rejected_outer.expression.starts_with("D(x)"));
     }
 
     #[test]
     fn unified_input_preserves_unlowered_structured_compositions() {
         let mut engine = RustEngineProxy::spawn().unwrap();
-        for expression in [
-            "D(x)Solve({x==1},{x})",
-            "Factor(DoubleIntegral(x+y,y,0,x,x,0,1))",
-            "N(MatrixSolve({{1,0},{0,1}},{1,2}),10)",
-        ] {
+        {
+            let expression = "Factor(DoubleIntegral(f(x,y),y,0,x,x,0,1))";
             let result =
                 process_expression_with_engine(request(expression, true), &mut engine).unwrap();
             assert_eq!(result.kind, "composition", "{expression}");
@@ -1705,64 +1147,641 @@ mod tests {
                 processing::protocol::ResolutionState::Unresolved,
                 "{expression}"
             );
-            assert_eq!(result.steps[0].rule, "held-operator-application");
+            assert!(!result.steps.is_empty());
             assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
+        }
+
+        let matrix_solution = process_expression_with_engine(
+            request("N(MatrixSolve({{1,0},{0,1}},{1,2}),10)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(matrix_solution.expression, "N({1,2},10)");
+        assert_eq!(
+            matrix_solution.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(matrix_solution
+            .steps
+            .iter()
+            .any(|step| step.rule == "matrix-solve"));
+
+        let solved_set =
+            process_expression_with_engine(request("D(x)Solve({x==1},{x})", true), &mut engine)
+                .unwrap();
+        assert_eq!(solved_set.kind, "composition");
+        assert_eq!(solved_set.expression, "D(x){x==1}");
+        assert_eq!(
+            solved_set.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(solved_set
+            .steps
+            .iter()
+            .any(|step| step.rule == "solve-equations"));
+    }
+
+    #[test]
+    fn unified_input_composes_functions_with_semantic_calculus_results() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let result = process_expression_with_engine(
+            request("Sin(Limit(t,0)(Sin(t)/t))", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(result.kind, "composition");
+        assert_eq!(result.expression, "Sin(1)");
+        assert_eq!(result.semantic.kind, ValueKind::Scalar);
+
+        let collection = process_expression_with_engine(
+            request("{Limit(t,0)(Sin(t)/t),D(x)(x^2)}", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(collection.expression, "{1,2*x}");
+
+        let relation = process_expression_with_engine(
+            request("(Limit(t,0)(Sin(t)/t))==1", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(relation.expression, "1==1");
+        assert_eq!(relation.semantic.kind, ValueKind::Equation);
+    }
+
+    #[test]
+    fn unified_input_exposes_registered_special_function_derivatives() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for expression in [
+            "D(x)Erf(x^2)",
+            "D(x)PolyGamma(2,Sin(x))",
+            "D(x)LambertW(Exp(x))",
+            "D(x)Beta(x,x^2)",
+            "D(x)IncompleteGamma(x^2,x+1)",
+            "D(x)BesselJ(n,Sin(x^2))",
+        ] {
+            let result =
+                process_expression_with_engine(request(expression, true), &mut engine).unwrap();
+            assert_eq!(result.kind, "derivative", "{expression}");
+            assert!(!result.expression.contains("D("), "{expression}");
+            assert_eq!(result.semantic.kind, ValueKind::Expression, "{expression}");
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "derivative-registered-function-chain-rule"));
+        }
+
+        let incomplete = process_expression_with_engine(
+            request("D(x)IncompleteGamma(x^2,x+1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert!(incomplete.expression.contains("Integrate("));
+        assert!(incomplete.expression.contains("Ln("));
+        assert!(incomplete
+            .outcome
+            .conditions
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, processing::protocol::Condition::RealPartPositive { expression } if expression == "x+1")));
+
+        let held = process_expression_with_engine(request("D(x)PolyGamma(x,x)", true), &mut engine)
+            .unwrap();
+        assert_eq!(held.kind, "derivative");
+        assert!(held.expression.contains("D(x,1)"));
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+
+        let varying_order =
+            process_expression_with_engine(request("D(x)BesselJ(x,x^2)", true), &mut engine)
+                .unwrap();
+        assert!(varying_order.expression.contains("D(x,1)"));
+        assert!(varying_order.expression.contains("BesselJ(x,x^2)"));
+        assert_eq!(
+            varying_order.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+
+        let without_trace =
+            process_expression_with_engine(request("D(x)Beta(Sin(x),x^2)", false), &mut engine)
+                .unwrap();
+        assert!(without_trace.steps.is_empty());
+        assert!(!without_trace.expression.contains("D("));
+        assert_eq!(
+            without_trace.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+    }
+
+    #[test]
+    fn unified_input_preserves_known_formal_special_function_derivatives() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for expression in [
+            "D(x)Zeta(Sin(x))",
+            "D(x)EllipticK(x^2)",
+            "D(x)EllipticE(x)",
+            "D(x)HypergeometricPFQ({a,b},{c},x)",
+        ] {
+            let result =
+                process_expression_with_engine(request(expression, true), &mut engine).unwrap();
+            assert_eq!(result.kind, "derivative", "{expression}");
+            assert!(result.expression.starts_with("D(x,1)"), "{expression}");
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Unresolved,
+                "{expression}"
+            );
+            assert!(result
+                .steps
+                .iter()
+                .any(|step| step.rule == "derivative-known-formal-function"));
         }
     }
 
     #[test]
-    fn unified_outcome_distinguishes_reasons_and_registered_conditions() {
-        let make = |expression: &str, data: Value| DispatchExpressionResult {
-            kind: "test".into(),
-            title: "test".into(),
-            expression: expression.into(),
-            tex: String::new(),
-            steps: Vec::new(),
-            data,
-        };
-        let unresolved = result_metadata(
-            &make("Integrate(x)f(x)", Value::Null),
-            processing::semantic::Exactness::Unknown,
+    fn unified_input_exposes_typed_partials_and_reclassifies_final_symbols() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for (expression, operator) in [("D(x)", "derivative"), ("Integrate(x)", "integral")] {
+            let result =
+                process_expression_with_engine(request(expression, false), &mut engine).unwrap();
+            assert_eq!(result.kind, "partial_application", "{expression}");
+            assert_eq!(result.expression, expression);
+            assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
+            assert_eq!(result.semantic.bound_symbols, ["x"]);
+            assert_eq!(
+                result.details.as_ref().unwrap()["partial"]["operator"].as_str(),
+                Some(operator)
+            );
+            assert_eq!(
+                result.details.as_ref().unwrap()["partial"]["missing"],
+                serde_json::json!(["operand"])
+            );
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Unresolved
+            );
+        }
+
+        let overloaded =
+            process_expression_with_engine(request("Limit(t)", false), &mut engine).unwrap();
+        assert_eq!(overloaded.kind, "partial_application");
+        assert_eq!(
+            overloaded.details.as_ref().unwrap()["status"],
+            "ambiguous_partial_application"
+        );
+        assert_eq!(
+            overloaded.details.as_ref().unwrap()["candidates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(overloaded.details.as_ref().unwrap()["display_templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|template| template == "Limit(t)(<approach_point>)(<operand>)"));
+
+        let completed = process_expression_with_engine(
+            request("Limit(t,0)(D(x)(Integrate(x)(Sin(t)/t+x^2)))", false),
+            &mut engine,
         )
         .unwrap();
+        assert_eq!(completed.expression, "x^2+1");
+        assert_eq!(completed.semantic.symbols, ["x"]);
+        assert!(completed.semantic.bound_symbols.is_empty());
+        assert!(completed.semantic.symbol_identities.iter().any(|identity| {
+            identity.name == "x"
+                && identity.role == processing::binding::SymbolRole::Free
+                && identity.binder.is_none()
+        }));
+    }
+
+    #[test]
+    fn unified_input_routes_nested_algebra_and_preserves_held_structure() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let nested =
+            process_expression_with_engine(request("Sin(Factor(x^2-1))", true), &mut engine)
+                .unwrap();
+        assert_eq!(nested.kind, "composition");
+        assert_eq!(nested.expression, "Sin((x+1)*(x-1))");
+        assert!(nested
+            .steps
+            .iter()
+            .any(|step| step.rule == "apply-algebra-transform"));
+
+        let held =
+            process_expression_with_engine(request("Factor(Integrate(x)f(x))", false), &mut engine)
+                .unwrap();
+        assert_eq!(held.expression, "Factor(Integrate(x)f(x))");
+        assert_eq!(held.semantic.kind, ValueKind::Unevaluated);
+        assert_eq!(held.semantic.bound_symbols, ["x"]);
         assert_eq!(
-            unresolved.reason,
-            Some(processing::protocol::OutcomeReason::AlgorithmUncovered)
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(held
+            .operators
+            .contains(&processing::semantic_core::OperatorId::Factor));
+    }
+
+    #[test]
+    fn unified_input_routes_object_native_substitution() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let direct =
+            process_expression_with_engine(request("Subst(x,2)(x^2+1)", true), &mut engine)
+                .unwrap();
+        assert_eq!(direct.kind, "composition");
+        assert_eq!(direct.expression, "5");
+        assert_eq!(direct.semantic.kind, ValueKind::Scalar);
+        assert!(direct.semantic.symbols.is_empty());
+        assert!(direct
+            .steps
+            .iter()
+            .any(|step| step.rule == "substitute-free-symbol"));
+
+        let held = process_expression_with_engine(
+            request("Subst(x,2)((Integrate(t)f(t))+x)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(held.kind, "composition");
+        assert_eq!(held.semantic.kind, ValueKind::Unevaluated);
+        assert!(held.expression.contains("Integrate"));
+        assert!(held.expression.contains("+2"));
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+    }
+
+    #[test]
+    fn unified_input_routes_object_native_numeric_evaluation() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let value = process_expression_with_engine(request("N(Pi,20)", true), &mut engine).unwrap();
+        assert_eq!(value.kind, "composition");
+        assert_eq!(value.semantic.kind, ValueKind::Scalar);
+        assert_eq!(
+            value.semantic.exactness,
+            processing::semantic::Exactness::Approximate
+        );
+        assert!(value
+            .steps
+            .iter()
+            .any(|step| step.rule == "numeric-evaluation"));
+
+        let held =
+            process_expression_with_engine(request("N(D(x)(x^2),20)", false), &mut engine).unwrap();
+        assert_eq!(held.expression, "N(2*x,20)");
+        assert_eq!(held.semantic.kind, ValueKind::Unevaluated);
+        assert_eq!(held.semantic.symbols, ["x"]);
+        assert!(held.semantic.bound_symbols.is_empty());
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
         );
 
-        let absent = result_metadata(
-            &make("Undefined", serde_json::json!({"status": "does_not_exist"})),
-            processing::semantic::Exactness::Exact,
-        )
-        .unwrap();
+        let absent =
+            process_expression_with_engine(request("N(Undefined,20)", false), &mut engine).unwrap();
         assert_eq!(
-            absent.resolution,
+            absent.outcome.resolution,
             processing::protocol::ResolutionState::NoResult
         );
+    }
 
-        let conditional = result_metadata(
-            &make(
-                "Gamma(a)",
-                serde_json::json!({
-                    "status": "converged",
-                    "conditions": [{
-                        "kind": "relation",
-                        "left": "Re(a)",
-                        "relation": "greater_than",
-                        "right": "0"
-                    }]
-                }),
-            ),
-            processing::semantic::Exactness::Symbolic,
+    #[test]
+    fn unified_input_routes_object_native_sums_and_compositions() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let direct =
+            process_expression_with_engine(request("Sum(k,1,10,k)", true), &mut engine).unwrap();
+        assert_eq!(direct.kind, "series");
+        assert_eq!(direct.expression, "55");
+        assert_eq!(direct.semantic.kind, ValueKind::Scalar);
+        assert!(direct.semantic.symbols.is_empty());
+        assert!(direct.semantic.bound_symbols.is_empty());
+        assert!(direct.steps.iter().any(|step| step.rule == "finite-sum"));
+
+        let nested =
+            process_expression_with_engine(request("D(x)Sum(k,1,3,x*k)", true), &mut engine)
+                .unwrap();
+        assert_eq!(nested.kind, "composition");
+        assert_eq!(nested.expression, "6");
+        assert!(nested.semantic.symbols.is_empty());
+        assert!(nested.steps.iter().any(|step| step.rule == "finite-sum"));
+
+        let divergent =
+            process_expression_with_engine(request("Sum(k,1,Infinity,1/k)", true), &mut engine)
+                .unwrap();
+        assert_eq!(
+            divergent.outcome.resolution,
+            processing::protocol::ResolutionState::NoResult
+        );
+        assert_eq!(
+            divergent.outcome.reason,
+            Some(processing::protocol::OutcomeReason::Divergent)
+        );
+
+        let held =
+            process_expression_with_engine(request("Sum(k,0,Infinity,1/k^2)", false), &mut engine)
+                .unwrap();
+        assert_eq!(held.semantic.kind, ValueKind::Unevaluated);
+        assert_eq!(
+            held.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(held.expression.starts_with("Sum("));
+    }
+
+    #[test]
+    fn unified_input_routes_defined_integrals_as_semantic_objects() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let converged = process_expression_with_engine(
+            request("ImproperIntegral(1/(1+x^2),x,0,Infinity)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(converged.kind, "defined_object");
+        assert!(converged.expression.contains("Pi"));
+        assert_eq!(converged.semantic.kind, ValueKind::Scalar);
+        assert!(!converged.steps.is_empty());
+        assert!(converged
+            .steps
+            .iter()
+            .any(|step| step.rule.starts_with("object-")));
+
+        let divergent = process_expression_with_engine(
+            request("ImproperIntegral(1/x,x,-1,1,{0})", false),
+            &mut engine,
         )
         .unwrap();
         assert_eq!(
-            conditional.conditionality,
-            processing::protocol::Conditionality::Conditional
+            divergent.outcome.reason,
+            Some(processing::protocol::OutcomeReason::Divergent)
         );
-        assert!(matches!(
-            conditional.conditions.conditions(),
-            [processing::protocol::Condition::RealPartPositive { expression }] if expression == "a"
-        ));
+
+        let principal = process_expression_with_engine(
+            request("PrincipalValueIntegral(1/x,x,-1,1,{0})", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(principal.expression, "0");
+        assert_eq!(
+            principal.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+    }
+
+    #[test]
+    fn unified_input_routes_multiple_integrals_as_semantic_objects() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let double = process_expression_with_engine(
+            request("DoubleIntegral(x+y,y,0,2,x,0,1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(double.kind, "double_integral");
+        assert_eq!(double.expression, "3");
+        assert!(double.semantic.symbols.is_empty());
+        assert!(double.semantic.bound_symbols.is_empty());
+        assert!(double
+            .steps
+            .iter()
+            .any(|step| step.rule == "iterated-integral-inner"));
+
+        let polar = process_expression_with_engine(
+            request("PolarIntegral(x^2+y^2,x,y,r,theta,0,1,0,2*Pi)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(polar.kind, "polar_integral");
+        assert!(polar.expression.contains("Pi"));
+        assert!(polar.steps.iter().any(|step| step.rule == "polar-jacobian"));
+
+        let composed = process_expression_with_engine(
+            request("D(a)DoubleIntegral(x+y+a,y,0,1,x,0,1)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.expression, "1");
+        assert_eq!(composed.kind, "composition");
+    }
+
+    #[test]
+    fn unified_input_exposes_numeric_ode_as_terminal_sampled_data() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let result = process_expression_with_engine(
+            request("OdeSolveNumeric(y'==y,x,y,0,1,0.1)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(result.kind, "numeric_ode");
+        assert_eq!(result.semantic.kind, ValueKind::SampledData);
+        assert_eq!(
+            result.semantic.exactness,
+            processing::semantic::Exactness::Approximate
+        );
+        assert!(result.expression.starts_with("{{0,"));
+        let sampled = result.sampled_data.as_ref().unwrap();
+        assert_eq!(sampled.independent, "x");
+        assert_eq!(sampled.dependent, "y");
+        assert!(sampled.points.len() > 1);
+        assert!(result
+            .steps
+            .iter()
+            .any(|step| step.rule == "numeric-ode-trajectory"));
+
+        let composed = process_expression_with_engine(
+            request("D(x)OdeSolveNumeric(y'==y,x,y,0,1,0.1)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(
+            composed.outcome.resolution,
+            processing::protocol::ResolutionState::Unresolved
+        );
+        assert!(composed.expression.starts_with("D(x)"));
+    }
+
+    #[test]
+    fn unified_input_exposes_find_root_as_a_composable_approximate_scalar() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let root =
+            process_expression_with_engine(request("FindRoot(x^2-2,x,1)", true), &mut engine)
+                .unwrap();
+        assert_eq!(root.kind, "numeric_root");
+        assert_eq!(root.semantic.kind, ValueKind::Scalar);
+        assert_eq!(
+            root.outcome.exactness,
+            processing::semantic::Exactness::Approximate
+        );
+        assert_eq!(
+            root.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+        assert!(root.steps.iter().any(|step| step.rule == "numeric-root"));
+
+        let composed = process_expression_with_engine(
+            request("N(FindRoot(x^2-2,x,1),12)", false),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(composed.kind, "composition");
+        assert_eq!(composed.semantic.kind, ValueKind::Scalar);
+
+        let differentiated =
+            process_expression_with_engine(request("D(x)FindRoot(x^2-2,x,1)", false), &mut engine)
+                .unwrap();
+        assert_eq!(differentiated.expression, "0");
+    }
+
+    #[test]
+    fn unified_input_exposes_plot_as_a_terminal_structured_effect() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let result =
+            process_expression_with_engine(request("Plot(D(x)(x^2),x,0,3.14)", true), &mut engine)
+                .unwrap();
+        assert_eq!(result.kind, "plot");
+        assert_eq!(result.semantic.kind, ValueKind::Expression);
+        assert_eq!(result.expression, "2*x");
+        assert!(result.effect_only);
+        let plot = result.plot.as_ref().unwrap();
+        assert_eq!(plot.expression, "2*x");
+        assert_eq!(plot.variable, "x");
+        assert!(!plot.sampled.points.is_empty());
+        assert!(result.steps.iter().any(|step| step.rule == "power-rule"));
+
+        for expression in ["Plot(x,x,0,1)+1", "Sin(Plot(x,x,0,1))"] {
+            let error =
+                match process_expression_with_engine(request(expression, false), &mut engine) {
+                    Ok(_) => panic!("plot effects cannot enter mathematical composition"),
+                    Err(error) => error,
+                };
+            assert!(error.message.contains("副作用"), "{}", error.message);
+        }
+    }
+
+    #[test]
+    fn unified_input_routes_extrema_and_lagrange_as_structured_candidate_sets() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        let extrema = process_expression_with_engine(
+            request("Extrema(Expand((x-1)^2+(y+2)^2),x,y)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(extrema.kind, "extrema");
+        assert_eq!(extrema.semantic.kind, ValueKind::SolutionSet);
+        assert_eq!(extrema.analysis.as_ref().unwrap()["status"], "classified");
+        assert_eq!(
+            extrema.analysis.as_ref().unwrap()["critical_points"][0]["kind"],
+            "local_minimum"
+        );
+        assert_eq!(
+            extrema.analysis.as_ref().unwrap()["critical_points"][0]["gradient_verified"],
+            true
+        );
+        assert!(extrema.steps.iter().all(|step| {
+            step.before_expr
+                .as_deref()
+                .is_some_and(|before| !before.is_empty())
+                && !step.expr.is_empty()
+        }));
+
+        let lagrange = process_expression_with_engine(
+            request("Lagrange(x+y,x^2+y^2-1,x,y)", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert_eq!(lagrange.kind, "lagrange");
+        assert_eq!(lagrange.semantic.kind, ValueKind::SolutionSet);
+        assert_eq!(lagrange.analysis.as_ref().unwrap()["status"], "candidates");
+        assert!(lagrange.analysis.as_ref().unwrap()["candidates"]
+            .as_array()
+            .is_some_and(|candidates| !candidates.is_empty()));
+        assert!(lagrange.analysis.as_ref().unwrap()["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|candidate| candidate["stationarity_verified"] == true
+                && candidate["constraint_verified"] == true));
+
+        let absent =
+            process_expression_with_engine(request("Extrema(x+y,x,y)", false), &mut engine)
+                .unwrap();
+        assert_eq!(
+            absent.outcome.resolution,
+            processing::protocol::ResolutionState::NoResult
+        );
+    }
+
+    #[test]
+    fn unified_input_routes_typed_matrix_decompositions() {
+        let mut engine = RustEngineProxy::spawn().unwrap();
+        for (expression, output_head, rule) in [
+            (
+                "PLDU({{4,2},{2,2}})",
+                "PLDUDecomposition(",
+                "matrix-pldu-decomposition",
+            ),
+            (
+                "Cholesky({{4,2},{2,2}})",
+                "CholeskyDecomposition(",
+                "matrix-cholesky-decomposition",
+            ),
+            (
+                "GramSchmidt({{1,0},{1,1}})",
+                "OrthonormalBasisObject(",
+                "matrix-orthonormal-basis",
+            ),
+        ] {
+            let result =
+                process_expression_with_engine(request(expression, true), &mut engine).unwrap();
+            assert_eq!(result.kind, "matrix", "{expression}");
+            assert!(result.expression.starts_with(output_head), "{expression}");
+            assert!(
+                result.steps.iter().any(|step| step.rule == rule),
+                "{expression}"
+            );
+            assert_eq!(
+                result.outcome.resolution,
+                processing::protocol::ResolutionState::Solved,
+                "{expression}"
+            );
+        }
+
+        let factors = process_expression_with_engine(
+            request("Factors(PLDU({{4,2},{2,2}}))", true),
+            &mut engine,
+        )
+        .unwrap();
+        assert!(factors.expression.starts_with("{{"));
+        assert!(factors
+            .steps
+            .iter()
+            .any(|step| step.rule == "matrix-pldu-decomposition"));
+        assert!(factors
+            .steps
+            .iter()
+            .any(|step| step.rule == "matrix-factor-projection"));
+        assert_eq!(
+            factors.outcome.resolution,
+            processing::protocol::ResolutionState::Solved
+        );
+    }
+
+    #[test]
+    fn gui_renders_analysis_without_an_equivalence_arrow() {
+        let source = include_str!("../../src/main.js");
+        let analysis_renderer = source
+            .split("function renderAnalyses")
+            .nth(1)
+            .unwrap()
+            .split("function renderPlot")
+            .next()
+            .unwrap();
+        assert!(!analysis_renderer.contains("Longrightarrow"));
+        assert!(source.contains("renderAnalyses(result.analyses || [])"));
+        assert!(source.contains("renderSteps(result.steps || [])"));
     }
 }

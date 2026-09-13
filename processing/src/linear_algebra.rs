@@ -2,6 +2,16 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{fresh_internal_symbols, strip_tex_delimiters, validate_expression};
+use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::semantic::{Exactness, ValueKind};
+#[cfg(test)]
+use crate::semantic_core::object_from_source;
+use crate::semantic_core::{
+    BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput, ExpressionView,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
+    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState,
+};
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
@@ -44,7 +54,9 @@ pub struct GramSchmidtResult {
 #[serde(rename_all = "snake_case")]
 pub enum MatrixOperation {
     Add,
+    Subtract,
     Multiply,
+    Scale,
     Transpose,
     Determinant,
     Inverse,
@@ -56,7 +68,9 @@ impl MatrixOperation {
     fn name(self) -> &'static str {
         match self {
             Self::Add => "add",
+            Self::Subtract => "subtract",
             Self::Multiply => "multiply",
+            Self::Scale => "scale",
             Self::Transpose => "transpose",
             Self::Determinant => "determinant",
             Self::Inverse => "inverse",
@@ -73,6 +87,839 @@ pub struct MatrixResult {
     pub tex: String,
     /// The engine kept the requested operation unevaluated.
     pub unresolved: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnaryMatrixRequest {
+    pub operation: MatrixOperation,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UnaryMatrixOperation;
+
+impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        request: &UnaryMatrixRequest,
+    ) -> Result<Computation, EngineError> {
+        let capability = match request.operation {
+            MatrixOperation::Transpose => ObjectCapability::MatrixTranspose,
+            MatrixOperation::Determinant => ObjectCapability::MatrixDeterminant,
+            MatrixOperation::Inverse => ObjectCapability::MatrixInverse,
+            _ => return Err(EngineError::InvalidInput("该操作不是一元矩阵运算".into())),
+        };
+        if !input.semantics.capabilities.contains(capability) {
+            return Err(EngineError::InvalidInput(
+                "输入不是具备所需能力的矩阵对象".into(),
+            ));
+        }
+        let result = compute(engine, &input.print_source(), request.operation, None)?;
+        let held = result.unresolved;
+        let output_source = if held {
+            format!(
+                "{}({})",
+                match request.operation {
+                    MatrixOperation::Transpose => "Transpose",
+                    MatrixOperation::Determinant => "Determinant",
+                    MatrixOperation::Inverse => "Inverse",
+                    _ => unreachable!(),
+                },
+                input.print_source()
+            )
+        } else {
+            result.output.clone()
+        };
+        let analyzed = crate::semantic::analyze_input(&output_source, "矩阵运算结果")?;
+        let mut semantics = SemanticState {
+            kind: if held {
+                ValueKind::Unevaluated
+            } else {
+                analyzed.semantic.kind
+            },
+            interpretation: if held {
+                SemanticInterpretation::HeldApplication {
+                    operator: request.operation.name().into(),
+                }
+            } else if let Some(shape) = analyzed.semantic.shape {
+                SemanticInterpretation::Matrix {
+                    rows: shape.rows,
+                    columns: shape.columns,
+                }
+            } else {
+                SemanticInterpretation::PlainExpression
+            },
+            metadata: if held {
+                ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
+            } else {
+                ResultMetadata::solved(analyzed.semantic.exactness, ConditionSet::empty())
+            },
+            capabilities: if held || analyzed.semantic.kind == ValueKind::Matrix {
+                CapabilitySet::matrix()
+            } else {
+                CapabilitySet::symbolic_expression()
+            },
+            requirements: Vec::new(),
+        };
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
+        if held {
+            let spelling = match request.operation {
+                MatrixOperation::Transpose => "Transpose",
+                MatrixOperation::Determinant => "Determinant",
+                MatrixOperation::Inverse => "Inverse",
+                _ => unreachable!(),
+            };
+            crate::semantic_core::promote_held_application(
+                spelling,
+                &parsed.raw_expression(),
+                &mut semantics,
+            )?;
+        }
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: (!held).then_some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixTransform),
+            }),
+        });
+        let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            rule: format!("matrix-{}", request.operation.name()),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+            presentation: crate::semantic_core::materialize_presentation_if(!held, || {
+                RulePresentation {
+                    expression: output.print_source(),
+                    explanation: "执行类型检查后的矩阵运算。".into(),
+                    tex_override: Some(result.tex),
+                }
+            }),
+        };
+        Ok(Computation {
+            output: if held {
+                ComputationOutput::Held(output)
+            } else {
+                ComputationOutput::Value(output)
+            },
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BinaryMatrixRequest {
+    pub operation: MatrixOperation,
+    pub output_id: crate::semantic_core::ObjectId,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BinaryMatrixOperation;
+
+impl BinarySemanticOperation<BinaryMatrixRequest> for BinaryMatrixOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        left: &crate::semantic_core::MathematicalObject,
+        right: &crate::semantic_core::MathematicalObject,
+        request: &BinaryMatrixRequest,
+    ) -> Result<Computation, EngineError> {
+        let capability = match request.operation {
+            MatrixOperation::Add | MatrixOperation::Subtract => ObjectCapability::MatrixAdd,
+            MatrixOperation::Multiply | MatrixOperation::Scale => ObjectCapability::MatrixMultiply,
+            _ => return Err(EngineError::InvalidInput("该操作不是二元矩阵运算".into())),
+        };
+        let scaling = request.operation == MatrixOperation::Scale;
+        if !left.semantics.capabilities.contains(capability)
+            || (!scaling && !right.semantics.capabilities.contains(capability))
+        {
+            return Err(EngineError::InvalidInput(
+                "矩阵运算的两侧都必须是矩阵对象".into(),
+            ));
+        }
+        let shape = |object: &crate::semantic_core::MathematicalObject| match object
+            .semantics
+            .interpretation
+        {
+            SemanticInterpretation::Matrix { rows, columns } => Ok((rows, columns)),
+            _ => Err(EngineError::InvalidInput("矩阵对象缺少形状信息".into())),
+        };
+        let (left_rows, left_columns) = shape(left)?;
+        let (right_rows, right_columns) = if scaling { (0, 0) } else { shape(right)? };
+        let (rows, columns) = match request.operation {
+            MatrixOperation::Add if (left_rows, left_columns) == (right_rows, right_columns) => {
+                (left_rows, left_columns)
+            }
+            MatrixOperation::Add => {
+                return Err(EngineError::InvalidInput(format!(
+                "矩阵加法形状不兼容: {left_rows}x{left_columns} 与 {right_rows}x{right_columns}"
+            )))
+            }
+            MatrixOperation::Subtract
+                if (left_rows, left_columns) == (right_rows, right_columns) =>
+            {
+                (left_rows, left_columns)
+            }
+            MatrixOperation::Subtract => {
+                return Err(EngineError::InvalidInput(format!(
+                "矩阵减法形状不兼容: {left_rows}x{left_columns} 与 {right_rows}x{right_columns}"
+            )))
+            }
+            MatrixOperation::Multiply if left_columns == right_rows => (left_rows, right_columns),
+            MatrixOperation::Multiply => {
+                return Err(EngineError::InvalidInput(format!(
+                "矩阵乘法形状不兼容: {left_rows}x{left_columns} 与 {right_rows}x{right_columns}"
+            )))
+            }
+            MatrixOperation::Scale => (left_rows, left_columns),
+            _ => unreachable!(),
+        };
+        let result = if scaling {
+            let evaluated = engine.eval(&format!(
+                "({})*({})",
+                left.print_source(),
+                right.print_source()
+            ))?;
+            MatrixResult {
+                operation: request.operation,
+                output: evaluated.expr.to_string(),
+                tex: strip_tex_delimiters(&evaluated.tex),
+                unresolved: false,
+            }
+        } else {
+            compute(
+                engine,
+                &left.print_source(),
+                request.operation,
+                Some(&right.print_source()),
+            )?
+        };
+        let semantics = SemanticState {
+            kind: ValueKind::Matrix,
+            interpretation: SemanticInterpretation::Matrix { rows, columns },
+            metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+            capabilities: CapabilitySet::matrix(),
+            requirements: Vec::new(),
+        };
+        let parsed = crate::semantic_core::parse_engine_expression(&result.output)?;
+        let mut output = crate::semantic_core::MathematicalObject::new(
+            request.output_id,
+            parsed.raw_expression(),
+            semantics,
+        );
+        output.apply(ObjectDelta {
+            expression: None,
+            semantics: None,
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixTransform),
+            }),
+        });
+        let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            rule: format!("matrix-{}", request.operation.name()),
+            input: left.reference(None),
+            additional_inputs: vec![right.reference(None)],
+            output: output.reference(None),
+            bindings: vec![("shape".into(), format!("{rows}x{columns}"))],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "按照矩阵运算规则计算结果。".into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MatrixSolveOperation;
+
+impl BinarySemanticOperation<crate::semantic_core::ObjectId> for MatrixSolveOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        matrix: &crate::semantic_core::MathematicalObject,
+        vector: &crate::semantic_core::MathematicalObject,
+        output_id: &crate::semantic_core::ObjectId,
+    ) -> Result<Computation, EngineError> {
+        let SemanticInterpretation::Matrix { rows, columns } = matrix.semantics.interpretation
+        else {
+            return Err(EngineError::InvalidInput(
+                "MatrixSolve 左侧必须是矩阵".into(),
+            ));
+        };
+        if rows != columns {
+            return Err(EngineError::InvalidInput(format!(
+                "MatrixSolve 要求方阵，收到 {rows}x{columns}"
+            )));
+        }
+        let length = crate::input::with_parse_env(|env| vector.view(env).arguments().len());
+        if length != rows {
+            return Err(EngineError::InvalidInput(format!(
+                "MatrixSolve 维度不兼容: {rows}x{columns} 与长度 {length}"
+            )));
+        }
+        let result = compute(
+            engine,
+            &matrix.print_source(),
+            MatrixOperation::Solve,
+            Some(&vector.print_source()),
+        )?;
+        let semantics = SemanticState {
+            kind: ValueKind::Expression,
+            interpretation: SemanticInterpretation::Vector { length },
+            metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        };
+        let parsed = crate::semantic_core::parse_engine_expression(&result.output)?;
+        let mut output = crate::semantic_core::MathematicalObject::new(
+            *output_id,
+            parsed.raw_expression(),
+            semantics,
+        );
+        output.apply(ObjectDelta {
+            expression: None,
+            semantics: None,
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixSolve),
+            }),
+        });
+        let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            rule: "matrix-solve".into(),
+            input: matrix.reference(None),
+            additional_inputs: vec![vector.reference(None)],
+            output: output.reference(None),
+            bindings: vec![("dimension".into(), rows.to_string())],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "求解形状兼容的线性方程组。".into(),
+                tex_override: Some(result.tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixAnalysisKind {
+    Rank,
+    Rref,
+    Eigenvalues,
+    NullSpace,
+    ColumnSpace,
+    EigenSpaces,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MatrixAnalysisOperation;
+
+impl SemanticOperation<MatrixAnalysisKind> for MatrixAnalysisOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        kind: &MatrixAnalysisKind,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::MatrixAnalyze)
+        {
+            return Err(EngineError::InvalidInput(
+                "输入不具备矩阵结构分析能力".into(),
+            ));
+        }
+        let (source, tex, interpretation, value_kind, capabilities, rule) = match kind {
+            MatrixAnalysisKind::Rank => {
+                let result = linear_structure(engine, &input.print_source())?;
+                (
+                    result.rank.to_string(),
+                    result.tex,
+                    SemanticInterpretation::PlainExpression,
+                    ValueKind::Scalar,
+                    CapabilitySet::symbolic_expression(),
+                    "matrix-rank",
+                )
+            }
+            MatrixAnalysisKind::Rref => {
+                let result = linear_structure(engine, &input.print_source())?;
+                (
+                    matrix_expression(&result.rref),
+                    result.tex,
+                    SemanticInterpretation::Matrix {
+                        rows: result.rows,
+                        columns: result.columns,
+                    },
+                    ValueKind::Matrix,
+                    CapabilitySet::matrix(),
+                    "matrix-rref",
+                )
+            }
+            MatrixAnalysisKind::Eigenvalues => {
+                let result = compute(
+                    engine,
+                    &input.print_source(),
+                    MatrixOperation::Eigenvalues,
+                    None,
+                )?;
+                if result.unresolved {
+                    return held_matrix_analysis(input, kind);
+                }
+                let eigenvalue_expression =
+                    crate::semantic_core::parse_engine_expression(&result.output)?;
+                let length = crate::input::with_parse_env(|env| {
+                    ExpressionView::new(env, &eigenvalue_expression.raw_expression())
+                        .arguments()
+                        .len()
+                });
+                (
+                    result.output,
+                    result.tex,
+                    SemanticInterpretation::Vector { length },
+                    ValueKind::Expression,
+                    CapabilitySet::empty(),
+                    "matrix-eigenvalues",
+                )
+            }
+            MatrixAnalysisKind::NullSpace | MatrixAnalysisKind::ColumnSpace => {
+                let result = linear_structure(engine, &input.print_source())?;
+                let (basis, ambient_dimension, basis_dimension, kind, rule) = match kind {
+                    MatrixAnalysisKind::NullSpace => (
+                        &result.null_space_basis,
+                        result.columns,
+                        result.nullity,
+                        crate::semantic_core::LinearSubspaceKind::NullSpace,
+                        "matrix-null-space",
+                    ),
+                    MatrixAnalysisKind::ColumnSpace => (
+                        &result.column_space_basis,
+                        result.rows,
+                        result.rank,
+                        crate::semantic_core::LinearSubspaceKind::ColumnSpace,
+                        "matrix-column-space",
+                    ),
+                    _ => unreachable!(),
+                };
+                (
+                    matrix_expression(basis),
+                    result.tex,
+                    SemanticInterpretation::LinearSubspace {
+                        ambient_dimension,
+                        basis_dimension,
+                        kind,
+                    },
+                    ValueKind::Expression,
+                    CapabilitySet::empty(),
+                    rule,
+                )
+            }
+            MatrixAnalysisKind::EigenSpaces => {
+                let result = eigen_spaces(engine, &input.print_source(), &[])?;
+                let spaces = result
+                    .spaces
+                    .iter()
+                    .filter(|space| space.is_eigenvalue)
+                    .collect::<Vec<_>>();
+                let source = format!(
+                    "{{{}}}",
+                    spaces
+                        .iter()
+                        .map(|space| format!(
+                            "{{{},{}}}",
+                            space.eigenvalue,
+                            matrix_expression(&space.basis)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                (
+                    source,
+                    result.tex,
+                    SemanticInterpretation::SpectralSubspaces {
+                        ambient_dimension: result.dimension,
+                        space_count: spaces.len(),
+                    },
+                    ValueKind::Expression,
+                    CapabilitySet::empty(),
+                    "matrix-eigenspaces",
+                )
+            }
+        };
+        let semantics = SemanticState {
+            kind: value_kind,
+            interpretation,
+            metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+            capabilities,
+            requirements: Vec::new(),
+        };
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixAnalyze),
+            }),
+        });
+        let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            rule: rule.into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "计算矩阵的结构不变量。".into(),
+                tex_override: Some(tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+fn held_matrix_analysis(
+    input: &crate::semantic_core::MathematicalObject,
+    kind: &MatrixAnalysisKind,
+) -> Result<Computation, EngineError> {
+    let head = match kind {
+        MatrixAnalysisKind::Rank => "Rank",
+        MatrixAnalysisKind::Rref => "RREF",
+        MatrixAnalysisKind::Eigenvalues => "EigenValues",
+        MatrixAnalysisKind::NullSpace => "NullSpace",
+        MatrixAnalysisKind::ColumnSpace => "ColumnSpace",
+        MatrixAnalysisKind::EigenSpaces => "EigenSpaces",
+    };
+    let mut semantics = SemanticState {
+        kind: ValueKind::Unevaluated,
+        interpretation: SemanticInterpretation::HeldApplication {
+            operator: head.into(),
+        },
+        metadata: ResultMetadata::unresolved(
+            Exactness::Symbolic,
+            OutcomeReason::AlgorithmUncovered,
+        ),
+        capabilities: CapabilitySet::empty(),
+        requirements: Vec::new(),
+    };
+    let parsed = crate::semantic_core::parse_engine_expression(&format!(
+        "{head}({})",
+        input.print_source()
+    ))?;
+    crate::semantic_core::promote_held_application(head, &parsed.raw_expression(), &mut semantics)?;
+    let mut output = input.clone();
+    output.apply(ObjectDelta {
+        expression: Some(parsed.raw_expression()),
+        semantics: Some(semantics),
+        overlay: None,
+        normalization: None,
+    });
+    Ok(Computation {
+        output: ComputationOutput::Held(output),
+        trace: None,
+        certificates: Vec::new(),
+        effects: Vec::new(),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixDecompositionKind {
+    Pldu,
+    Cholesky,
+    GramSchmidt { normalized: bool },
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MatrixDecompositionOperation;
+
+impl SemanticOperation<MatrixDecompositionKind> for MatrixDecompositionOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        kind: &MatrixDecompositionKind,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::MatrixAnalyze)
+        {
+            return Err(EngineError::InvalidInput(
+                "输入不具备矩阵分解或基变换能力".into(),
+            ));
+        }
+        let (source, tex, interpretation, rule) = match kind {
+            MatrixDecompositionKind::Pldu => {
+                let result = pldu(engine, &input.print_source())?;
+                if !result.verified {
+                    return Err(EngineError::Parse("PLDU 分解未通过恒等式验证".into()));
+                }
+                (
+                    format!(
+                        "PLDUDecomposition({},{},{},{})",
+                        matrix_expression(&result.permutation),
+                        matrix_expression(&result.lower),
+                        matrix_expression(&result.diagonal),
+                        matrix_expression(&result.upper)
+                    ),
+                    result.tex,
+                    SemanticInterpretation::MatrixFactorization {
+                        dimension: result.dimension,
+                        kind: crate::semantic_core::MatrixFactorizationKind::Pldu,
+                        factor_count: 4,
+                        verified: true,
+                    },
+                    "matrix-pldu-decomposition",
+                )
+            }
+            MatrixDecompositionKind::Cholesky => {
+                let result = cholesky(engine, &input.print_source())?;
+                if !result.verified {
+                    return Err(EngineError::Parse("Cholesky 分解未通过恒等式验证".into()));
+                }
+                (
+                    format!(
+                        "CholeskyDecomposition({})",
+                        matrix_expression(&result.upper)
+                    ),
+                    result.tex,
+                    SemanticInterpretation::MatrixFactorization {
+                        dimension: result.dimension,
+                        kind: crate::semantic_core::MatrixFactorizationKind::Cholesky,
+                        factor_count: 1,
+                        verified: true,
+                    },
+                    "matrix-cholesky-decomposition",
+                )
+            }
+            MatrixDecompositionKind::GramSchmidt { normalized } => {
+                let result = gram_schmidt(engine, &input.print_source(), *normalized)?;
+                if !result.verified {
+                    return Err(EngineError::Parse(
+                        "Gram-Schmidt 结果未通过正交性验证".into(),
+                    ));
+                }
+                let head = if result.normalized {
+                    "OrthonormalBasisObject"
+                } else {
+                    "OrthogonalBasisObject"
+                };
+                (
+                    format!("{head}({})", matrix_expression(&result.basis)),
+                    result.tex,
+                    SemanticInterpretation::OrderedBasis {
+                        ambient_dimension: result.vector_dimension,
+                        vector_count: result.vector_count,
+                        orthogonal: true,
+                        normalized: result.normalized,
+                        verified: true,
+                    },
+                    if result.normalized {
+                        "matrix-orthonormal-basis"
+                    } else {
+                        "matrix-orthogonal-basis"
+                    },
+                )
+            }
+        };
+        let semantics = SemanticState {
+            kind: ValueKind::Expression,
+            capabilities: if matches!(
+                &interpretation,
+                SemanticInterpretation::MatrixFactorization { .. }
+            ) {
+                CapabilitySet::factorization()
+            } else {
+                CapabilitySet::empty()
+            },
+            interpretation,
+            metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+            requirements: Vec::new(),
+        };
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Domain,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::MatrixDecompose),
+            }),
+        });
+        let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            rule: rule.into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "得到经过验证的线性代数结果。".into(),
+                tex_override: Some(tex),
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FactorProjectionOperation;
+
+impl SemanticOperation<()> for FactorProjectionOperation {
+    fn compute(
+        &self,
+        _engine: &mut dyn Engine,
+        input: &crate::semantic_core::MathematicalObject,
+        _request: &(),
+    ) -> Result<Computation, EngineError> {
+        let SemanticInterpretation::MatrixFactorization { factor_count, .. } =
+            input.semantics.interpretation
+        else {
+            return Err(EngineError::InvalidInput(
+                "Factors 只接受矩阵分解对象".into(),
+            ));
+        };
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::ExtractFactors)
+        {
+            return Err(EngineError::InvalidInput(
+                "输入不具备分解因子提取能力".into(),
+            ));
+        }
+        let factors = crate::input::with_parse_env(|env| {
+            input
+                .view(env)
+                .arguments()
+                .into_iter()
+                .map(|argument| argument.print_source())
+                .collect::<Vec<_>>()
+        });
+        if factors.len() != factor_count {
+            return Err(EngineError::Parse(format!(
+                "分解对象包含 {} 个 AST 因子，语义契约要求 {factor_count} 个",
+                factors.len()
+            )));
+        }
+        let source = format!("{{{}}}", factors.join(","));
+        let semantics = SemanticState {
+            kind: ValueKind::Expression,
+            interpretation: SemanticInterpretation::List,
+            metadata: input.semantics.metadata.clone(),
+            capabilities: CapabilitySet::empty(),
+            requirements: Vec::new(),
+        };
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let mut output = input.clone();
+        output.apply(ObjectDelta {
+            expression: Some(parsed.raw_expression()),
+            semantics: Some(semantics),
+            overlay: None,
+            normalization: Some(NormalizationMetadata {
+                level: NormalizationLevel::Structural,
+                assumptions: Vec::new(),
+                mode: NormalizationMode::Operation(OperatorId::FactorProjection),
+            }),
+        });
+        let event = RuleEvent {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            rule: "matrix-factor-projection".into(),
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload: RulePayload::Structural,
+            importance: RuleImportance::Key,
+            transformation: None,
+            presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "按分解顺序列出矩阵因子。".into(),
+                tex_override: None,
+            }),
+        };
+        Ok(Computation {
+            output: ComputationOutput::Value(output),
+            trace: Some(RuleTrace {
+                events: vec![event],
+            }),
+            certificates: Vec::new(),
+            effects: Vec::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -594,7 +1441,11 @@ pub fn compute(
 
     let binary = matches!(
         operation,
-        MatrixOperation::Add | MatrixOperation::Multiply | MatrixOperation::Solve
+        MatrixOperation::Add
+            | MatrixOperation::Subtract
+            | MatrixOperation::Multiply
+            | MatrixOperation::Scale
+            | MatrixOperation::Solve
     );
     if binary != right.is_some() {
         return Err(EngineError::InvalidInput(if binary {
@@ -628,11 +1479,15 @@ fn checked_command(left: &str, operation: MatrixOperation, right: Option<&str>) 
              InputCheck(Dimensions({a})=Dimensions({b}),\"matrix dimensions must match\"); {a}+{b}",
             right.unwrap()
         ),
+        MatrixOperation::Subtract => format!(
+            "{b}:={}; InputCheck(IsMatrix({b}),\"right operand must be a matrix\"); InputCheck(Dimensions({a})=Dimensions({b}),\"matrix dimensions must match\"); {a}-{b}", right.unwrap()
+        ),
         MatrixOperation::Multiply => format!(
             "{b}:={}; InputCheck(IsMatrix({b}),\"right operand must be a matrix\"); \
              InputCheck(Length({a}[1])=Length({b}),\"matrix dimensions are incompatible\"); {a}*{b}",
             right.unwrap()
         ),
+        MatrixOperation::Scale => format!("{a}*{}", right.unwrap()),
         MatrixOperation::Transpose => format!("Transpose({a})"),
         MatrixOperation::Determinant => format!("{square_check}; Determinant({a})"),
         MatrixOperation::Inverse => {
@@ -664,7 +1519,10 @@ fn unresolved(expr: &Expr, operation: MatrixOperation) -> bool {
         MatrixOperation::Inverse => "Inverse",
         MatrixOperation::Solve => "MatrixSolve",
         MatrixOperation::Eigenvalues => "EigenValues",
-        MatrixOperation::Add | MatrixOperation::Multiply => return false,
+        MatrixOperation::Add
+        | MatrixOperation::Subtract
+        | MatrixOperation::Multiply
+        | MatrixOperation::Scale => return false,
     };
     matches!(expr, Expr::Call { head, .. } if head == expected)
 }
@@ -716,6 +1574,323 @@ mod tests {
             assert!(!result.tex.is_empty());
             assert!(!result.unresolved);
         }
+    }
+
+    #[test]
+    fn unary_matrix_objects_preserve_shape_identity_and_scalar_outputs() {
+        let object = |source: &str, rows, columns| {
+            object_from_source(
+                crate::semantic_core::ObjectId(101),
+                source,
+                SemanticState {
+                    kind: ValueKind::Matrix,
+                    interpretation: SemanticInterpretation::Matrix { rows, columns },
+                    metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                    capabilities: CapabilitySet::matrix(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let matrix = object("{{1,2,3},{4,5,6}}", 2, 3);
+        let transposed = UnaryMatrixOperation
+            .compute(
+                &mut engine,
+                &matrix,
+                &UnaryMatrixRequest {
+                    operation: MatrixOperation::Transpose,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            transposed.value().unwrap().id,
+            crate::semantic_core::ObjectId(101)
+        );
+        assert!(matches!(
+            transposed.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::Matrix {
+                rows: 3,
+                columns: 2
+            }
+        ));
+        assert!(transposed
+            .value()
+            .unwrap()
+            .meets_normalization(NormalizationLevel::Domain));
+
+        let determinant = UnaryMatrixOperation
+            .compute(
+                &mut engine,
+                &object("{{1,2},{3,4}}", 2, 2),
+                &UnaryMatrixRequest {
+                    operation: MatrixOperation::Determinant,
+                },
+            )
+            .unwrap();
+        assert_eq!(determinant.value().unwrap().print_source(), "-2");
+        assert_eq!(
+            determinant.value().unwrap().semantics.kind,
+            ValueKind::Scalar
+        );
+    }
+
+    #[test]
+    fn binary_matrix_objects_check_shapes_before_execution() {
+        let object = |id, source: &str, rows, columns| {
+            object_from_source(
+                crate::semantic_core::ObjectId(id),
+                source,
+                SemanticState {
+                    kind: ValueKind::Matrix,
+                    interpretation: SemanticInterpretation::Matrix { rows, columns },
+                    metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                    capabilities: CapabilitySet::matrix(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let product = BinaryMatrixOperation
+            .compute(
+                &mut engine,
+                &object(1, "{{1,2,3},{4,5,6}}", 2, 3),
+                &object(2, "{{1,2},{3,4},{5,6}}", 3, 2),
+                &BinaryMatrixRequest {
+                    operation: MatrixOperation::Multiply,
+                    output_id: crate::semantic_core::ObjectId(3),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            product.value().unwrap().id,
+            crate::semantic_core::ObjectId(3)
+        );
+        assert!(matches!(
+            product.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::Matrix {
+                rows: 2,
+                columns: 2
+            }
+        ));
+        let bad = BinaryMatrixOperation.compute(
+            &mut engine,
+            &object(4, "{{1,2}}", 1, 2),
+            &object(5, "{{1,2}}", 1, 2),
+            &BinaryMatrixRequest {
+                operation: MatrixOperation::Multiply,
+                output_id: crate::semantic_core::ObjectId(6),
+            },
+        );
+        assert!(matches!(bad, Err(EngineError::InvalidInput(message)) if message.contains("1x2")));
+        let scalar = object_from_source(
+            crate::semantic_core::ObjectId(7),
+            "3",
+            SemanticState {
+                kind: ValueKind::Scalar,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let scaled = BinaryMatrixOperation
+            .compute(
+                &mut engine,
+                &object(8, "{{1,2}}", 1, 2),
+                &scalar,
+                &BinaryMatrixRequest {
+                    operation: MatrixOperation::Scale,
+                    output_id: crate::semantic_core::ObjectId(9),
+                },
+            )
+            .unwrap();
+        assert_eq!(scaled.value().unwrap().print_source(), "{{3,6}}");
+        let difference = BinaryMatrixOperation
+            .compute(
+                &mut engine,
+                &object(10, "{{5,4}}", 1, 2),
+                &object(11, "{{2,1}}", 1, 2),
+                &BinaryMatrixRequest {
+                    operation: MatrixOperation::Subtract,
+                    output_id: crate::semantic_core::ObjectId(12),
+                },
+            )
+            .unwrap();
+        assert_eq!(difference.value().unwrap().print_source(), "{{3,3}}");
+    }
+
+    #[test]
+    fn matrix_analysis_outputs_have_distinct_semantic_types() {
+        let input = object_from_source(
+            crate::semantic_core::ObjectId(20),
+            "{{1,2},{2,4}}",
+            SemanticState {
+                kind: ValueKind::Matrix,
+                interpretation: SemanticInterpretation::Matrix {
+                    rows: 2,
+                    columns: 2,
+                },
+                metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                capabilities: CapabilitySet::matrix(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let rank = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::Rank)
+            .unwrap();
+        assert_eq!(rank.value().unwrap().print_source(), "1");
+        assert_eq!(rank.value().unwrap().semantics.kind, ValueKind::Scalar);
+        let rref = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::Rref)
+            .unwrap();
+        assert!(matches!(
+            rref.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::Matrix {
+                rows: 2,
+                columns: 2
+            }
+        ));
+        let eigenvalues = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::Eigenvalues)
+            .unwrap();
+        assert!(matches!(
+            eigenvalues.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::Vector { .. }
+        ));
+        let null_space = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::NullSpace)
+            .unwrap();
+        assert_eq!(null_space.value().unwrap().id, input.id);
+        assert_eq!(
+            null_space.value().unwrap().revision,
+            crate::semantic_core::ObjectRevision(input.revision.0 + 1)
+        );
+        assert!(matches!(
+            null_space.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::LinearSubspace {
+                ambient_dimension: 2,
+                basis_dimension: 1,
+                kind: crate::semantic_core::LinearSubspaceKind::NullSpace,
+            }
+        ));
+        let column_space = MatrixAnalysisOperation
+            .compute(&mut engine, &input, &MatrixAnalysisKind::ColumnSpace)
+            .unwrap();
+        assert!(matches!(
+            column_space.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::LinearSubspace {
+                ambient_dimension: 2,
+                basis_dimension: 1,
+                kind: crate::semantic_core::LinearSubspaceKind::ColumnSpace,
+            }
+        ));
+        let diagonal = object_from_source(
+            crate::semantic_core::ObjectId(21),
+            "{{2,0},{0,3}}",
+            input.semantics.clone(),
+        )
+        .unwrap();
+        let eigenspaces = MatrixAnalysisOperation
+            .compute(&mut engine, &diagonal, &MatrixAnalysisKind::EigenSpaces)
+            .unwrap();
+        assert!(matches!(
+            eigenspaces.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::SpectralSubspaces {
+                ambient_dimension: 2,
+                space_count: 2,
+            }
+        ));
+        assert_eq!(
+            eigenspaces.value().unwrap().semantics.capabilities,
+            CapabilitySet::empty()
+        );
+    }
+
+    #[test]
+    fn decomposition_outputs_are_verified_typed_objects() {
+        let matrix = |id, source: &str, rows, columns| {
+            object_from_source(
+                crate::semantic_core::ObjectId(id),
+                source,
+                SemanticState {
+                    kind: ValueKind::Matrix,
+                    interpretation: SemanticInterpretation::Matrix { rows, columns },
+                    metadata: ResultMetadata::solved(Exactness::Exact, ConditionSet::empty()),
+                    capabilities: CapabilitySet::matrix(),
+                    requirements: Vec::new(),
+                },
+            )
+            .unwrap()
+        };
+        let mut engine = RustEngine::spawn().unwrap();
+        let square = matrix(30, "{{4,2},{2,2}}", 2, 2);
+        let pldu = MatrixDecompositionOperation
+            .compute(&mut engine, &square, &MatrixDecompositionKind::Pldu)
+            .unwrap();
+        assert_eq!(pldu.value().unwrap().id, square.id);
+        assert!(pldu
+            .value()
+            .unwrap()
+            .print_source()
+            .starts_with("PLDUDecomposition("));
+        assert!(matches!(
+            pldu.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::MatrixFactorization {
+                dimension: 2,
+                kind: crate::semantic_core::MatrixFactorizationKind::Pldu,
+                factor_count: 4,
+                verified: true,
+            }
+        ));
+        let factors = FactorProjectionOperation
+            .compute(&mut engine, pldu.value().unwrap(), &())
+            .unwrap();
+        assert!(matches!(
+            factors.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::List
+        ));
+        crate::input::with_parse_env(|env| {
+            assert_eq!(factors.value().unwrap().view(env).arguments().len(), 4)
+        });
+        assert_eq!(factors.value().unwrap().id, square.id);
+        let cholesky = MatrixDecompositionOperation
+            .compute(&mut engine, &square, &MatrixDecompositionKind::Cholesky)
+            .unwrap();
+        assert!(matches!(
+            cholesky.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::MatrixFactorization {
+                kind: crate::semantic_core::MatrixFactorizationKind::Cholesky,
+                verified: true,
+                ..
+            }
+        ));
+        let vectors = matrix(31, "{{1,1},{1,-1}}", 2, 2);
+        let basis = MatrixDecompositionOperation
+            .compute(
+                &mut engine,
+                &vectors,
+                &MatrixDecompositionKind::GramSchmidt { normalized: true },
+            )
+            .unwrap();
+        assert!(matches!(
+            basis.value().unwrap().semantics.interpretation,
+            SemanticInterpretation::OrderedBasis {
+                ambient_dimension: 2,
+                vector_count: 2,
+                orthogonal: true,
+                normalized: true,
+                verified: true,
+            }
+        ));
+        assert_eq!(
+            basis.value().unwrap().semantics.capabilities,
+            CapabilitySet::empty()
+        );
     }
 
     #[test]

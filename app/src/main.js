@@ -124,8 +124,7 @@ function renderMath(tex, target, displayMode = true) {
 
 function renderSummary(result) {
   summaryEl.hidden = false;
-  const domain = result.data?.result || result.data;
-  const representations = domain?.representations || [];
+  const representations = result.analysis?.representations || [];
   if (representations.length > 1) {
     const control = document.createElement("label");
     control.className = "representation-switch";
@@ -139,7 +138,7 @@ function renderSummary(result) {
       const option = document.createElement("option");
       option.value = representation.kind;
       option.textContent = names[representation.kind] || representation.kind;
-      option.selected = representation.kind === domain.preferred_representation;
+      option.selected = representation.kind === result.analysis?.preferred_representation;
       select.appendChild(option);
     });
     control.appendChild(select);
@@ -210,14 +209,54 @@ function renderSteps(steps) {
     math.className = "math";
     item.append(heading, math);
     stepsEl.appendChild(item);
-    renderMath(step.tex, math);
+    const transformation = step.before_tex
+      ? `${step.before_tex}\\;\\Longrightarrow\\;${step.tex}`
+      : step.tex;
+    renderMath(transformation, math);
+  });
+}
+
+function renderConclusions(conclusions) {
+  conclusions.forEach((conclusion) => {
+    const item = document.createElement("article");
+    item.className = "step conclusion";
+    const heading = document.createElement("div");
+    heading.className = "step-heading";
+    const label = document.createElement("strong");
+    label.textContent = conclusion.message;
+    const math = document.createElement("div");
+    math.className = "math";
+    heading.appendChild(label);
+    item.append(heading, math);
+    stepsEl.appendChild(item);
+    renderMath(conclusion.tex, math);
+  });
+}
+
+function renderAnalyses(analyses) {
+  analyses.forEach((analysis) => {
+    const item = document.createElement("article");
+    item.className = `step analysis importance-${analysis.importance}`;
+    const heading = document.createElement("div");
+    heading.className = "step-heading";
+    const label = document.createElement("strong");
+    label.textContent = analysis.message || "分析依据";
+    const detail = document.createElement("small");
+    detail.textContent = analysis.rule;
+    const math = document.createElement("div");
+    math.className = "math";
+    heading.append(label, detail);
+    item.append(heading, math);
+    stepsEl.appendChild(item);
+    renderMath(analysis.tex, math);
   });
 }
 
 function renderPlot(data) {
   const points = data.kind === "numeric_ode"
-    ? data.data.points.map((point) => ({ x: point.independent, y: point.state[0] }))
-    : data.data.points;
+    ? (data.sampled_data?.points || [])
+        .map((point) => ({ x: point.independent, y: point.state[0] }))
+    : (data.plot?.sampled?.points || []);
   plotEl.hidden = false;
   const ratio = window.devicePixelRatio || 1;
   const width = plotEl.clientWidth || 800;
@@ -274,9 +313,14 @@ async function calculate() {
     $("#result-title").textContent = result.title;
     $("#result-kind").textContent = result.kind.replaceAll("_", " ");
     renderSemantic(result.semantic, result.outcome);
-    if (result.kind === "plot" || result.kind === "numeric_ode") renderPlot(result);
+    if (result.kind === "plot") {
+      renderSummary(result);
+      renderPlot(result);
+    } else if (result.kind === "numeric_ode") renderPlot(result);
     else renderSummary(result);
+    renderAnalyses(result.analyses || []);
     renderSteps(result.steps || []);
+    renderConclusions(result.conclusions || []);
     rawEl.textContent = JSON.stringify(result, null, 2);
     rawBoxEl.hidden = false;
   } catch (error) {

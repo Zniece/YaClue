@@ -17,6 +17,7 @@ pub enum ValueKind {
     Matrix,
     SolutionSet,
     FunctionFamily,
+    SampledData,
     Unevaluated,
 }
 
@@ -67,30 +68,39 @@ pub fn analyze_input(input: &str, label: &str) -> Result<AnalyzedInput, EngineEr
         let tree = yacas_rs::parser::parse_expression(env, &format!("{input};"))
             .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
             .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
-        let root_call = root_call_from_tree(env, &tree);
-        let binding = crate::binding::analyze_tree(&tree);
-        let no_symbols = binding.free_symbols.is_empty() && binding.bound_symbols.is_empty();
-        let symbols = binding.free_symbols;
-        let function_heads = binding.function_heads;
-        let constants = binding.constants;
-        let shape = matrix_shape(&tree);
-        let kind = classify(&tree, shape, no_symbols);
-        let exactness = exactness(&tree, no_symbols, kind);
-        Ok(AnalyzedInput {
-            semantic: SemanticSummary {
-                kind,
-                symbols: symbols.into_iter().collect(),
-                bound_symbols: binding.bound_symbols.into_iter().collect(),
-                symbol_identities: binding.identities.into_iter().collect(),
-                constants: constants.into_iter().collect(),
-                shape,
-                exactness,
-                completeness: (kind == ValueKind::SolutionSet).then_some(Completeness::Unknown),
-            },
-            root_call,
-            function_heads: function_heads.into_iter().collect(),
-        })
+        Ok(analyze_tree(env, &tree))
     })
+}
+
+/// Build the legacy product summary from an already parsed AST. This lets the
+/// elaboration boundary remain the only parser on the request path.
+pub(crate) fn analyze_tree(
+    env: &yacas_rs::env::Environment,
+    tree: &std::rc::Rc<LispObject>,
+) -> AnalyzedInput {
+    let root_call = root_call_from_tree(env, tree);
+    let binding = crate::binding::analyze_tree(tree);
+    let no_symbols = binding.free_symbols.is_empty() && binding.bound_symbols.is_empty();
+    let symbols = binding.free_symbols;
+    let function_heads = binding.function_heads;
+    let constants = binding.constants;
+    let shape = matrix_shape(tree);
+    let kind = classify(tree, shape, no_symbols);
+    let exactness = exactness(tree, no_symbols, kind);
+    AnalyzedInput {
+        semantic: SemanticSummary {
+            kind,
+            symbols: symbols.into_iter().collect(),
+            bound_symbols: binding.bound_symbols.into_iter().collect(),
+            symbol_identities: binding.identities.into_iter().collect(),
+            constants: constants.into_iter().collect(),
+            shape,
+            exactness,
+            completeness: (kind == ValueKind::SolutionSet).then_some(Completeness::Unknown),
+        },
+        root_call,
+        function_heads: function_heads.into_iter().collect(),
+    }
 }
 
 /// Reclassify a domain result without carrying consumed input symbols into the
@@ -105,7 +115,10 @@ pub fn project_result(
 ) -> Result<SemanticSummary, EngineError> {
     let generated: BTreeSet<_> = arbitrary_constants.iter().cloned().collect();
     let mut output = analyze_input(expression, "结果表达式")?.semantic;
-    let mut bound: BTreeSet<_> = input.bound_symbols.iter().cloned().collect();
+    let mut bound: BTreeSet<_> = output.bound_symbols.iter().cloned().collect();
+    if kind == Some(ValueKind::FunctionFamily) {
+        bound.extend(input.bound_symbols.iter().cloned());
+    }
     bound.extend(
         additional_bound_symbols
             .iter()
@@ -117,7 +130,11 @@ pub fn project_result(
         .chain(&output.bound_symbols)
         .cloned()
         .collect();
-    bound.retain(|name| output_names.contains(name));
+    let explicit_bound: BTreeSet<_> = additional_bound_symbols
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    bound.retain(|name| output_names.contains(name) || explicit_bound.contains(name));
     output
         .symbols
         .retain(|name| !bound.contains(name) && !generated.contains(name));
@@ -143,11 +160,9 @@ pub fn project_result(
                     role: crate::binding::SymbolRole::Bound,
                     binder,
                 }
-            } else if let Some(identity) = input
-                .symbol_identities
-                .iter()
-                .find(|identity| identity.name == name)
-            {
+            } else if let Some(identity) = input.symbol_identities.iter().find(|identity| {
+                identity.name == name && identity.role != crate::binding::SymbolRole::Bound
+            }) {
                 identity.clone()
             } else {
                 crate::binding::SymbolIdentity {
@@ -208,10 +223,15 @@ fn classify(
                 matches!(head.as_ref(), "=" | "==" | "!=" | "<" | ">" | "<=" | ">=")
             }) {
                 ValueKind::Equation
-            } else if head
-                .as_ref()
-                .is_some_and(|head| matches!(head.as_ref(), "Solve" | "OdeSolve"))
-            {
+            } else if head.as_ref().is_some_and(|head| {
+                crate::semantic_core::operator_descriptor(head).is_some_and(|descriptor| {
+                    matches!(
+                        descriptor.id,
+                        crate::semantic_core::OperatorId::Solve
+                            | crate::semantic_core::OperatorId::OdeSolve
+                    )
+                })
+            }) {
                 ValueKind::SolutionSet
             } else if head.as_ref().is_some_and(|head| head.as_ref() == "List") {
                 ValueKind::Expression
@@ -224,7 +244,7 @@ fn classify(
     }
 }
 
-fn matrix_shape(node: &std::rc::Rc<LispObject>) -> Option<MatrixShape> {
+pub(crate) fn matrix_shape(node: &std::rc::Rc<LispObject>) -> Option<MatrixShape> {
     let ObjectKind::Sublist(first) = &node.kind else {
         return None;
     };
@@ -285,7 +305,9 @@ fn list_length(node: &std::rc::Rc<LispObject>) -> Option<usize> {
 fn exactness(node: &std::rc::Rc<LispObject>, no_symbols: bool, kind: ValueKind) -> Exactness {
     if matches!(kind, ValueKind::SolutionSet | ValueKind::Unevaluated) {
         Exactness::Unknown
-    } else if contains_approximate_number(node) || has_root_head(node, "N") {
+    } else if contains_approximate_number(node)
+        || root_operator_id(node) == Some(crate::semantic_core::OperatorId::Approximate)
+    {
         Exactness::Approximate
     } else if no_symbols {
         Exactness::Exact
@@ -294,14 +316,14 @@ fn exactness(node: &std::rc::Rc<LispObject>, no_symbols: bool, kind: ValueKind) 
     }
 }
 
-fn has_root_head(node: &std::rc::Rc<LispObject>, expected: &str) -> bool {
+fn root_operator_id(node: &std::rc::Rc<LispObject>) -> Option<crate::semantic_core::OperatorId> {
     let ObjectKind::Sublist(first) = &node.kind else {
-        return false;
+        return None;
     };
     spine_refs(first)
         .next()
         .and_then(|head| head.atom_string())
-        .is_some_and(|head| head.as_ref() == expected)
+        .and_then(|head| crate::semantic_core::operator_descriptor(head).map(|item| item.id))
 }
 
 fn contains_approximate_number(node: &std::rc::Rc<LispObject>) -> bool {
@@ -375,8 +397,14 @@ mod tests {
     #[test]
     fn result_projection_uses_explicit_generated_symbol_roles() {
         let input = analyze_input("D(x)OdeSolve(y'==y+C179*x)", "表达式").unwrap();
-        let result =
-            project_result(&input.semantic, "C*Exp(x)+C179*x", &["C".into()], &[], None).unwrap();
+        let result = project_result(
+            &input.semantic,
+            "C*Exp(x)+C179*x",
+            &["C".into()],
+            &["x"],
+            None,
+        )
+        .unwrap();
         assert_eq!(result.bound_symbols, ["x"]);
         assert_eq!(result.symbols, ["C179"]);
         assert!(result.symbol_identities.iter().any(|identity| {

@@ -6,6 +6,8 @@
 //! honest non-success state, classified bad input, and structured evidence.
 
 use processing::algebra::{transform, TransformKind};
+use processing::arithmetic::execute_elaborated_structure;
+use processing::elaboration::elaborate;
 use processing::engine::{EngineError, RustEngine};
 use processing::equations::{solve as solve_equations, SolveCompleteness, SolveStatus};
 use processing::equivalence::{verify, Equivalence, ProofBudget, VerificationMethod};
@@ -20,6 +22,10 @@ use processing::objects::{DefinedObjectStatus, PrimitiveOperation};
 use processing::ode::{solve as solve_ode, InitialCondition, OdeStatus};
 use processing::ode_numeric::{solve_initial_value, NumericOdeOptions, NumericOdeStatus};
 use processing::plot::{sample, SampleOptions, SampleTermination};
+use processing::protocol::{Condition, ResolutionState};
+use processing::semantic_core::{
+    ComputationOutput, Effect, NormalizationLevel, OperatorId, SemanticInterpretation,
+};
 use processing::steps::{derive_integrals, derive_steps};
 
 fn assert_invalid_input(result: Result<impl Sized, EngineError>) {
@@ -74,6 +80,84 @@ fn calculus_release_contract() {
         "unsupported integrals must remain visibly unevaluated"
     );
     assert_invalid_input(derive_steps(&mut engine, "x^2", "x;Echo(1)"));
+}
+
+#[test]
+fn special_function_derivative_release_contract() {
+    let mut engine = RustEngine::spawn().expect("engine boot");
+
+    let closed = elaborate("D(x)IncompleteGamma(x^2,x+1)").unwrap();
+    let input = &closed.children[1].object;
+    let computation = execute_elaborated_structure(&mut engine, &closed).unwrap();
+    let output = computation.value().expect("closed derivative value");
+    assert_eq!(output.id, input.id);
+    assert!(output.revision.0 > input.revision.0);
+    assert_eq!(
+        output.normalization.as_ref().unwrap().metadata.level,
+        NormalizationLevel::Domain
+    );
+    assert!(output.print_source().contains("Integrate("));
+    assert!(output
+        .semantics
+        .metadata
+        .conditions
+        .conditions()
+        .iter()
+        .any(|condition| matches!(condition, Condition::RealPartPositive { expression } if expression == "x+1")));
+    assert!(computation
+        .trace
+        .as_ref()
+        .unwrap()
+        .events
+        .iter()
+        .any(|event| {
+            event.rule == "derivative-registered-function-chain-rule"
+                && event.input.object == input.id
+                && event.output.object == output.id
+        }));
+
+    let before = input.operation_cache_key(
+        format!("{:?}:x:1", OperatorId::Derivative),
+        Vec::new(),
+        None,
+    );
+    let after = output.operation_cache_key(
+        format!("{:?}:x:1", OperatorId::Derivative),
+        Vec::new(),
+        None,
+    );
+    assert_ne!(
+        before, after,
+        "object revision must invalidate operation keys"
+    );
+
+    let formal = elaborate("D(x)HypergeometricPFQ({a,b},{c},Sin(x))").unwrap();
+    let formal_input = &formal.children[1].object;
+    let formal_result = execute_elaborated_structure(&mut engine, &formal).unwrap();
+    assert!(matches!(formal_result.output, ComputationOutput::Held(_)));
+    let held = formal_result.subject().unwrap();
+    assert_eq!(held.id, formal_input.id);
+    assert!(held.revision.0 > formal_input.revision.0);
+    assert_eq!(
+        held.semantics.metadata.resolution,
+        ResolutionState::Unresolved
+    );
+    assert!(matches!(
+        held.semantics.interpretation,
+        SemanticInterpretation::HeldTypedApplication(ref application)
+            if application.operator == OperatorId::Derivative
+    ));
+    assert!(formal_result
+        .trace
+        .as_ref()
+        .unwrap()
+        .events
+        .iter()
+        .any(|event| {
+            event.rule == "derivative-known-formal-function"
+                && event.input.object == formal_input.id
+                && event.output.object == held.id
+        }));
 }
 
 #[test]
@@ -159,6 +243,20 @@ fn bounded_equivalence_release_contract() {
         different.method,
         Some(VerificationMethod::NumericCounterexample) | Some(VerificationMethod::ResidualProof)
     ));
+}
+
+#[test]
+fn compact_representation_release_contract() {
+    let mut engine = RustEngine::spawn().unwrap();
+    let expression = elaborate("Expand(D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t))))").unwrap();
+    let computation = execute_elaborated_structure(&mut engine, &expression).unwrap();
+    let output = computation.value().unwrap();
+    let source = output.print_source().replace(' ', "");
+
+    assert!(source.contains("Gamma(x)"));
+    assert!(source.contains("PolyGamma(0,x)"));
+    assert!(!source.contains("Integrate("));
+    assert!(output.stable_representation_count() <= 4);
 }
 
 #[test]
@@ -310,4 +408,76 @@ fn plotting_release_contract() {
         (1.0, 0.0),
         &SampleOptions::default(),
     ));
+}
+
+#[test]
+fn migrated_object_pipeline_release_contract() {
+    let mut engine = RustEngine::spawn().expect("engine boot");
+    let execute = |engine: &mut RustEngine, source: &str| {
+        let elaborated = elaborate(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+        execute_elaborated_structure(engine, &elaborated)
+            .unwrap_or_else(|error| panic!("{source}: {error}"))
+    };
+
+    for (source, expected) in [
+        ("Sum(k,1,10,k)", "55"),
+        ("ImproperIntegral(1/(1+x^2),x,0,Infinity)", "Pi/2"),
+        ("PrincipalValueIntegral(1/x,x,-1,1,{0})", "0"),
+        ("DoubleIntegral(x+y,y,0,2,x,0,1)", "3"),
+    ] {
+        let result = execute(&mut engine, source);
+        assert!(
+            matches!(result.output, ComputationOutput::Value(_)),
+            "{source}"
+        );
+        assert_eq!(result.value().unwrap().print_source(), expected, "{source}");
+    }
+
+    let polar = execute(&mut engine, "PolarIntegral(x^2+y^2,x,y,r,theta,0,1,0,2*Pi)");
+    assert!(matches!(polar.output, ComputationOutput::Value(_)));
+    assert!(polar.value().unwrap().print_source().contains("Pi"));
+
+    let root = execute(&mut engine, "FindRoot(x^2-2,x,1)");
+    assert!(matches!(root.output, ComputationOutput::Value(_)));
+    assert_eq!(
+        root.value().unwrap().semantics.metadata.exactness,
+        processing::semantic::Exactness::Approximate
+    );
+
+    let numeric_ode = execute(&mut engine, "OdeSolveNumeric(y'==y,x,y,0,1,0.1)");
+    assert!(matches!(numeric_ode.output, ComputationOutput::Value(_)));
+    assert_eq!(
+        numeric_ode.value().unwrap().semantics.kind,
+        processing::semantic::ValueKind::SampledData
+    );
+
+    let plot = execute(&mut engine, "Plot(D(x)(x^2),x,0,1)");
+    assert!(matches!(plot.output, ComputationOutput::EffectsOnly));
+    assert!(plot.subject().is_none());
+    assert!(
+        matches!(plot.effects.as_slice(), [Effect::Plot(effect)] if effect.expression == "2*x")
+    );
+
+    let extrema = execute(&mut engine, "Extrema(Expand((x-1)^2+(y+2)^2),x,y)");
+    assert!(matches!(extrema.output, ComputationOutput::Value(_)));
+    assert_eq!(
+        extrema.value().unwrap().semantics.kind,
+        processing::semantic::ValueKind::SolutionSet
+    );
+    assert!(extrema
+        .certificates
+        .iter()
+        .any(|item| item.kind == "extrema_analysis"));
+
+    let lagrange = execute(&mut engine, "Lagrange(x+y,x^2+y^2-1,x,y)");
+    assert!(matches!(lagrange.output, ComputationOutput::Value(_)));
+    assert!(lagrange
+        .certificates
+        .iter()
+        .any(|item| item.kind == "lagrange_analysis"));
+
+    let absent = execute(&mut engine, "Extrema(x+y,x,y)");
+    assert!(matches!(absent.output, ComputationOutput::NoValue(_)));
+    let held = execute(&mut engine, "Lagrange(x+y,(x^2+y^2)^2,x,y)");
+    assert!(matches!(held.output, ComputationOutput::Held(_)));
 }

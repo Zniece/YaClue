@@ -19,6 +19,9 @@ use serde::Serialize;
 use crate::engine::{Engine, EngineError};
 use crate::input::{validate_expression, validate_symbol};
 use crate::numeric::evaluate_real_batch;
+use crate::semantic_core::{
+    Computation, ComputationOutput, Effect, MathematicalObject, ObjectCapability, SemanticOperation,
+};
 
 pub const MAX_BASE_INTERVALS: usize = 4_096;
 pub const MAX_REFINEMENT_DEPTH: u32 = 12;
@@ -81,6 +84,60 @@ pub struct SampledPlot {
     pub suggested_bounds: Option<PlotBounds>,
     pub evaluations: usize,
     pub termination: SampleTermination,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlotEffect {
+    pub expression: String,
+    pub variable: String,
+    pub range: (f64, f64),
+    pub sampled: SampledPlot,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlotRequest {
+    pub variable: String,
+    pub range: (f64, f64),
+    pub options: SampleOptions,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PlotOperation;
+
+impl SemanticOperation<PlotRequest> for PlotOperation {
+    fn compute(
+        &self,
+        engine: &mut dyn Engine,
+        input: &MathematicalObject,
+        request: &PlotRequest,
+    ) -> Result<Computation, EngineError> {
+        if !input
+            .semantics
+            .capabilities
+            .contains(ObjectCapability::Plot)
+        {
+            return Err(EngineError::InvalidInput("该数学对象不具备绘图能力".into()));
+        }
+        let expression = input.print_source();
+        let sampled = sample(
+            engine,
+            &expression,
+            &request.variable,
+            request.range,
+            &request.options,
+        )?;
+        Ok(Computation {
+            output: ComputationOutput::EffectsOnly,
+            trace: None,
+            certificates: Vec::new(),
+            effects: vec![Effect::Plot(PlotEffect {
+                expression,
+                variable: request.variable.clone(),
+                range: request.range,
+                sampled,
+            })],
+        })
+    }
 }
 
 /// Sampling options.
@@ -375,6 +432,12 @@ fn robust_y_range(points: &[PlotPoint]) -> Option<(f64, f64)> {
 mod tests {
     use super::*;
     use crate::engine::{EvalResult, RustEngine};
+    use crate::protocol::{ConditionSet, ResultMetadata};
+    use crate::semantic::{Exactness, ValueKind};
+    use crate::semantic_core::{
+        object_from_source, CapabilitySet, ComputationOutput, ObjectId, SemanticInterpretation,
+        SemanticState,
+    };
 
     struct CountingEngine {
         inner: RustEngine,
@@ -391,6 +454,41 @@ mod tests {
     fn sample_default(func: &str, range: (f64, f64)) -> SampledPlot {
         let mut engine = RustEngine::spawn().expect("RustEngine boot");
         sample(&mut engine, func, "x", range, &SampleOptions::default()).expect("sample")
+    }
+
+    #[test]
+    fn plot_operation_consumes_an_object_and_returns_only_a_typed_effect() {
+        let input = object_from_source(
+            ObjectId(101),
+            "Sin(x)",
+            SemanticState {
+                kind: ValueKind::Expression,
+                interpretation: SemanticInterpretation::PlainExpression,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::symbolic_expression(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = PlotOperation
+            .compute(
+                &mut engine,
+                &input,
+                &PlotRequest {
+                    variable: "x".into(),
+                    range: (0.0, 1.0),
+                    options: SampleOptions::default(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(result.output, ComputationOutput::EffectsOnly));
+        assert!(result.subject().is_none());
+        let Effect::Plot(effect) = &result.effects[0] else {
+            panic!("expected a plot effect")
+        };
+        assert_eq!(effect.expression, "Sin(x)");
+        assert!(!effect.sampled.points.is_empty());
     }
 
     #[test]

@@ -7,7 +7,11 @@
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::quadrature::{adaptive_simpson, QuadratureOptions};
+use crate::semantic_core::{RuleEventClass, RuleImportance, RuleTrace};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+use crate::semantic_core::{ExpressionPath, ObjectId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,9 +21,55 @@ pub enum StepImportance {
     Key,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepKind {
+    EquivalentTransformation,
+    MathematicalConclusion,
+    ProductEffect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConclusionKind {
+    Held,
+    NoValue,
+    ConditionsUnmet,
+    ProductEffect,
+}
+
+/// A terminal product explanation. It is intentionally not a `Step`: no
+/// equality-preserving before/after relation is claimed.
+#[derive(Debug, Clone, Serialize)]
+pub struct MathematicalConclusion {
+    pub kind: ConclusionKind,
+    pub expression: String,
+    pub tex: String,
+    pub message: String,
+}
+
+/// A mathematical observation used to select or justify a transformation.
+/// It deliberately has no `before`/`after` pair and therefore claims no
+/// equality with the visible derivation.
+#[derive(Debug, Clone, Serialize)]
+pub struct MathematicalAnalysis {
+    pub rule: String,
+    pub expression: String,
+    pub tex: String,
+    pub message: String,
+    pub importance: StepImportance,
+}
+
 /// 一步:规则名 + 表达式 + 文案(声明式)+ LaTeX(GUI 渲染用)
 #[derive(Debug, Clone, Serialize)]
 pub struct Step {
+    pub kind: StepKind,
+    /// Complete expression before this transformation. Legacy standalone
+    /// domain step generators may omit it; composed product traces may not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_expr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_tex: Option<String>,
     /// 规则名(英文键,文案命中失败时前端回退显示它)
     pub rule: String,
     /// 表达式(yacas 形式)
@@ -115,6 +165,9 @@ pub(crate) fn render_events(
         .into_iter()
         .zip(tex)
         .map(|(event, tex)| Step {
+            kind: StepKind::EquivalentTransformation,
+            before_expr: None,
+            before_tex: None,
             rule: event.rule,
             expr: event.expr,
             why: event.why,
@@ -122,6 +175,309 @@ pub(crate) fn render_events(
             importance: event.importance,
         })
         .collect())
+}
+
+/// Product projection for semantic-core traces.  This deliberately has no
+/// access to domain result state: events are the only input.
+pub fn render_rule_trace(
+    engine: &mut dyn Engine,
+    trace: &RuleTrace,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    let events = trace
+        .events
+        .iter()
+        .filter(|event| event.class == RuleEventClass::EquivalentTransformation)
+        .filter(|event| {
+            matches!(verbosity, StepVerbosity::Detailed)
+                || matches!(verbosity, StepVerbosity::Standard)
+                    && event.importance != RuleImportance::Routine
+                || matches!(verbosity, StepVerbosity::Concise)
+                    && event.importance == RuleImportance::Key
+        })
+        .filter_map(|event| {
+            event
+                .presentation
+                .as_ref()
+                .map(|presentation| (event, presentation))
+        })
+        .collect::<Vec<_>>();
+    let expressions = events
+        .iter()
+        .filter(|(_, presentation)| presentation.tex_override.is_none())
+        .map(|(_, presentation)| presentation.expression.clone())
+        .collect::<Vec<_>>();
+    let rendered = match engine.render_tex_batch(&expressions) {
+        Ok(rendered) => rendered,
+        Err(_) => expressions
+            .iter()
+            .map(|expression| {
+                engine
+                    .render_tex_batch(std::slice::from_ref(expression))
+                    .ok()
+                    .and_then(|mut rendered| rendered.pop())
+                    .map(|tex| strip_tex_delimiters(&tex))
+                    .unwrap_or_else(|| literal_tex(expression))
+            })
+            .collect(),
+    };
+    let mut rendered = rendered.into_iter();
+    Ok(events
+        .into_iter()
+        .map(|(event, presentation)| Step {
+            kind: StepKind::EquivalentTransformation,
+            before_expr: None,
+            before_tex: None,
+            rule: event.rule.clone(),
+            expr: presentation.expression.clone(),
+            why: presentation.explanation.clone(),
+            tex: presentation.tex_override.clone().unwrap_or_else(|| {
+                strip_tex_delimiters(&rendered.next().expect("one TeX result per expression"))
+            }),
+            importance: match event.importance {
+                RuleImportance::Routine => StepImportance::Routine,
+                RuleImportance::Normal => StepImportance::Normal,
+                RuleImportance::Key => StepImportance::Key,
+            },
+        })
+        .collect())
+}
+
+pub fn render_rule_analyses(
+    engine: &mut dyn Engine,
+    trace: &RuleTrace,
+    verbosity: StepVerbosity,
+) -> Vec<MathematicalAnalysis> {
+    trace
+        .events
+        .iter()
+        .filter(|event| event.class == RuleEventClass::MathematicalAnalysis)
+        .filter(|event| {
+            matches!(verbosity, StepVerbosity::Detailed)
+                || matches!(verbosity, StepVerbosity::Standard)
+                    && event.importance != RuleImportance::Routine
+                || matches!(verbosity, StepVerbosity::Concise)
+                    && event.importance == RuleImportance::Key
+        })
+        .filter_map(|event| {
+            let presentation = event.presentation.as_ref()?;
+            Some(MathematicalAnalysis {
+                rule: event.rule.clone(),
+                expression: presentation.expression.clone(),
+                tex: render_product_tex(engine, &presentation.expression),
+                message: presentation.explanation.clone(),
+                importance: match event.importance {
+                    RuleImportance::Routine => StepImportance::Routine,
+                    RuleImportance::Normal => StepImportance::Normal,
+                    RuleImportance::Key => StepImportance::Key,
+                },
+            })
+        })
+        .collect()
+}
+
+/// Project an inside-out trace as a continuous chain of whole-expression
+/// transformations. Object ids locate each rewritten operation in the one
+/// elaborated AST; replacement itself is AST-based, never textual matching.
+pub fn render_rule_trace_in_root(
+    engine: &mut dyn Engine,
+    trace: &RuleTrace,
+    verbosity: StepVerbosity,
+    root: &crate::elaboration::ElaboratedObject,
+) -> Result<Vec<Step>, EngineError> {
+    let mut paths = BTreeMap::new();
+    collect_object_paths(root, &ExpressionPath::root(), &mut paths);
+    let mut current = root.object.print_source();
+    let mut steps = Vec::new();
+    let mut tex_cache = BTreeMap::new();
+    for event in trace.events.iter().filter(|event| {
+        event.class == RuleEventClass::EquivalentTransformation
+            && event.presentation.is_some()
+            && (matches!(verbosity, StepVerbosity::Detailed)
+                || matches!(verbosity, StepVerbosity::Standard)
+                    && event.importance != RuleImportance::Routine
+                || matches!(verbosity, StepVerbosity::Concise)
+                    && event.importance == RuleImportance::Key)
+    }) {
+        let presentation = event.presentation.as_ref().expect("filtered above");
+        let contextual_object = event
+            .transformation_context()
+            .map(|context| context.root_after.object);
+        let path = contextual_object
+            .as_ref()
+            .and_then(|object| paths.get(object))
+            .or_else(|| paths.get(&event.output.object))
+            .or_else(|| paths.get(&event.input.object))
+            .cloned()
+            .unwrap_or_else(ExpressionPath::root);
+        let after = replace_at_path(&current, &path, &presentation.expression)?;
+        if after == current {
+            continue;
+        }
+        let before_tex = render_product_tex_cached(engine, &current, &mut tex_cache);
+        let after_tex = if path.segments().is_empty() {
+            presentation
+                .tex_override
+                .clone()
+                .unwrap_or_else(|| render_product_tex_cached(engine, &after, &mut tex_cache))
+        } else {
+            render_product_tex_cached(engine, &after, &mut tex_cache)
+        };
+        steps.push(Step {
+            kind: StepKind::EquivalentTransformation,
+            before_expr: Some(current),
+            before_tex: Some(before_tex),
+            rule: event.rule.clone(),
+            expr: after.clone(),
+            why: presentation.explanation.clone(),
+            tex: after_tex,
+            importance: match event.importance {
+                RuleImportance::Routine => StepImportance::Routine,
+                RuleImportance::Normal => StepImportance::Normal,
+                RuleImportance::Key => StepImportance::Key,
+            },
+        });
+        current = after;
+    }
+    if let Some(last) = steps.last_mut() {
+        last.importance = StepImportance::Key;
+    }
+    validate_step_chain(&root.object.print_source(), &steps)?;
+    Ok(steps)
+}
+
+/// Enforce the product invariant independently of any renderer: every visible
+/// item is an equivalence transformation, starts at the complete input, and
+/// continues exactly from the preceding whole-expression endpoint.
+pub fn validate_step_chain(initial: &str, steps: &[Step]) -> Result<(), EngineError> {
+    let mut expected = initial;
+    for (index, step) in steps.iter().enumerate() {
+        if step.kind != StepKind::EquivalentTransformation {
+            return Err(EngineError::Parse(format!("步骤 {index} 不是等价变换")));
+        }
+        if step.before_expr.as_deref() != Some(expected) {
+            return Err(EngineError::Parse(format!("步骤 {index} 与前一步不连续")));
+        }
+        if step.before_tex.as_ref().is_none_or(String::is_empty)
+            || step.expr.is_empty()
+            || step.tex.is_empty()
+        {
+            return Err(EngineError::Parse(format!(
+                "步骤 {index} 缺少完整表达式或 TeX"
+            )));
+        }
+        expected = &step.expr;
+    }
+    Ok(())
+}
+
+fn render_product_tex(engine: &mut dyn Engine, expression: &str) -> String {
+    if crate::elaboration::elaborate(expression)
+        .is_ok_and(|root| contains_registered_operation(&root))
+    {
+        return literal_tex(expression);
+    }
+    engine
+        .render_syntax_tex_batch(&[expression.to_string()])
+        .ok()
+        .and_then(|mut rendered| rendered.pop())
+        .map(|tex| strip_tex_delimiters(&tex))
+        .unwrap_or_else(|| literal_tex(expression))
+}
+
+fn contains_registered_operation(object: &crate::elaboration::ElaboratedObject) -> bool {
+    matches!(
+        &object.form,
+        crate::elaboration::MathematicalForm::Application { head }
+            | crate::elaboration::MathematicalForm::EffectApplication { head }
+            if crate::semantic_core::is_known_operator(head)
+    ) || object.children.iter().any(contains_registered_operation)
+}
+
+fn render_product_tex_cached(
+    engine: &mut dyn Engine,
+    expression: &str,
+    cache: &mut BTreeMap<String, String>,
+) -> String {
+    if let Some(tex) = cache.get(expression) {
+        return tex.clone();
+    }
+    let tex = render_product_tex(engine, expression);
+    cache.insert(expression.to_string(), tex.clone());
+    tex
+}
+
+fn collect_object_paths(
+    object: &crate::elaboration::ElaboratedObject,
+    path: &ExpressionPath,
+    paths: &mut BTreeMap<ObjectId, ExpressionPath>,
+) {
+    paths.insert(object.object.id, path.clone());
+    for (index, child) in object.children.iter().enumerate() {
+        collect_object_paths(child, &path.argument(index), paths);
+    }
+}
+
+fn replace_at_path(
+    root_source: &str,
+    path: &ExpressionPath,
+    replacement_source: &str,
+) -> Result<String, EngineError> {
+    crate::input::with_parse_env(|env| {
+        let root = yacas_rs::parser::parse_expression(env, &format!("{root_source};"))
+            .map_err(|error| EngineError::Parse(format!("步骤根表达式无法解析: {error:?}")))?
+            .ok_or_else(|| EngineError::Parse("步骤根表达式为空".into()))?;
+        let replacement =
+            yacas_rs::parser::parse_expression(env, &format!("{replacement_source};"))
+                .map_err(|error| EngineError::Parse(format!("步骤替换表达式无法解析: {error:?}")))?
+                .ok_or_else(|| EngineError::Parse("步骤替换表达式为空".into()))?;
+        let rewritten = replace_node(&root, path.segments(), &replacement)?;
+        Ok(yacas_rs::printer::infix_print(env, &rewritten))
+    })
+}
+
+fn replace_node(
+    node: &std::rc::Rc<yacas_rs::value::LispObject>,
+    path: &[usize],
+    replacement: &std::rc::Rc<yacas_rs::value::LispObject>,
+) -> Result<std::rc::Rc<yacas_rs::value::LispObject>, EngineError> {
+    use yacas_rs::value::{build_list, clone_kind, spine_refs, LispObject, ObjectKind};
+    if path.is_empty() {
+        return Ok(LispObject::new(clone_kind(&replacement.kind)));
+    }
+    let ObjectKind::Sublist(first) = &node.kind else {
+        return Err(EngineError::Parse("步骤焦点不在 application AST 内".into()));
+    };
+    let mut kinds = spine_refs(first)
+        .map(|item| clone_kind(&item.kind))
+        .collect::<Vec<_>>();
+    let argument = path[0] + 1;
+    let child = spine_refs(first)
+        .nth(argument)
+        .ok_or_else(|| EngineError::Parse("步骤焦点超出 AST 参数范围".into()))?;
+    kinds[argument] = clone_kind(&replace_node(child, &path[1..], replacement)?.kind);
+    let list = build_list(kinds).ok_or_else(|| EngineError::Parse("无法重建步骤 AST".into()))?;
+    Ok(LispObject::new(ObjectKind::Sublist(list)))
+}
+
+fn literal_tex(source: &str) -> String {
+    let mut escaped = String::new();
+    for character in source.chars() {
+        match character {
+            '\\' => escaped.push_str(r"\backslash "),
+            '{' => escaped.push_str(r"\{"),
+            '}' => escaped.push_str(r"\}"),
+            '_' => escaped.push_str(r"\_"),
+            '^' => escaped.push_str(r"\^{}"),
+            '%' | '#' | '&' | '$' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            '~' => escaped.push_str(r"\sim "),
+            _ => escaped.push(character),
+        }
+    }
+    format!(r"\mathtt{{{escaped}}}")
 }
 
 /// 执行 StepsX'Full 命令并提取步骤(规则名 + 表达式 + 文案 + LaTeX)
@@ -205,9 +561,7 @@ pub fn derive_steps_with_verbosity(
     var: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expression(expr, "表达式")?;
-    validate_symbol(var, "求导变量")?;
-    steps_from_command(engine, &format!("StepsD'Full({expr}, {var})"), verbosity)
+    crate::derivatives::derivative_steps_with_verbosity(engine, expr, var, 1, verbosity)
 }
 
 /// 对 `expr` 关于 `var` 生成 `order` 阶分步求导过程(步骤按求导轮次拼接)
@@ -227,16 +581,7 @@ pub fn derive_steps_order_with_verbosity(
     order: u32,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expression(expr, "表达式")?;
-    validate_symbol(var, "求导变量")?;
-    if order == 0 {
-        return Err(EngineError::InvalidInput("求导阶数必须 >= 1".into()));
-    }
-    steps_from_command(
-        engine,
-        &format!("StepsD'Full({expr}, {var}, {order})"),
-        verbosity,
-    )
+    crate::derivatives::derivative_steps_with_verbosity(engine, expr, var, order, verbosity)
 }
 
 /// 对 `expr` 关于 `var` 生成分步积分过程
@@ -302,6 +647,9 @@ pub fn derive_antiderivative_family_with_verbosity(
         arbitrary_constant,
     );
     steps.push(Step {
+        kind: StepKind::EquivalentTransformation,
+        before_expr: None,
+        before_tex: None,
         rule: "antiderivative-family".into(),
         expr: result.expression.clone(),
         why: "加入任意常数，表示全部原函数。".into(),
@@ -383,6 +731,9 @@ fn derive_definite_configured(
             .map(|result| strip_tex_delimiters(&result.tex))
             .unwrap_or_else(|_| value.clone());
         steps.push(Step {
+            kind: StepKind::EquivalentTransformation,
+            before_expr: None,
+            before_tex: None,
             rule: "numeric-integration-rule".into(),
             expr: value,
             why: format!(

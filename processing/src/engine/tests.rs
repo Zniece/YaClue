@@ -93,6 +93,16 @@ fn rust_batch_tex_matches_individual_evaluation() {
 }
 
 #[test]
+fn syntax_tex_preserves_the_uncomputed_ast() {
+    let mut engine = RustEngine::spawn().unwrap();
+    let rendered = engine
+        .render_syntax_tex_batch(&["y+2^2*y==Sin(x)".into()])
+        .unwrap();
+    assert!(rendered[0].contains("2 ^{2}"), "{}", rendered[0]);
+    assert!(!rendered[0].contains("5 y"), "{}", rendered[0]);
+}
+
+#[test]
 fn rust_eval_recovers_after_parse_and_tex_errors() {
     let mut engine = RustEngine::spawn().unwrap();
     eval_cmd(

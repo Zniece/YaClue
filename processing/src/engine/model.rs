@@ -250,6 +250,18 @@ pub trait Engine {
             .collect()
     }
 
+    /// Render the parsed syntax exactly as supplied, without evaluating it.
+    /// Implementations that cannot guarantee this must return an error rather
+    /// than silently rendering a different mathematical state.
+    fn render_syntax_tex_batch(
+        &mut self,
+        _expressions: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        Err(EngineError::Eval(
+            "当前引擎不支持未求值 AST 的 TeX 排版".into(),
+        ))
+    }
+
     /// 追踪信息:命中的规则列表(供步骤层使用);未实现时返回空
     #[allow(dead_code)] // 步骤层接口,暂未消费
     fn trace(&mut self, _command: &str) -> Result<Vec<String>, EngineError> {
