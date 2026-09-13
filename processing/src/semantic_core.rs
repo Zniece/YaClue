@@ -1033,7 +1033,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::IntegrateDefined,
         route: ObjectNativeRoute::DefinedIntegral,
-        execution_handler: crate::arithmetic::execute_defined_integral_adapter,
+        execution_handler: crate::arithmetic::execute_improper_integral_adapter,
         product_kind: "defined_object",
         title: "反常积分",
     },
@@ -1047,7 +1047,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         binders: SECOND_ARGUMENT_BINDS_FIRST,
         capability: CapabilityId::IntegrateDefined,
         route: ObjectNativeRoute::DefinedIntegral,
-        execution_handler: crate::arithmetic::execute_defined_integral_adapter,
+        execution_handler: crate::arithmetic::execute_principal_value_integral_adapter,
         product_kind: "defined_object",
         title: "Cauchy 主值",
     },
@@ -1061,7 +1061,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         binders: DOUBLE_INTEGRAL_BINDERS,
         capability: CapabilityId::IntegrateMultiple,
         route: ObjectNativeRoute::MultipleIntegral,
-        execution_handler: crate::arithmetic::execute_multiple_integral_adapter,
+        execution_handler: crate::arithmetic::execute_double_integral_adapter,
         product_kind: "double_integral",
         title: "二重积分",
     },
@@ -1075,7 +1075,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         binders: SECOND_AND_THIRD_BIND_FIRST,
         capability: CapabilityId::IntegrateMultiple,
         route: ObjectNativeRoute::MultipleIntegral,
-        execution_handler: crate::arithmetic::execute_multiple_integral_adapter,
+        execution_handler: crate::arithmetic::execute_polar_integral_adapter,
         product_kind: "polar_integral",
         title: "极坐标积分",
     },
@@ -1145,7 +1145,7 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         binders: LAGRANGE_BINDERS,
         capability: CapabilityId::AnalyzeExtrema,
         route: ObjectNativeRoute::Extrema,
-        execution_handler: crate::arithmetic::execute_extrema_adapter,
+        execution_handler: crate::arithmetic::execute_lagrange_adapter,
         product_kind: "lagrange",
         title: "约束极值",
     },
@@ -2798,6 +2798,19 @@ mod tests {
                 .product_presentation(false, false),
             None
         );
+    }
+
+    #[test]
+    fn every_descriptor_has_a_type_checked_execution_strategy() {
+        assert!(!OPERATOR_DESCRIPTORS.is_empty());
+        for descriptor in OPERATOR_DESCRIPTORS {
+            let _: OperatorExecutionHandler = descriptor.execution_handler;
+            assert!(
+                !descriptor.names.is_empty(),
+                "execution strategy has no surface spelling: {:?}",
+                descriptor.id
+            );
+        }
     }
 
     #[test]

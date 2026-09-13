@@ -107,20 +107,62 @@ pub(crate) fn execute_matrix_unary_adapter(
     execute_matrix_unary_application(engine, expression, spelling)
 }
 
-pub(crate) fn execute_defined_integral_adapter(
+pub(crate) fn execute_improper_integral_adapter(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
     spelling: &str,
 ) -> Result<Computation, EngineError> {
-    execute_defined_integral_application(engine, expression, spelling)
+    execute_defined_integral_application(
+        engine,
+        expression,
+        spelling,
+        crate::improper_integrals::DefinedIntegralOperationKind::Improper,
+    )
 }
 
-pub(crate) fn execute_multiple_integral_adapter(
+pub(crate) fn execute_principal_value_integral_adapter(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
     spelling: &str,
 ) -> Result<Computation, EngineError> {
-    execute_multiple_integral_application(engine, expression, spelling)
+    execute_defined_integral_application(
+        engine,
+        expression,
+        spelling,
+        crate::improper_integrals::DefinedIntegralOperationKind::PrincipalValue,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum MultipleIntegralAdapterKind {
+    Double,
+    Polar,
+}
+
+pub(crate) fn execute_double_integral_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_multiple_integral_application(
+        engine,
+        expression,
+        spelling,
+        MultipleIntegralAdapterKind::Double,
+    )
+}
+
+pub(crate) fn execute_polar_integral_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_multiple_integral_application(
+        engine,
+        expression,
+        spelling,
+        MultipleIntegralAdapterKind::Polar,
+    )
 }
 
 pub(crate) fn execute_plot_effect_adapter(
@@ -134,9 +176,17 @@ pub(crate) fn execute_plot_effect_adapter(
 pub(crate) fn execute_extrema_adapter(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
+    _spelling: &str,
 ) -> Result<Computation, EngineError> {
-    execute_extrema_application(engine, expression, spelling)
+    execute_extrema_application(engine, expression)
+}
+
+pub(crate) fn execute_lagrange_adapter(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+    _spelling: &str,
+) -> Result<Computation, EngineError> {
+    execute_lagrange_application(engine, expression)
 }
 
 pub(crate) fn execute_multivariate_adapter(
@@ -247,9 +297,7 @@ fn execute_elaborated_node(
         if let Some(descriptor) = crate::semantic_core::operator_descriptor(head) {
             return (descriptor.execution_handler)(engine, expression, head);
         }
-        if !crate::semantic_core::is_known_operator(head) {
-            return execute_function_application(engine, expression, head);
-        }
+        return execute_function_application(engine, expression, head);
     }
     if matches!(
         expression.form,
@@ -461,11 +509,12 @@ fn execute_sum_application(
 fn execute_defined_integral_application(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
-    head: &str,
+    spelling: &str,
+    kind: crate::improper_integrals::DefinedIntegralOperationKind,
 ) -> Result<Computation, EngineError> {
     if !matches!(expression.children.len(), 4 | 5) {
         return Err(EngineError::InvalidInput(format!(
-            "{head} 需要被积式、变量、积分上下限及可选奇点"
+            "{spelling} 需要被积式、变量、积分上下限及可选奇点"
         )));
     }
     let operand_node = &expression.children[0];
@@ -485,21 +534,12 @@ fn execute_defined_integral_application(
     });
     let mut operand = execute_elaborated_structure(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
-        return retain_pending_application(expression, operand, head, 0);
+        return retain_pending_application(expression, operand, spelling, 0);
     }
     let input = operand
         .value()
         .expect("checked defined-integral operand")
         .clone();
-    let kind = match crate::semantic_core::operator_descriptor(head).map(|item| item.id) {
-        Some(OperatorId::ImproperIntegral) => {
-            crate::improper_integrals::DefinedIntegralOperationKind::Improper
-        }
-        Some(OperatorId::PrincipalValueIntegral) => {
-            crate::improper_integrals::DefinedIntegralOperationKind::PrincipalValue
-        }
-        _ => return Err(EngineError::InvalidInput("未知定义型积分运算".into())),
-    };
     let mut current = crate::improper_integrals::DefinedIntegralOperation.compute(
         engine,
         &input,
@@ -521,20 +561,18 @@ fn execute_defined_integral_application(
 fn execute_multiple_integral_application(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
-    head: &str,
+    spelling: &str,
+    kind: MultipleIntegralAdapterKind,
 ) -> Result<Computation, EngineError> {
     let source = |index: usize| expression.children[index].object.print_source();
-    let request = match (
-        crate::semantic_core::operator_descriptor(head).map(|item| item.id),
-        expression.children.len(),
-    ) {
-        (Some(OperatorId::DoubleIntegral), 7) => {
+    let request = match (kind, expression.children.len()) {
+        (MultipleIntegralAdapterKind::Double, 7) => {
             crate::multiple_integrals::MultipleIntegralRequest::Double {
                 inner: (source(1), source(2), source(3)),
                 outer: (source(4), source(5), source(6)),
             }
         }
-        (Some(OperatorId::PolarIntegral), 9) => {
+        (MultipleIntegralAdapterKind::Polar, 9) => {
             crate::multiple_integrals::MultipleIntegralRequest::Polar {
                 x: source(1),
                 y: source(2),
@@ -544,11 +582,15 @@ fn execute_multiple_integral_application(
                 angular: (source(7), source(8)),
             }
         }
-        _ => return Err(EngineError::InvalidInput(format!("{head} 的参数签名无效"))),
+        _ => {
+            return Err(EngineError::InvalidInput(format!(
+                "{spelling} 的参数签名无效"
+            )))
+        }
     };
     let mut operand = execute_elaborated_structure(engine, &expression.children[0])?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
-        return retain_pending_application(expression, operand, head, 0);
+        return retain_pending_application(expression, operand, spelling, 0);
     }
     let input = operand
         .value()
@@ -631,58 +673,59 @@ fn execute_find_root_application(
 fn execute_extrema_application(
     engine: &mut dyn Engine,
     expression: &crate::elaboration::ElaboratedObject,
-    head: &str,
 ) -> Result<Computation, EngineError> {
-    match (
-        crate::semantic_core::operator_descriptor(head).map(|item| item.id),
-        expression.children.as_slice(),
-    ) {
-        (Some(OperatorId::Extrema), [operand_node, x, y]) => {
-            let mut operand = execute_elaborated_structure(engine, operand_node)?;
-            if !matches!(operand.output, ComputationOutput::Value(_)) {
-                return retain_pending_application(expression, operand, head, 0);
-            }
-            let input = operand.value().expect("checked extrema operand").clone();
-            let mut current = crate::extrema::ExtremaOperation.compute(
-                engine,
-                &input,
-                &crate::extrema::ExtremaRequest {
-                    x: x.object.print_source(),
-                    y: y.object.print_source(),
-                },
-            )?;
-            merge_prior_computation(&mut current, &mut operand);
-            Ok(current)
-        }
-        (Some(OperatorId::Lagrange), [operand_node, constraint_node, x, y]) => {
-            let mut operand = execute_elaborated_structure(engine, operand_node)?;
-            if !matches!(operand.output, ComputationOutput::Value(_)) {
-                return retain_pending_application(expression, operand, head, 0);
-            }
-            let mut constraint = execute_elaborated_structure(engine, constraint_node)?;
-            if !matches!(constraint.output, ComputationOutput::Value(_)) {
-                return retain_pending_application(expression, constraint, head, 1);
-            }
-            let input = operand.value().expect("checked Lagrange operand").clone();
-            let constraint_source = constraint
-                .value()
-                .expect("checked Lagrange constraint")
-                .print_source();
-            let mut current = crate::extrema::LagrangeOperation.compute(
-                engine,
-                &input,
-                &crate::extrema::LagrangeRequest {
-                    constraint: constraint_source,
-                    x: x.object.print_source(),
-                    y: y.object.print_source(),
-                },
-            )?;
-            merge_prior_computation(&mut current, &mut constraint);
-            merge_prior_computation(&mut current, &mut operand);
-            Ok(current)
-        }
-        _ => Err(EngineError::InvalidInput(format!("{head} 的参数签名无效"))),
+    let [operand_node, x, y] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput("Extrema 的参数签名无效".into()));
+    };
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, "Extrema", 0);
     }
+    let input = operand.value().expect("checked extrema operand").clone();
+    let mut current = crate::extrema::ExtremaOperation.compute(
+        engine,
+        &input,
+        &crate::extrema::ExtremaRequest {
+            x: x.object.print_source(),
+            y: y.object.print_source(),
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
+}
+
+fn execute_lagrange_application(
+    engine: &mut dyn Engine,
+    expression: &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, EngineError> {
+    let [operand_node, constraint_node, x, y] = expression.children.as_slice() else {
+        return Err(EngineError::InvalidInput("Lagrange 的参数签名无效".into()));
+    };
+    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    if !matches!(operand.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, operand, "Lagrange", 0);
+    }
+    let mut constraint = execute_elaborated_structure(engine, constraint_node)?;
+    if !matches!(constraint.output, ComputationOutput::Value(_)) {
+        return retain_pending_application(expression, constraint, "Lagrange", 1);
+    }
+    let input = operand.value().expect("checked Lagrange operand").clone();
+    let constraint_source = constraint
+        .value()
+        .expect("checked Lagrange constraint")
+        .print_source();
+    let mut current = crate::extrema::LagrangeOperation.compute(
+        engine,
+        &input,
+        &crate::extrema::LagrangeRequest {
+            constraint: constraint_source,
+            x: x.object.print_source(),
+            y: y.object.print_source(),
+        },
+    )?;
+    merge_prior_computation(&mut current, &mut constraint);
+    merge_prior_computation(&mut current, &mut operand);
+    Ok(current)
 }
 
 fn execute_multivariate_application(
