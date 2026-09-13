@@ -2249,6 +2249,10 @@ pub enum RulePayload {
 pub enum RuleEventClass {
     /// A mathematical object is replaced by an equivalent representation.
     EquivalentTransformation,
+    /// A diagnostic or mathematical observation used to choose a method.
+    /// It may be useful to explain reasoning, but does not assert equality
+    /// with either the preceding or following whole expression.
+    MathematicalAnalysis,
     /// A computation reaches a mathematical conclusion that is not an
     /// equality-preserving rewrite (held, no value, unmet conditions, ...).
     MathematicalConclusion,
@@ -2268,6 +2272,32 @@ impl RuleEventClass {
 
     pub fn is_product_visible(self) -> bool {
         !matches!(self, Self::InternalExecution)
+    }
+}
+
+impl RuleEvent {
+    /// Validate the semantic claim made by the event classification. This is
+    /// intentionally independent of rule spelling and product rendering.
+    pub fn validate_classification(&self) -> Result<(), &'static str> {
+        match self.class {
+            RuleEventClass::EquivalentTransformation
+                if matches!(
+                    self.payload,
+                    RulePayload::Decision
+                        | RulePayload::Inference
+                        | RulePayload::Verification
+                        | RulePayload::Convergence
+                ) =>
+            {
+                Err("analysis payload cannot claim an equivalent transformation")
+            }
+            RuleEventClass::MathematicalAnalysis
+                if matches!(self.payload, RulePayload::Rewrite | RulePayload::Decompose) =>
+            {
+                Err("rewrite payload must not be downgraded to analysis")
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -2979,6 +3009,8 @@ mod tests {
     #[test]
     fn mathematical_step_protocol_separates_visibility_from_trace_payload() {
         assert!(RuleEventClass::EquivalentTransformation.is_transformation_step());
+        assert!(!RuleEventClass::MathematicalAnalysis.is_transformation_step());
+        assert!(RuleEventClass::MathematicalAnalysis.is_product_visible());
         assert!(RuleEventClass::MathematicalConclusion.is_product_visible());
         assert!(RuleEventClass::ProductEffect.is_product_visible());
         assert!(!RuleEventClass::InternalExecution.is_product_visible());
@@ -3048,5 +3080,11 @@ mod tests {
         assert_eq!(context.root_before.focus, None);
         assert_eq!(context.root_after.focus, None);
         assert_eq!(context.focus.segments(), &[1]);
+
+        let mut invalid = event.clone();
+        invalid.payload = RulePayload::Decision;
+        assert!(invalid.validate_classification().is_err());
+        invalid.class = RuleEventClass::MathematicalAnalysis;
+        assert!(invalid.validate_classification().is_ok());
     }
 }
