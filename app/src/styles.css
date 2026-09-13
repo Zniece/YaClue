@@ -79,6 +79,8 @@ code { padding: 1px 4px; color: #34425d; background: #ebeff5; border-radius: 4px
 .step-heading strong { display: block; font-size: 11px; }
 .step-heading small { display: block; margin-top: 2px; color: var(--muted); font: 9px ui-monospace, monospace; }
 .step .math { min-width: 0; padding: 9px 14px; overflow-x: auto; }
+.step.analysis { border-style: dashed; }
+.step.analysis .step-heading { background: #fff9e8; }
 .importance-routine { opacity: .82; }
 #plot { width: 100%; height: 390px; margin-top: 15px; background: #fbfcfe; border: 1px solid var(--border); border-radius: 10px; }
 #raw-box { margin-top: 15px; color: var(--muted); font-size: 11px; }

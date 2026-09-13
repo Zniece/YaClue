@@ -11,7 +11,9 @@ pub use crate::semantic_core::OperatorId as CompositionOperator;
 use crate::semantic_core::{
     operator_descriptor, ComputationOutput, ObjectCapability, SemanticInterpretation,
 };
-use crate::steps::{ConclusionKind, MathematicalConclusion, Step, StepVerbosity};
+use crate::steps::{
+    ConclusionKind, MathematicalAnalysis, MathematicalConclusion, Step, StepVerbosity,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +30,7 @@ pub struct CompositionResult {
     pub value: String,
     pub tex: String,
     pub steps: Vec<Step>,
+    pub analyses: Vec<MathematicalAnalysis>,
     pub conclusions: Vec<MathematicalConclusion>,
     pub operators: Vec<CompositionOperator>,
     pub reason: Option<String>,
@@ -104,6 +107,7 @@ pub fn execute_elaborated(
             value: value.clone(),
             tex: tex.clone(),
             steps,
+            analyses: Vec::new(),
             conclusions: vec![MathematicalConclusion {
                 kind: ConclusionKind::ProductEffect,
                 expression: value.clone(),
@@ -152,6 +156,15 @@ pub fn execute_elaborated(
                 crate::steps::render_rule_trace_in_root(engine, trace, verbosity, &input.root)
             })
             .transpose()?
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let analyses = if include_steps {
+        computation
+            .trace
+            .as_ref()
+            .map(|trace| crate::steps::render_rule_analyses(engine, trace, verbosity))
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -276,6 +289,7 @@ pub fn execute_elaborated(
         value,
         tex,
         steps,
+        analyses,
         conclusions,
         operators,
         reason,
@@ -620,6 +634,18 @@ mod tests {
             "{:#?}",
             result.steps
         );
+        assert!(
+            result
+                .analyses
+                .iter()
+                .any(|analysis| analysis.rule == "limit-direct-substitution"),
+            "{:#?}",
+            result.analyses
+        );
+        assert!(result
+            .analyses
+            .iter()
+            .any(|analysis| analysis.expression == "Undefined"));
     }
 
     #[test]

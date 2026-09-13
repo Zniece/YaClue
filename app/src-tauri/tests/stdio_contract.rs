@@ -49,7 +49,15 @@ fn json_lines_is_persistent_structured_and_recovers_after_bad_input() {
     assert_eq!(rows[0]["semantic"], rows[1]["semantic"]);
     assert_eq!(rows[0]["outcome"], rows[1]["outcome"]);
     assert!(rows[0]["steps"].as_array().unwrap().is_empty());
+    assert!(rows[0]["analyses"].as_array().unwrap().is_empty());
     assert!(!rows[1]["steps"].as_array().unwrap().is_empty());
+    assert!(rows[1]["analyses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|analysis| {
+            analysis["rule"] == "limit-direct-substitution" && analysis["expression"] == "Undefined"
+        }));
     let steps = rows[1]["steps"].as_array().unwrap();
     assert!(steps.iter().all(|step| {
         step["kind"] == "equivalent_transformation"

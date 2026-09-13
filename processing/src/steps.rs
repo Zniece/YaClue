@@ -48,6 +48,18 @@ pub struct MathematicalConclusion {
     pub message: String,
 }
 
+/// A mathematical observation used to select or justify a transformation.
+/// It deliberately has no `before`/`after` pair and therefore claims no
+/// equality with the visible derivation.
+#[derive(Debug, Clone, Serialize)]
+pub struct MathematicalAnalysis {
+    pub rule: String,
+    pub expression: String,
+    pub tex: String,
+    pub message: String,
+    pub importance: StepImportance,
+}
+
 /// 一步:规则名 + 表达式 + 文案(声明式)+ LaTeX(GUI 渲染用)
 #[derive(Debug, Clone, Serialize)]
 pub struct Step {
@@ -229,6 +241,39 @@ pub fn render_rule_trace(
             },
         })
         .collect())
+}
+
+pub fn render_rule_analyses(
+    engine: &mut dyn Engine,
+    trace: &RuleTrace,
+    verbosity: StepVerbosity,
+) -> Vec<MathematicalAnalysis> {
+    trace
+        .events
+        .iter()
+        .filter(|event| event.class == RuleEventClass::MathematicalAnalysis)
+        .filter(|event| {
+            matches!(verbosity, StepVerbosity::Detailed)
+                || matches!(verbosity, StepVerbosity::Standard)
+                    && event.importance != RuleImportance::Routine
+                || matches!(verbosity, StepVerbosity::Concise)
+                    && event.importance == RuleImportance::Key
+        })
+        .filter_map(|event| {
+            let presentation = event.presentation.as_ref()?;
+            Some(MathematicalAnalysis {
+                rule: event.rule.clone(),
+                expression: presentation.expression.clone(),
+                tex: render_product_tex(engine, &presentation.expression),
+                message: presentation.explanation.clone(),
+                importance: match event.importance {
+                    RuleImportance::Routine => StepImportance::Routine,
+                    RuleImportance::Normal => StepImportance::Normal,
+                    RuleImportance::Key => StepImportance::Key,
+                },
+            })
+        })
+        .collect()
 }
 
 /// Project an inside-out trace as a continuous chain of whole-expression

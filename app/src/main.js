@@ -233,6 +233,25 @@ function renderConclusions(conclusions) {
   });
 }
 
+function renderAnalyses(analyses) {
+  analyses.forEach((analysis) => {
+    const item = document.createElement("article");
+    item.className = `step analysis importance-${analysis.importance}`;
+    const heading = document.createElement("div");
+    heading.className = "step-heading";
+    const label = document.createElement("strong");
+    label.textContent = analysis.message || "分析依据";
+    const detail = document.createElement("small");
+    detail.textContent = analysis.rule;
+    const math = document.createElement("div");
+    math.className = "math";
+    heading.append(label, detail);
+    item.append(heading, math);
+    stepsEl.appendChild(item);
+    renderMath(analysis.tex, math);
+  });
+}
+
 function renderPlot(data) {
   const points = data.kind === "numeric_ode"
     ? (data.sampled_data?.points || [])
@@ -299,6 +318,7 @@ async function calculate() {
       renderPlot(result);
     } else if (result.kind === "numeric_ode") renderPlot(result);
     else renderSummary(result);
+    renderAnalyses(result.analyses || []);
     renderSteps(result.steps || []);
     renderConclusions(result.conclusions || []);
     rawEl.textContent = JSON.stringify(result, null, 2);
