@@ -1,16 +1,95 @@
 //! Object-native indefinite integration. The engine remains the temporary
 //! domain adapter, while the operation boundary owns Held/family semantics.
 
-use crate::engine::{Engine, EngineError};
+use crate::engine::{Engine, EngineError, Expr};
 use crate::input::validate_symbol;
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+use crate::quadrature::{adaptive_simpson, QuadratureOptions};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    object_from_source, CapabilitySet, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectDelta, ObjectId, OperatorId, Requirement,
-    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    object_from_source, CapabilitySet, Computation, ComputationOutput, EventSink,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, ObjectId,
+    OperatorId, Requirement, RuleFact, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState, VecEventSink,
 };
+
+struct IntegralRuleEmission {
+    rule: String,
+    expression: String,
+    explanation: String,
+    importance: RuleImportance,
+}
+
+struct IntegralEvaluation {
+    result: String,
+    emissions: Vec<IntegralRuleEmission>,
+}
+
+fn evaluate_integral_rules(
+    engine: &mut dyn Engine,
+    command: &str,
+) -> Result<IntegralEvaluation, EngineError> {
+    let Expr::Call { head, args } = engine.eval_expr(command)? else {
+        return Err(EngineError::Parse("积分规则执行结果不是列表".into()));
+    };
+    if head != "List" || args.len() != 2 {
+        return Err(EngineError::Parse(
+            "积分规则执行结果必须包含结果和规则发射".into(),
+        ));
+    }
+    let result = args[0].to_string();
+    let Expr::Call {
+        head: emission_head,
+        args: emission_args,
+    } = &args[1]
+    else {
+        return Err(EngineError::Parse("积分规则发射不是列表".into()));
+    };
+    if emission_head != "List" || emission_args.is_empty() {
+        return Err(EngineError::Eval("未能生成积分规则事实".into()));
+    }
+    let emissions = emission_args
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let Expr::Call { head, args: fields } = item else {
+                return Err(EngineError::Parse(format!("积分规则发射 {index} 不是列表")));
+            };
+            if head != "List" || fields.len() != 4 {
+                return Err(EngineError::Parse(format!(
+                    "积分规则发射 {index} 必须是四字段 List"
+                )));
+            }
+            let text = |field: &Expr, name| match field {
+                Expr::Symbol(value)
+                    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') =>
+                {
+                    Ok(value[1..value.len() - 1].to_owned())
+                }
+                _ => Err(EngineError::Parse(format!(
+                    "积分规则发射 {index} 的 {name} 必须是字符串"
+                ))),
+            };
+            let importance = match &fields[3] {
+                Expr::Number(value) if value == "0" => RuleImportance::Routine,
+                Expr::Number(value) if value == "1" => RuleImportance::Normal,
+                Expr::Number(value) if value == "2" => RuleImportance::Key,
+                _ => {
+                    return Err(EngineError::Parse(format!(
+                        "积分规则发射 {index} 的 importance 必须是 0、1 或 2"
+                    )))
+                }
+            };
+            Ok(IntegralRuleEmission {
+                rule: text(&fields[0], "rule")?,
+                expression: fields[1].to_string(),
+                explanation: text(&fields[2], "explanation")?,
+                importance,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(IntegralEvaluation { result, emissions })
+}
 
 /// Curried `Integrate(variable)`, waiting for its integrand.
 pub fn integral_partial(
@@ -113,14 +192,11 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
             return Err(EngineError::InvalidInput("该数学对象不具备积分能力".into()));
         }
         let source = input.print_source();
-        let derivation = crate::steps::derive_antiderivative_family_with_verbosity(
+        let evaluation = evaluate_integral_rules(
             engine,
-            &source,
-            &request.variable,
-            request.arbitrary_constant.clone(),
-            crate::steps::StepVerbosity::Detailed,
+            &format!("StepsI'Computation({source},{})", request.variable),
         )?;
-        let representative = derivation.result.representative.clone();
+        let representative = evaluation.result;
         let unresolved = crate::input::with_parse_env(|env| {
             let parsed = yacas_rs::parser::parse_expression(env, &format!("{representative};"))
                 .map_err(|error| EngineError::Parse(format!("积分结果语法异常: {error:?}")))?
@@ -176,68 +252,74 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
                 mode: NormalizationMode::Operation(OperatorId::Integral),
             }),
         });
-        crate::metrics::record_legacy_trace_adaptations(derivation.steps.len());
-        let events = derivation
-            .steps
-            .into_iter()
-            .map(|step| {
-                let is_family = step.rule == "antiderivative-family";
-                let held_family = unresolved && is_family;
-                RuleEvent {
-                    class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-                    rule: if held_family {
-                        "hold-integral".into()
-                    } else {
-                        step.rule
-                    },
-                    input: input.reference(None),
-                    additional_inputs: Vec::new(),
-                    output: output.reference(None),
-                    bindings: if is_family && !unresolved {
-                        vec![
-                            ("variable".into(), request.variable.clone()),
-                            ("constant".into(), request.arbitrary_constant.clone()),
-                        ]
-                    } else {
-                        vec![("variable".into(), request.variable.clone())]
-                    },
-                    conditions: Vec::new(),
-                    payload: if is_family {
-                        RulePayload::Rewrite
-                    } else {
-                        RulePayload::Structural
-                    },
-                    importance: match step.importance {
-                        crate::steps::StepImportance::Routine => RuleImportance::Routine,
-                        crate::steps::StepImportance::Normal => RuleImportance::Normal,
-                        crate::steps::StepImportance::Key => RuleImportance::Key,
-                    },
-                    transformation: None,
-                    presentation: crate::semantic_core::materialize_presentation(|| {
-                        RulePresentation {
-                            expression: if held_family {
-                                output.print_source()
-                            } else {
-                                step.expr
-                            },
-                            explanation: if held_family {
-                                "保留尚无闭式结果的积分对象。".into()
-                            } else {
-                                step.why
-                            },
-                            tex_override: (!held_family).then_some(step.tex),
-                        }
-                    }),
-                }
+        let input_ref = input.reference(None);
+        let output_ref = output.reference(None);
+        let variable_binding = vec![("variable".into(), request.variable.clone())];
+        let mut sink = VecEventSink::default();
+        evaluation.emissions.into_iter().for_each(|emission| {
+            let fact = RuleFact {
+                class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+                rule: emission.rule,
+                input: input_ref.clone(),
+                additional_inputs: Vec::new(),
+                output: output_ref.clone(),
+                bindings: variable_binding.clone(),
+                conditions: Vec::new(),
+                payload: RulePayload::Structural,
+                importance: emission.importance,
+                transformation: None,
+            };
+            sink.record_fact(fact, || {
+                Some(RulePresentation {
+                    expression: emission.expression,
+                    explanation: emission.explanation,
+                    tex_override: None,
+                })
+            });
+        });
+        let family_fact = RuleFact {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            rule: if unresolved {
+                "hold-integral".into()
+            } else {
+                "antiderivative-family".into()
+            },
+            input: input_ref,
+            additional_inputs: Vec::new(),
+            output: output_ref,
+            bindings: if unresolved {
+                variable_binding
+            } else {
+                vec![
+                    ("variable".into(), request.variable.clone()),
+                    ("constant".into(), request.arbitrary_constant.clone()),
+                ]
+            },
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+        };
+        sink.record_fact(family_fact, || {
+            Some(RulePresentation {
+                expression: output.print_source(),
+                explanation: if unresolved {
+                    "保留尚无闭式结果的积分对象。".into()
+                } else {
+                    "加入任意常数，表示全部原函数。".into()
+                },
+                tex_override: None,
             })
-            .collect::<Vec<_>>();
+        });
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
             } else {
                 ComputationOutput::Value(output)
             },
-            trace: Some(RuleTrace { events }),
+            trace: Some(RuleTrace {
+                events: sink.events,
+            }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })
@@ -278,12 +360,14 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
             return Err(EngineError::InvalidInput("该数学对象不具备积分能力".into()));
         }
         let source = input.print_source();
-        let representative = engine
-            .eval_expr(&format!(
-                "Integrate({},{},{}){source}",
+        let evaluation = evaluate_integral_rules(
+            engine,
+            &format!(
+                "StepsI'Def'Computation({source},{},{},{})",
                 request.variable, request.lower, request.upper
-            ))?
-            .to_string();
+            ),
+        )?;
+        let representative = evaluation.result;
         let unresolved = crate::input::with_parse_env(|env| {
             let parsed = yacas_rs::parser::parse_expression(env, &format!("{representative};"))
                 .map_err(|error| EngineError::Parse(format!("定积分结果语法异常: {error:?}")))?
@@ -337,53 +421,188 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
                 mode: NormalizationMode::Operation(OperatorId::Integral),
             }),
         });
-        let legacy_steps = crate::steps::derive_definite_with_verbosity(
-            engine,
-            &source,
-            &request.variable,
-            &request.lower,
-            &request.upper,
-            crate::steps::StepVerbosity::Detailed,
-        )?;
-        crate::metrics::record_legacy_trace_adaptations(legacy_steps.len());
-        let events = legacy_steps
+        let input_ref = input.reference(None);
+        let output_ref = output.reference(None);
+        let bindings = vec![
+            ("variable".into(), request.variable.clone()),
+            ("lower".into(), request.lower.clone()),
+            ("upper".into(), request.upper.clone()),
+        ];
+        let last = evaluation.emissions.len() - 1;
+        let mut sink = VecEventSink::default();
+        evaluation
+            .emissions
             .into_iter()
-            .map(|step| RuleEvent {
-                class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-                rule: step.rule,
-                input: input.reference(None),
-                additional_inputs: Vec::new(),
-                output: output.reference(None),
-                bindings: vec![
-                    ("variable".into(), request.variable.clone()),
-                    ("lower".into(), request.lower.clone()),
-                    ("upper".into(), request.upper.clone()),
-                ],
-                conditions: Vec::new(),
-                payload: RulePayload::Structural,
-                importance: match step.importance {
-                    crate::steps::StepImportance::Routine => RuleImportance::Routine,
-                    crate::steps::StepImportance::Normal => RuleImportance::Normal,
-                    crate::steps::StepImportance::Key => RuleImportance::Key,
-                },
-                transformation: None,
-                presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
-                    expression: step.expr,
-                    explanation: step.why,
-                    tex_override: Some(step.tex),
-                }),
-            })
-            .collect();
+            .enumerate()
+            .for_each(|(index, emission)| {
+                let fact = RuleFact {
+                    class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+                    rule: emission.rule,
+                    input: input_ref.clone(),
+                    additional_inputs: Vec::new(),
+                    output: output_ref.clone(),
+                    bindings: bindings.clone(),
+                    conditions: Vec::new(),
+                    payload: if index == last {
+                        RulePayload::Rewrite
+                    } else {
+                        RulePayload::Structural
+                    },
+                    importance: if index == last {
+                        RuleImportance::Key
+                    } else {
+                        emission.importance
+                    },
+                    transformation: None,
+                };
+                sink.record_fact(fact, || {
+                    Some(RulePresentation {
+                        expression: emission.expression,
+                        explanation: emission.explanation,
+                        tex_override: None,
+                    })
+                });
+            });
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
             } else {
                 ComputationOutput::Value(output)
             },
-            trace: Some(RuleTrace { events }),
+            trace: Some(RuleTrace {
+                events: sink.events,
+            }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })
+    }
+}
+
+/// Compatibility entry for callers that explicitly request bounded numeric
+/// degradation. The exact/held decision and the numeric rule fact both come
+/// from the semantic computation; product steps are only a later projection.
+pub(crate) fn definite_integral_computation_with_options(
+    engine: &mut dyn Engine,
+    expression: &str,
+    request: &DefiniteIntegralRequest,
+    options: Option<&QuadratureOptions>,
+) -> Result<Computation, EngineError> {
+    let input = object_from_source(
+        ObjectId(1),
+        expression,
+        SemanticState {
+            kind: ValueKind::Expression,
+            interpretation: SemanticInterpretation::PlainExpression,
+            metadata: ResultMetadata::solved(Exactness::Unknown, ConditionSet::empty()),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        },
+    )?;
+    let computation = DefiniteIntegralOperation.compute(engine, &input, request)?;
+    let Some(options) = options else {
+        return Ok(computation);
+    };
+    let Computation {
+        output: ComputationOutput::Held(mut output),
+        trace,
+        certificates,
+        effects,
+    } = computation
+    else {
+        return Ok(computation);
+    };
+    let lower = numeric_bound(engine, &request.lower, "下限")?;
+    let upper = numeric_bound(engine, &request.upper, "上限")?;
+    let result = adaptive_simpson(
+        engine,
+        expression,
+        &request.variable,
+        (lower, upper),
+        options,
+    )?;
+    let value = format_numeric_result(result.value);
+    let parsed = crate::semantic_core::parse_engine_expression(&value)?;
+    let input_ref = input.reference(None);
+    output.apply(ObjectDelta {
+        expression: Some(parsed.raw_expression()),
+        semantics: Some(SemanticState {
+            kind: ValueKind::Scalar,
+            interpretation: SemanticInterpretation::PlainExpression,
+            metadata: ResultMetadata::solved(Exactness::Approximate, ConditionSet::empty()),
+            capabilities: CapabilitySet::symbolic_expression(),
+            requirements: Vec::new(),
+        }),
+        overlay: None,
+        normalization: Some(NormalizationMetadata {
+            level: NormalizationLevel::Domain,
+            assumptions: Vec::new(),
+            mode: NormalizationMode::Operation(OperatorId::Integral),
+        }),
+    });
+    let fact = RuleFact {
+        class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+        rule: "numeric-integration-rule".into(),
+        input: input_ref,
+        additional_inputs: Vec::new(),
+        output: output.reference(None),
+        bindings: vec![
+            ("variable".into(), request.variable.clone()),
+            ("lower".into(), request.lower.clone()),
+            ("upper".into(), request.upper.clone()),
+            ("estimated_error".into(), result.estimated_error.to_string()),
+            ("evaluations".into(), result.evaluations.to_string()),
+        ],
+        conditions: Vec::new(),
+        payload: RulePayload::Rewrite,
+        importance: RuleImportance::Key,
+        transformation: None,
+    };
+    let mut sink = VecEventSink {
+        events: trace.map(|trace| trace.events).unwrap_or_default(),
+    };
+    sink.record_fact(fact, || {
+        Some(RulePresentation {
+            expression: value,
+            explanation: format!(
+                "自适应辛普森数值积分（估计误差 {:.2e}，{} 次采样）",
+                result.estimated_error, result.evaluations
+            ),
+            tex_override: None,
+        })
+    });
+    Ok(Computation {
+        output: ComputationOutput::Value(output),
+        trace: Some(RuleTrace {
+            events: sink.events,
+        }),
+        certificates,
+        effects,
+    })
+}
+
+fn numeric_bound(
+    engine: &mut dyn Engine,
+    expression: &str,
+    label: &str,
+) -> Result<f64, EngineError> {
+    match engine.eval_expr(&format!("N({expression})"))? {
+        Expr::Number(value) => value
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| EngineError::Eval(format!("{label}不是有限实数"))),
+        _ => Err(EngineError::Eval(format!("{label}不是数值"))),
+    }
+}
+
+fn format_numeric_result(value: f64) -> String {
+    if value == 0.0 {
+        "0".into()
+    } else {
+        format!("{value:.15}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
     }
 }
 
@@ -430,6 +649,10 @@ mod tests {
             "{}",
             output.print_source()
         );
+        assert!(result.trace.as_ref().unwrap().events.iter().any(|event| {
+            event.rule == "antiderivative-family"
+                && event.bindings.contains(&("constant".into(), "C".into()))
+        }));
         assert_eq!(
             engine
                 .eval_expr(&format!(
@@ -522,5 +745,35 @@ mod tests {
             .unwrap()
             .print_source()
             .starts_with("Integrate("));
+    }
+
+    #[test]
+    fn integral_operations_do_not_cross_the_legacy_trace_adapter() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let measured = crate::metrics::measure(|| {
+            let indefinite = IntegralOperation
+                .compute(
+                    &mut engine,
+                    &input("x^2"),
+                    &IntegralRequest {
+                        variable: "x".into(),
+                        arbitrary_constant: "C".into(),
+                    },
+                )
+                .unwrap();
+            let definite = DefiniteIntegralOperation
+                .compute(
+                    &mut engine,
+                    &input("x^2"),
+                    &DefiniteIntegralRequest {
+                        variable: "x".into(),
+                        lower: "0".into(),
+                        upper: "1".into(),
+                    },
+                )
+                .unwrap();
+            (indefinite, definite)
+        });
+        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
     }
 }

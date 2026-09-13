@@ -268,7 +268,7 @@ SD'FuncDiff(name, f, after, u, v) :=
    积分步骤 StepsI(线性/幂/基本函数表/parts/u-substitution/兜底)
    ============================================================ */
 
-StepsI(expr, var) :=
+StepsI'RawComputation(expr, var) :=
 [
   Local(p, steps, tidied);
   p := SD'Merge(Int(expr), SI'Diff(expr, var), "Int");
@@ -280,8 +280,10 @@ StepsI(expr, var) :=
   If (tidied = p[2],
     steps := p[1],
     steps := Append(p[1], {"simplify", tidied}));
-  steps;
+  {tidied, steps};
 ];
+
+StepsI(expr, var) := StepsI'RawComputation(expr, var)[2];
 
 /* u-sub 比例判定:rest = c*g'(c 为常数)。
    快路径:未化简的 rest/g' 若已不含 v,直接判定(引擎 prec-100 规则
@@ -1034,7 +1036,14 @@ StepsD'Full(expr, var) := StepsD'Computation(expr, var, 1)[2];
    步骤序列按轮拼接(第 k 轮的步骤即"对 k-1 阶导数再求导"的过程)。 */
 StepsD'Full(expr, var, order) :=
   StepsD'Computation(expr, var, order)[2];
-StepsI'Full(expr, var) := Steps'Annotate(StepsI(expr, var), "i");
+StepsI'Computation(expr, var) :=
+[
+  Local(computed);
+  computed := StepsI'RawComputation(expr, var);
+  {computed[1], Steps'Annotate(computed[2], "i")};
+];
+
+StepsI'Full(expr, var) := StepsI'Computation(expr, var)[2];
 
 /* ---------- 极限语义事件 ----------
    复用 Lim 的求值与洛必达条件，不建立第二套极限求解器。返回值只描述
@@ -1205,17 +1214,20 @@ StepsL'GeneralData(_expr, _var, _at, _dir) <--
 
 RuleBase("StepsI'Def", {expr, var, from, to});
 
-StepsI'Def(expr, var, from, to) :=
+StepsI'Def'RawComputation(expr, var, from, to) :=
 [
   Local(p, F, upper, lower, final, tidied, integral, steps, symmetric,
-        odd, even, effectiveFrom, factor, substituted);
+        odd, even, effectiveFrom, factor, substituted, result, held);
   integral := Steps'DefiniteIntegral(expr, var, from, to);
   steps := {{"definite-integral-rule", integral}};
   symmetric := (from = -to);
   odd := symmetric And IsOddFunction(expr, var);
   even := symmetric And Not(odd) And IsEvenFunction(expr, var);
   If (odd,
-    Append(steps, {"definite-odd-symmetry-rule", 0}),
+  [
+    steps := Append(steps, {"definite-odd-symmetry-rule", 0});
+    result := 0;
+  ],
   [
   effectiveFrom := If(even, 0, from);
   factor := If(even, 2, 1);
@@ -1226,10 +1238,13 @@ StepsI'Def(expr, var, from, to) :=
   If (p[1][Length(p[1])][1] = "direct",
     /* 无解析原函数:留 Hold 不求值(引擎直积在此上下文会触发
        IntegrateMultiplicative 的 MatchLinear 重试错误),processing 随后数值求积 */
-    Concat(steps, SD'Merge(Int(expr),
-             {{{"direct", "p", expr, `Hold(Integrate(@var, @from, @to)(@expr))}},
-              `Hold(Integrate(@var, @from, @to)(@expr))},
-             "Int")[1]),
+  [
+    held := `Hold(Integrate(@var, @from, @to)(@expr));
+    steps := Concat(steps, SD'Merge(Int(expr),
+             {{{"direct", "p", expr, held}}, held},
+             "Int")[1]);
+    result := held;
+  ],
     [
       upper := Eval(ApplyPure("Subst", {var, to, F}));
       lower := Eval(ApplyPure("Subst", {var, effectiveFrom, F}));
@@ -1243,15 +1258,27 @@ StepsI'Def(expr, var, from, to) :=
                                2 * Steps'DefiniteIntegral(expr, var, 0, to)}));
       steps := Append(steps, {"definite-substitution-rule", substituted});
       If (tidied = final,
-        Append(steps, {"definite-eval-rule", final}),
-        Append(Append(steps, {"definite-eval-rule", final}),
-               {"simplify", tidied}));
+        steps := Append(steps, {"definite-eval-rule", final}),
+        steps := Append(Append(steps, {"definite-eval-rule", final}),
+                        {"simplify", tidied}));
+      result := tidied;
     ]);
   ]);
+  {result, steps};
+];
+
+StepsI'Def(expr, var, from, to) :=
+  StepsI'Def'RawComputation(expr, var, from, to)[2];
+
+StepsI'Def'Computation(expr, var, from, to) :=
+[
+  Local(computed);
+  computed := StepsI'Def'RawComputation(expr, var, from, to);
+  {computed[1], Steps'Annotate(computed[2], "i")};
 ];
 
 StepsI'Def'Full(expr, var, from, to) :=
-  Steps'Annotate(StepsI'Def(expr, var, from, to), "i");
+  StepsI'Def'Computation(expr, var, from, to)[2];
 
 /* ---------- DPrime 占位符的 TeX 形态 ----------
    DPrime(t) 是 SD'Merge 的"待定内层导数"占位符;渲染为撇号记法 (t)',

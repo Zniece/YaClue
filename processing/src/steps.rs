@@ -6,7 +6,7 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
-use crate::quadrature::{adaptive_simpson, QuadratureOptions};
+use crate::quadrature::QuadratureOptions;
 use crate::semantic_core::{RuleEventClass, RuleImportance, RuleTrace};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -713,61 +713,24 @@ fn derive_definite_configured(
     validate_expression(from, "下限")?;
     validate_expression(to, "上限")?;
     validate_symbol(var, "积分变量")?;
-    let mut steps = steps_from_command(
+    let computation = crate::integrals::definite_integral_computation_with_options(
         engine,
-        &format!("StepsI'Def'Full({expr}, {var}, {from}, {to})"),
-        verbosity,
+        expr,
+        &crate::integrals::DefiniteIntegralRequest {
+            variable: var.into(),
+            lower: from.into(),
+            upper: to.into(),
+        },
+        numeric_fallback,
     )?;
-    if steps.last().is_some_and(|step| step.rule == "direct") {
-        let Some(options) = numeric_fallback else {
-            return Ok(steps);
-        };
-        let lower = numeric_scalar(engine, from, "下限")?;
-        let upper = numeric_scalar(engine, to, "上限")?;
-        let result = adaptive_simpson(engine, expr, var, (lower, upper), options)?;
-        let value = format_number(result.value);
-        let tex = engine
-            .eval(&value)
-            .map(|result| strip_tex_delimiters(&result.tex))
-            .unwrap_or_else(|_| value.clone());
-        steps.push(Step {
-            kind: StepKind::EquivalentTransformation,
-            before_expr: None,
-            before_tex: None,
-            rule: "numeric-integration-rule".into(),
-            expr: value,
-            why: format!(
-                "自适应辛普森数值积分（估计误差 {:.2e}，{} 次采样）",
-                result.estimated_error, result.evaluations
-            ),
-            tex,
-            importance: StepImportance::Key,
-        });
-    }
-    Ok(steps)
-}
-
-fn numeric_scalar(
-    engine: &mut dyn Engine,
-    expression: &str,
-    label: &str,
-) -> Result<f64, EngineError> {
-    let result = engine.eval(&format!("N({expression})"))?;
-    match result.expr {
-        Expr::Number(value) => value
-            .parse::<f64>()
-            .ok()
-            .filter(|value| value.is_finite())
-            .ok_or_else(|| EngineError::Eval(format!("定积分{label}不是有限实数: {expression}"))),
-        _ => Err(EngineError::Eval(format!(
-            "定积分{label}不是有限实数: {expression}"
-        ))),
-    }
-}
-
-fn format_number(value: f64) -> String {
-    let text = format!("{value:.15}");
-    text.trim_end_matches('0').trim_end_matches('.').to_string()
+    render_rule_trace(
+        engine,
+        computation
+            .trace
+            .as_ref()
+            .ok_or_else(|| EngineError::Eval("定积分计算缺少规则轨迹".into()))?,
+        verbosity,
+    )
 }
 
 #[cfg(test)]
