@@ -112,6 +112,7 @@ fn execute_elaborated_structure_in_context(
                 });
             }
         }
+        trace.apply_mode(crate::semantic_core::current_computation_context().trace_mode);
     }
     Ok(computation)
 }
@@ -2660,5 +2661,49 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("副作用"));
+    }
+}
+#[test]
+fn trace_modes_preserve_computation_facts_across_domains() {
+    let mut engine = crate::engine::RustEngine::spawn().unwrap();
+    for source in [
+        "D(x)Limit(t,0)(Sin(t)/t+x^2)",
+        "Solve({x+y==3,x-y==1},{x,y})",
+        "{Limit(t,0)(Sin(t)/t),D(x)(x^3),Integrate(x)(2*x)}",
+        "D(x)HypergeometricPFQ({a},{b},x)",
+    ] {
+        let input = crate::elaboration::elaborate_input(source).unwrap();
+        let off = execute_elaborated_structure_with_context(
+            &mut engine,
+            &input.root,
+            crate::semantic_core::ComputationContext::new(crate::semantic_core::TraceMode::Off),
+        )
+        .unwrap();
+        let detailed = execute_elaborated_structure_with_context(
+            &mut engine,
+            &input.root,
+            crate::semantic_core::ComputationContext::new(
+                crate::semantic_core::TraceMode::Detailed,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            off.subject().map(|object| object.print_source()),
+            detailed.subject().map(|object| object.print_source()),
+            "{source}"
+        );
+        assert_eq!(
+            off.subject().map(|object| &object.semantics),
+            detailed.subject().map(|object| &object.semantics),
+            "{source}"
+        );
+        assert_eq!(off.certificates, detailed.certificates, "{source}");
+        let off_trace = off.trace.as_ref().unwrap();
+        let detailed_trace = detailed.trace.as_ref().unwrap();
+        assert!(off_trace.same_facts_as(detailed_trace), "{source}");
+        assert!(off_trace
+            .events
+            .iter()
+            .all(|event| event.presentation.is_none()));
     }
 }

@@ -186,11 +186,13 @@ fn lower_euler_gamma(
             certificate.conditions.conditions()
         ),
     });
+    let mut trace = RuleTrace {
+        events: vec![event],
+    };
+    trace.apply_mode(trace_mode);
     Ok(Some(Computation {
         output: ComputationOutput::Value(output),
-        trace: (!matches!(trace_mode, TraceMode::Off)).then(|| RuleTrace {
-            events: vec![event],
-        }),
+        trace: Some(trace),
         certificates: certificate.into_iter().collect(),
         effects: Vec::new(),
     }))
@@ -440,8 +442,13 @@ mod tests {
             off.value().unwrap().semantics.metadata,
             detailed.value().unwrap().semantics.metadata
         );
-        assert!(off.trace.is_none());
-        assert_eq!(detailed.trace.unwrap().events.len(), 1);
+        let off_trace = off.trace.unwrap();
+        let detailed_trace = detailed.trace.unwrap();
+        assert!(off_trace.same_facts_as(&detailed_trace));
+        assert_eq!(off_trace.events.len(), 1);
+        assert!(off_trace.events[0].presentation.is_none());
+        assert!(detailed_trace.events[0].presentation.is_some());
+        assert_eq!(detailed_trace.events.len(), 1);
         assert_eq!(off.certificates, detailed.certificates);
     }
 }

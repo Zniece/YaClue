@@ -2506,6 +2506,40 @@ impl RuleTrace {
             .iter()
             .try_for_each(RuleEvent::validate_classification)
     }
+
+    pub fn apply_mode(&mut self, mode: TraceMode) {
+        match mode {
+            TraceMode::Detailed => {}
+            TraceMode::Compact => {
+                for event in &mut self.events {
+                    if event.importance == RuleImportance::Routine {
+                        event.presentation = None;
+                    }
+                }
+            }
+            TraceMode::Off => {
+                for event in &mut self.events {
+                    event.presentation = None;
+                }
+            }
+        }
+    }
+
+    pub fn same_facts_as(&self, other: &Self) -> bool {
+        self.events.len() == other.events.len()
+            && self.events.iter().zip(&other.events).all(|(left, right)| {
+                left.class == right.class
+                    && left.rule == right.rule
+                    && left.input == right.input
+                    && left.additional_inputs == right.additional_inputs
+                    && left.output == right.output
+                    && left.bindings == right.bindings
+                    && left.conditions == right.conditions
+                    && left.payload == right.payload
+                    && left.importance == right.importance
+                    && left.transformation == right.transformation
+            })
+    }
 }
 
 #[derive(Clone)]
