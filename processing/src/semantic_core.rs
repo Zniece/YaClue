@@ -2398,6 +2398,73 @@ pub struct RuleEvent {
     pub presentation: Option<RulePresentation>,
 }
 
+/// Authoritative mathematical fact emitted by a domain rule. Product-facing
+/// text is deliberately absent: it is attached lazily by `EventSink` and can
+/// never determine the computation state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleFact {
+    pub rule: String,
+    pub class: RuleEventClass,
+    pub input: ObjectReference,
+    pub additional_inputs: Vec<ObjectReference>,
+    pub output: ObjectReference,
+    pub bindings: Vec<(String, String)>,
+    pub conditions: Vec<Condition>,
+    pub payload: RulePayload,
+    pub importance: RuleImportance,
+    pub transformation: Option<TransformationContext>,
+}
+
+impl RuleFact {
+    pub fn transition(
+        rule: impl Into<String>,
+        class: RuleEventClass,
+        input: &MathematicalObject,
+        output: &MathematicalObject,
+        payload: RulePayload,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            class,
+            input: input.reference(None),
+            additional_inputs: Vec::new(),
+            output: output.reference(None),
+            bindings: Vec::new(),
+            conditions: Vec::new(),
+            payload,
+            importance,
+            transformation: None,
+        }
+    }
+
+    pub fn with_bindings(mut self, bindings: Vec<(String, String)>) -> Self {
+        self.bindings = bindings;
+        self
+    }
+
+    pub fn with_conditions(mut self, conditions: Vec<Condition>) -> Self {
+        self.conditions = conditions;
+        self
+    }
+
+    fn into_event(self, presentation: Option<RulePresentation>) -> RuleEvent {
+        RuleEvent {
+            rule: self.rule,
+            class: self.class,
+            input: self.input,
+            additional_inputs: self.additional_inputs,
+            output: self.output,
+            bindings: self.bindings,
+            conditions: self.conditions,
+            payload: self.payload,
+            importance: self.importance,
+            transformation: self.transformation,
+            presentation,
+        }
+    }
+}
+
 impl RuleEvent {
     /// Returns explicit whole-expression context when an enclosing composer
     /// supplied it, otherwise a replayable root context for a unary/local
@@ -2461,6 +2528,21 @@ pub struct RulePresentation {
 
 pub trait EventSink {
     fn record(&mut self, event: RuleEvent);
+
+    fn record_fact(
+        &mut self,
+        fact: RuleFact,
+        build_presentation: impl FnOnce() -> Option<RulePresentation>,
+    ) where
+        Self: Sized,
+    {
+        let presentation = if matches!(current_computation_context().trace_mode, TraceMode::Off) {
+            None
+        } else {
+            build_presentation().inspect(|_| crate::metrics::record_rule_presentation())
+        };
+        self.record(fact.into_event(presentation));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3241,6 +3323,62 @@ mod tests {
             current_computation_context().trace_mode,
             TraceMode::Detailed
         );
+    }
+
+    #[test]
+    fn event_sink_keeps_rule_facts_identical_and_materializes_only_presentations() {
+        let fact = RuleFact {
+            rule: "test-rewrite".into(),
+            class: RuleEventClass::EquivalentTransformation,
+            input: ObjectReference {
+                object: ObjectId(1),
+                revision: ObjectRevision(0),
+                focus: None,
+            },
+            additional_inputs: Vec::new(),
+            output: ObjectReference {
+                object: ObjectId(1),
+                revision: ObjectRevision(1),
+                focus: None,
+            },
+            bindings: vec![("variable".into(), "x".into())],
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+        };
+        let presentation_builds = Cell::new(0);
+        let mut off = VecEventSink::default();
+        with_computation_context(ComputationContext::new(TraceMode::Off), || {
+            off.record_fact(fact.clone(), || {
+                presentation_builds.set(presentation_builds.get() + 1);
+                Some(RulePresentation {
+                    expression: "1".into(),
+                    explanation: "rewrite".into(),
+                    tex_override: None,
+                })
+            });
+        });
+        let mut detailed = VecEventSink::default();
+        with_computation_context(ComputationContext::new(TraceMode::Detailed), || {
+            detailed.record_fact(fact, || {
+                presentation_builds.set(presentation_builds.get() + 1);
+                Some(RulePresentation {
+                    expression: "1".into(),
+                    explanation: "rewrite".into(),
+                    tex_override: None,
+                })
+            });
+        });
+
+        assert_eq!(presentation_builds.get(), 1);
+        let off = RuleTrace { events: off.events };
+        let detailed = RuleTrace {
+            events: detailed.events,
+        };
+        assert!(off.same_facts_as(&detailed));
+        assert!(off.events[0].presentation.is_none());
+        assert!(detailed.events[0].presentation.is_some());
     }
 
     #[test]

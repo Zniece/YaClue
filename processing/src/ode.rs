@@ -16,10 +16,10 @@ use crate::semantic::{Exactness, ValueKind};
 #[cfg(test)]
 use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    CapabilitySet, Computation, ComputationOutput, NormalizationLevel, NormalizationMetadata,
-    NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
-    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
-    SemanticState,
+    CapabilitySet, Computation, ComputationOutput, EventSink, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleFact,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState, VecEventSink,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -211,30 +211,27 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
                 .cloned()
                 .map(|constant| ("constant".into(), constant)),
         );
-        let event = RuleEvent {
-            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-            rule: if solved {
+        let fact = RuleFact::transition(
+            if solved {
                 "solve-ode"
             } else {
                 "hold-ode-solve"
-            }
-            .into(),
-            input: input.reference(None),
-            additional_inputs: Vec::new(),
-            output: output.reference(None),
-            bindings,
-            conditions: Vec::new(),
-            payload: RulePayload::Rewrite,
-            importance: RuleImportance::Key,
-            transformation: None,
-            presentation: crate::semantic_core::materialize_presentation_if(solved, || {
-                RulePresentation {
-                    expression: output.print_source(),
-                    explanation: "求得并验证常微分方程解集。".into(),
-                    tex_override: Some(result.tex),
-                }
-            }),
-        };
+            },
+            crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            input,
+            &output,
+            RulePayload::Rewrite,
+            RuleImportance::Key,
+        )
+        .with_bindings(bindings);
+        let mut sink = VecEventSink::default();
+        sink.record_fact(fact, || {
+            solved.then(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: "求得并验证常微分方程解集。".into(),
+                tex_override: Some(result.tex),
+            })
+        });
         Ok(Computation {
             output: if solved {
                 ComputationOutput::Value(output)
@@ -242,7 +239,7 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
                 ComputationOutput::Held(output)
             },
             trace: Some(RuleTrace {
-                events: vec![event],
+                events: sink.events,
             }),
             certificates: Vec::new(),
             effects: Vec::new(),

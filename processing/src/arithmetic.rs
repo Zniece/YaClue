@@ -2781,6 +2781,7 @@ fn trace_modes_preserve_computation_facts_across_domains() {
     for source in [
         "D(x)Limit(t,0)(Sin(t)/t+x^2)",
         "Solve({x+y==3,x-y==1},{x,y})",
+        "OdeSolve(y'==y)",
         "{Limit(t,0)(Sin(t)/t),D(x)(x^3),Integrate(x)(2*x)}",
         "D(x)HypergeometricPFQ({a},{b},x)",
     ] {

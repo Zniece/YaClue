@@ -8,10 +8,10 @@ use crate::input::{
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    CapabilitySet, Computation, ComputationOutput, NormalizationLevel, NormalizationMetadata,
-    NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
-    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
-    SemanticState,
+    CapabilitySet, Computation, ComputationOutput, EventSink, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleFact,
+    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState, VecEventSink,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -180,44 +180,41 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
                 mode: NormalizationMode::Operation(OperatorId::Solve),
             }),
         });
-        let event = RuleEvent {
-            class: if no_value {
-                crate::semantic_core::RuleEventClass::MathematicalConclusion
-            } else {
-                crate::semantic_core::RuleEventClass::EquivalentTransformation
-            },
-            rule: match result.status {
+        let fact = RuleFact::transition(
+            match result.status {
                 SolveStatus::Solved => "solve-equations",
                 SolveStatus::NoSolution => "solve-no-solution",
                 SolveStatus::Infinite => "solve-all-values",
                 SolveStatus::Unresolved => "hold-solve",
-            }
-            .into(),
-            input: input.reference(None),
-            additional_inputs: Vec::new(),
-            output: output.reference(None),
-            bindings: vec![(
-                "variables".into(),
-                format!("{{{}}}", result.variables.join(",")),
-            )],
-            conditions: Vec::new(),
-            payload: RulePayload::Rewrite,
-            importance: RuleImportance::Key,
-            transformation: None,
-            presentation: crate::semantic_core::materialize_presentation_if(!unresolved, || {
-                RulePresentation {
-                    expression: output.print_source(),
-                    explanation: match result.status {
-                        SolveStatus::Solved => "求得并验证方程解集。",
-                        SolveStatus::NoSolution => "方程组没有解。",
-                        SolveStatus::Infinite => "方程对指定变量恒成立。",
-                        SolveStatus::Unresolved => unreachable!(),
-                    }
-                    .into(),
-                    tex_override: Some(result.tex),
+            },
+            if no_value {
+                crate::semantic_core::RuleEventClass::MathematicalConclusion
+            } else {
+                crate::semantic_core::RuleEventClass::EquivalentTransformation
+            },
+            input,
+            &output,
+            RulePayload::Rewrite,
+            RuleImportance::Key,
+        )
+        .with_bindings(vec![(
+            "variables".into(),
+            format!("{{{}}}", result.variables.join(",")),
+        )]);
+        let mut sink = VecEventSink::default();
+        sink.record_fact(fact, || {
+            (!unresolved).then(|| RulePresentation {
+                expression: output.print_source(),
+                explanation: match result.status {
+                    SolveStatus::Solved => "求得并验证方程解集。",
+                    SolveStatus::NoSolution => "方程组没有解。",
+                    SolveStatus::Infinite => "方程对指定变量恒成立。",
+                    SolveStatus::Unresolved => unreachable!(),
                 }
-            }),
-        };
+                .into(),
+                tex_override: Some(result.tex),
+            })
+        });
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
@@ -227,7 +224,7 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
                 ComputationOutput::Value(output)
             },
             trace: Some(RuleTrace {
-                events: vec![event],
+                events: sink.events,
             }),
             certificates: Vec::new(),
             effects: Vec::new(),
