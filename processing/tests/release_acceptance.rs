@@ -17,6 +17,7 @@ use processing::limits::{limit, limit_steps, LimitDirection, LimitStatus};
 use processing::linear_algebra::{
     compute as matrix_compute, linear_structure_steps, MatrixOperation,
 };
+use processing::metrics::measure;
 use processing::numeric::{approximate, find_root, NumericKind, RootStatus};
 use processing::objects::{DefinedObjectStatus, PrimitiveOperation};
 use processing::ode::{solve as solve_ode, InitialCondition, OdeStatus};
@@ -24,7 +25,8 @@ use processing::ode_numeric::{solve_initial_value, NumericOdeOptions, NumericOde
 use processing::plot::{sample, SampleOptions, SampleTermination};
 use processing::protocol::{Condition, ResolutionState};
 use processing::semantic_core::{
-    ComputationOutput, Effect, NormalizationLevel, OperatorId, SemanticInterpretation,
+    ComputationContext, ComputationOutput, Effect, NormalizationLevel, OperatorId,
+    SemanticInterpretation, TraceMode,
 };
 use processing::steps::{derive_integrals, derive_steps};
 
@@ -43,6 +45,94 @@ fn assert_step_contract(steps: &[processing::steps::Step]) {
             && !step.why.is_empty()
             && !step.tex.is_empty()
     }));
+}
+
+fn execute_with_metrics(
+    engine: &mut RustEngine,
+    source: &str,
+    mode: TraceMode,
+) -> processing::metrics::Measured<processing::semantic_core::Computation> {
+    let elaborated = processing::elaboration::elaborate_input(source).unwrap();
+    measure(|| {
+        processing::arithmetic::execute_elaborated_structure_with_context(
+            engine,
+            &elaborated.root,
+            ComputationContext::new(mode),
+        )
+        .unwrap()
+    })
+}
+
+fn mathematical_facts(
+    computation: &processing::semantic_core::Computation,
+) -> (
+    Option<String>,
+    Option<processing::semantic_core::SemanticState>,
+    Vec<processing::semantic_core::Certificate>,
+) {
+    (
+        computation.subject().map(|object| object.print_source()),
+        computation.subject().map(|object| object.semantics.clone()),
+        computation.certificates.clone(),
+    )
+}
+
+#[test]
+fn cross_domain_rule_emission_release_contract() {
+    let mut engine = RustEngine::spawn().expect("engine boot");
+    let cases = [
+        "D(x)(x^3)",
+        "Integrate(x)(2*x)",
+        "Sum(k,1,4,k^2)",
+        "DoubleIntegral(x+y,y,0,1,x,0,1)",
+        "D(x)Limit(t,0)(Sin(t)/t+x^2)",
+        "{D(x)(x^3),Integrate(x)(2*x),Sum(k,1,4,k^2)}",
+        "Solve({x+y==3,x-y==1},{x,y})",
+        "OdeSolve(y'==y)",
+    ];
+
+    for source in cases {
+        let off = execute_with_metrics(&mut engine, source, TraceMode::Off);
+        let compact = execute_with_metrics(&mut engine, source, TraceMode::Compact);
+        let detailed = execute_with_metrics(&mut engine, source, TraceMode::Detailed);
+
+        assert_eq!(off.metrics.legacy_trace_adaptations, 0, "{source}");
+        assert_eq!(compact.metrics.legacy_trace_adaptations, 0, "{source}");
+        assert_eq!(detailed.metrics.legacy_trace_adaptations, 0, "{source}");
+        assert_eq!(
+            mathematical_facts(&off.value),
+            mathematical_facts(&compact.value),
+            "{source}"
+        );
+        assert_eq!(
+            mathematical_facts(&off.value),
+            mathematical_facts(&detailed.value),
+            "{source}"
+        );
+        assert!(
+            off.value
+                .trace
+                .as_ref()
+                .unwrap()
+                .same_facts_as(compact.value.trace.as_ref().unwrap()),
+            "{source}"
+        );
+        assert!(
+            off.value
+                .trace
+                .as_ref()
+                .unwrap()
+                .same_facts_as(detailed.value.trace.as_ref().unwrap()),
+            "{source}"
+        );
+
+        if source.starts_with("Solve(") || source.starts_with("OdeSolve(") {
+            assert_eq!(
+                off.metrics.engine_requests, detailed.metrics.engine_requests,
+                "enabling detailed trace must not rerun the solver for {source}"
+            );
+        }
+    }
 }
 
 #[test]
