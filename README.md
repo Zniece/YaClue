@@ -1,5 +1,7 @@
 # YaClue
 
+[简体中文](README.zh-CN.md)
+
 [![CI](https://github.com/Zniece/YaClue/actions/workflows/ci.yml/badge.svg)](https://github.com/Zniece/YaClue/actions/workflows/ci.yml)
 
 **Yet another clue** — an open-source, local-first mathematics application.
@@ -12,6 +14,32 @@ algebra engine written in Rust — a dialect fork of
 implementation. YaClue's typed semantic layer turns engine expressions into
 composable mathematical objects and keeps equivalent transformations,
 auxiliary analyses, terminal conclusions, and UI effects distinct.
+
+Download the current prerelease from
+[YaClue 0.1.0-alpha.4](https://github.com/Zniece/YaClue/releases/tag/v0.1.0-alpha.4).
+The desktop interface is available in English and Simplified Chinese; it uses
+the system language initially and can be switched in the application.
+
+## Mathematical input
+
+YaClue accepts compact mathematical expressions rather than a general-purpose
+script language. Operations compose directly, so the result of an inner
+operation remains a typed mathematical object for the outer operation.
+
+```text
+D(x)Sin(x)^2
+Integrate(x,0,Pi)Sin(x)
+Limit(Sin(x)/x,0)
+Solve(x^2-5*x+6==0,x)
+OdeSolve(y'==y+2*x)
+Plot(Sin(x),x,-Pi,Pi)
+```
+
+`==` constructs an equation; it does not solve it implicitly. Use `Solve` for
+algebraic equations and systems, and `OdeSolve` for ordinary differential
+equations. Function-style operations can consume expressions or compatible
+results from other operations. Unsupported symbolic results remain structured
+objects when possible instead of being flattened into display strings.
 
 ## Layout
 
@@ -45,6 +73,12 @@ equation step:
 - mathematical analyses used to choose or verify a method;
 - terminal conclusions such as no value or an unresolved object;
 - effects such as a plot attached to the normal mathematical result.
+
+The structured wire format is locale-neutral. Result headings use a stable
+`title_key`; steps, analyses, conclusions, and user-facing errors use
+`message_ref` objects containing a stable `key` and named `args`. Human-readable
+text is selected by the frontend locale catalogue rather than serialized by the
+mathematics backend.
 
 ## Symbol-safety boundary
 
