@@ -23,6 +23,23 @@ fn unified_input_accepts_two_argument_limit_with_default_x() {
 }
 
 #[test]
+fn unified_equation_no_solution_is_a_structured_conclusion() {
+    let mut engine = RustEngineProxy::spawn().unwrap();
+    let result =
+        process_expression_with_engine(request("Solve(Sqrt(x)==-1,x)", true), &mut engine).unwrap();
+    assert_eq!(result.expression, "NoSolutions({x})");
+    assert!(result
+        .steps
+        .iter()
+        .all(|step| step.rule != "solve-no-solution"));
+    assert!(!result.conclusions.is_empty());
+    assert_eq!(
+        result.conclusions[0].message,
+        "方程或方程组没有满足条件的解。"
+    );
+}
+
+#[test]
 fn semantic_calculus_end_to_end_acceptance() {
     let mut engine = RustEngineProxy::spawn().unwrap();
     let started = std::time::Instant::now();

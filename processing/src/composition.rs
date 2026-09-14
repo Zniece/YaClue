@@ -352,6 +352,14 @@ pub fn execute_elaborated(
         Vec::new()
     };
     let reason = match status {
+        CompositionStatus::NoValue
+            if matches!(&input.root.form,
+                crate::elaboration::MathematicalForm::Application { head }
+                    if operator_descriptor(head)
+                        .is_some_and(|descriptor| descriptor.id == CompositionOperator::Solve)) =>
+        {
+            Some("方程或方程组没有满足条件的解。".into())
+        }
         CompositionStatus::NoValue => Some("内层数学结论不存在，外层运算未执行。".into()),
         CompositionStatus::Unresolved
             if matches!(&input.root.form,
@@ -1337,6 +1345,116 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.rule == "solve-equations"));
+    }
+
+    #[test]
+    fn equation_solving_separates_solution_analysis_from_whole_transformations() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let quadratic = execute_steps(
+            &mut engine,
+            "Solve(x^2-3*x+2==0,x)",
+            StepVerbosity::Detailed,
+        )
+        .unwrap()
+        .unwrap();
+        for rule in ["equation-quadratic", "equation-branch", "equation-verify"] {
+            assert!(quadratic.analyses.iter().any(|item| item.rule == rule));
+            assert!(quadratic.steps.iter().all(|step| step.rule != rule));
+        }
+        assert_eq!(
+            quadratic
+                .analyses
+                .iter()
+                .filter(|item| item.rule == "equation-branch")
+                .count(),
+            2
+        );
+        assert!(quadratic
+            .steps
+            .iter()
+            .any(|step| step.rule == "solve-equations" && step.expr == "{x==1,x==2}"));
+        assert!(quadratic
+            .steps
+            .iter()
+            .all(|step| step.before_expr.is_some()));
+
+        let rational = execute_steps(&mut engine, "Solve(1/(x-1)==2,x)", StepVerbosity::Detailed)
+            .unwrap()
+            .unwrap();
+        assert!(rational
+            .analyses
+            .iter()
+            .any(|item| item.rule == "equation-domain-exclusion"));
+        assert!(rational
+            .steps
+            .iter()
+            .all(|step| step.rule != "equation-domain-exclusion"));
+
+        let radical = execute_steps(
+            &mut engine,
+            "Solve(Sqrt(x+1)==3,x)",
+            StepVerbosity::Detailed,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(radical
+            .analyses
+            .iter()
+            .any(|item| item.rule == "equation-radical-square"));
+        assert!(radical
+            .steps
+            .iter()
+            .all(|step| step.rule != "equation-radical-square"));
+
+        let system = execute_steps(
+            &mut engine,
+            "Solve({x+y==3,x-y==1},{x,y})",
+            StepVerbosity::Detailed,
+        )
+        .unwrap()
+        .unwrap();
+        for rule in [
+            "equation-system-variables",
+            "equation-system-eliminate",
+            "equation-system-branch",
+            "equation-system-verify",
+        ] {
+            assert!(system.analyses.iter().any(|item| item.rule == rule));
+            assert!(system.steps.iter().all(|step| step.rule != rule));
+        }
+
+        for source in ["Solve(Sqrt(x)==-1,x)", "Solve(x^x==1,x)"] {
+            let result = execute_steps(&mut engine, source, StepVerbosity::Detailed)
+                .unwrap()
+                .unwrap();
+            assert!(!result.conclusions.is_empty(), "{source}: {result:#?}");
+            assert!(result
+                .steps
+                .iter()
+                .all(|step| !matches!(step.rule.as_str(), "solve-no-solution" | "hold-solve")));
+            if source.starts_with("Solve(Sqrt") {
+                assert_eq!(result.value, "NoSolutions({x})");
+            }
+        }
+        let identity = execute_steps(&mut engine, "Solve(0==0,x)", StepVerbosity::Detailed)
+            .unwrap()
+            .unwrap();
+        assert!(identity
+            .steps
+            .iter()
+            .any(|step| step.rule == "solve-all-values"));
+        let inconsistent = execute_steps(
+            &mut engine,
+            "Solve({x+y==3,x+y==4},{x,y})",
+            StepVerbosity::Detailed,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(inconsistent.value, "NoSolutions({x,y})");
+        assert!(inconsistent
+            .analyses
+            .iter()
+            .all(|item| !item.expression.contains("Infinity")));
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub(crate) struct EquationRuleEmission {
     pub(crate) expression: String,
     pub(crate) explanation: String,
     pub(crate) importance: RuleImportance,
+    pub(crate) class: crate::semantic_core::RuleEventClass,
 }
 
 impl EquationRuleEmission {
@@ -35,6 +36,22 @@ impl EquationRuleEmission {
             expression: expression.into(),
             explanation: explanation.into(),
             importance,
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+        }
+    }
+
+    fn analysis(
+        rule: impl Into<String>,
+        expression: impl Into<String>,
+        explanation: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expression: expression.into(),
+            explanation: explanation.into(),
+            importance,
+            class: crate::semantic_core::RuleEventClass::MathematicalAnalysis,
         }
     }
 }
@@ -144,7 +161,10 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             .collect::<Vec<_>>();
         let (result, emissions) = equation_evaluation(engine, &equation_refs, &variable_refs)?;
         let output_source = match result.status {
-            SolveStatus::Solved | SolveStatus::NoSolution => result.raw.clone(),
+            SolveStatus::Solved => result.raw.clone(),
+            SolveStatus::NoSolution => {
+                format!("NoSolutions({{{}}})", result.variables.join(","))
+            }
             SolveStatus::Infinite => format!("AllSolutions({{{}}})", result.variables.join(",")),
             SolveStatus::Unresolved => format!(
                 "Solve({{{}}},{{{}}})",
@@ -210,13 +230,15 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
         let input_ref = input.reference(None);
         let output_ref = output.reference(None);
         let mut sink = VecEventSink::default();
+        let mut auxiliary_sink = VecEventSink::default();
         let mut transition_expressions = emissions
             .iter()
             .filter(|emission| {
                 !matches!(
                     emission.rule.as_str(),
                     "equation-result" | "equation-system-result"
-                )
+                ) && emission.class
+                    == crate::semantic_core::RuleEventClass::EquivalentTransformation
             })
             .map(|emission| emission.expression.clone())
             .collect::<Vec<_>>();
@@ -229,29 +251,39 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
                 )
             })
             .for_each(|emission| {
+                let is_transformation = emission.class
+                    == crate::semantic_core::RuleEventClass::EquivalentTransformation;
                 let fact = RuleFact {
-                    class: if emission.rule == "equation-system-inconsistent" && no_value {
-                        crate::semantic_core::RuleEventClass::MathematicalConclusion
-                    } else {
-                        crate::semantic_core::RuleEventClass::EquivalentTransformation
-                    },
+                    class: emission.class,
                     rule: emission.rule,
                     input: input_ref.clone(),
                     additional_inputs: Vec::new(),
-                    output: output_ref.clone(),
+                    output: if is_transformation {
+                        output_ref.clone()
+                    } else {
+                        input_ref.clone()
+                    },
                     bindings: bindings.clone(),
                     conditions: Vec::new(),
-                    payload: RulePayload::Rewrite,
+                    payload: if is_transformation {
+                        RulePayload::Rewrite
+                    } else {
+                        RulePayload::Inference
+                    },
                     importance: emission.importance,
                     transformation: None,
                 };
-                sink.record_fact(fact, || {
-                    Some(RulePresentation {
-                        expression: emission.expression,
-                        explanation: emission.explanation,
-                        tex_override: None,
-                    })
-                });
+                let presentation = RulePresentation {
+                    expression: emission.expression,
+                    explanation: emission.explanation,
+                    tex_override: None,
+                };
+                let target = if is_transformation {
+                    &mut sink
+                } else {
+                    &mut auxiliary_sink
+                };
+                target.record_fact(fact, || Some(presentation));
             });
         let conclusion_rule = match result.status {
             SolveStatus::Solved => "solve-equations",
@@ -259,43 +291,81 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             SolveStatus::Infinite => "solve-all-values",
             SolveStatus::Unresolved => "hold-solve",
         };
-        let conclusion = RuleFact {
-            class: if no_value {
-                crate::semantic_core::RuleEventClass::MathematicalConclusion
-            } else {
+        let conclusion_class =
+            if matches!(result.status, SolveStatus::Solved | SolveStatus::Infinite) {
                 crate::semantic_core::RuleEventClass::EquivalentTransformation
-            },
+            } else {
+                crate::semantic_core::RuleEventClass::MathematicalConclusion
+            };
+        let conclusion = RuleFact {
+            class: conclusion_class,
             rule: conclusion_rule.into(),
             input: input_ref,
             additional_inputs: Vec::new(),
             output: output_ref,
             bindings,
             conditions: Vec::new(),
-            payload: RulePayload::Rewrite,
+            payload: if conclusion_class
+                == crate::semantic_core::RuleEventClass::EquivalentTransformation
+            {
+                RulePayload::Rewrite
+            } else {
+                RulePayload::Inference
+            },
             importance: RuleImportance::Key,
             transformation: None,
         };
-        sink.record_fact(conclusion, || {
-            Some(RulePresentation {
-                expression: output.print_source(),
-                explanation: match result.status {
-                    SolveStatus::Solved => "求得并验证方程解集。",
-                    SolveStatus::NoSolution => "方程组没有解。",
-                    SolveStatus::Infinite => "方程对指定变量恒成立。",
-                    SolveStatus::Unresolved => "保留当前方法尚未求解的方程对象。",
-                }
-                .into(),
-                tex_override: Some(result.tex),
-            })
-        });
-        transition_expressions.push(output.print_source());
-        let (output, events) =
+        let conclusion_presentation = RulePresentation {
+            expression: output.print_source(),
+            explanation: match result.status {
+                SolveStatus::Solved => "求得并验证方程解集。",
+                SolveStatus::NoSolution => "方程组没有解。",
+                SolveStatus::Infinite => "方程对指定变量恒成立。",
+                SolveStatus::Unresolved => "保留当前方法尚未求解的方程对象。",
+            }
+            .into(),
+            tex_override: Some(result.tex),
+        };
+        let conclusion_is_transformation =
+            conclusion_class == crate::semantic_core::RuleEventClass::EquivalentTransformation;
+        let conclusion_target = if conclusion_is_transformation {
+            &mut sink
+        } else {
+            &mut auxiliary_sink
+        };
+        conclusion_target.record_fact(conclusion, || Some(conclusion_presentation));
+        if conclusion_is_transformation {
+            transition_expressions.push(output.print_source());
+        }
+        let materialization_target = if conclusion_is_transformation {
+            output.clone()
+        } else if let Some(expression) = transition_expressions.last() {
+            let mut intermediate = input.clone();
+            intermediate.apply(ObjectDelta {
+                expression: Some(
+                    crate::semantic_core::parse_engine_expression(expression)?.raw_expression(),
+                ),
+                semantics: None,
+                overlay: None,
+                normalization: None,
+            });
+            intermediate
+        } else {
+            input.clone()
+        };
+        let (materialized_output, mut events) =
             crate::semantic_core::materialize_rule_transitions_from_engine_source(
                 input,
-                output,
+                materialization_target,
                 sink.events,
                 &transition_expressions,
             )?;
+        let output = if conclusion_is_transformation {
+            materialized_output
+        } else {
+            output
+        };
+        events.extend(auxiliary_sink.events);
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
@@ -327,7 +397,7 @@ fn system_rule_emissions(equations: &[&str], result: &SolveResult) -> Vec<Equati
         "建立联立方程组。",
         RuleImportance::Routine,
     )];
-    events.push(EquationRuleEmission::new(
+    events.push(EquationRuleEmission::analysis(
         "equation-system-variables",
         format!("{{{}}}", result.variables.join(",")),
         match result.variable_source {
@@ -342,8 +412,8 @@ fn system_rule_emissions(equations: &[&str], result: &SolveResult) -> Vec<Equati
         "将每个方程移到一边，形成同一个消元系统。",
         RuleImportance::Normal,
     ));
-    if equations.len() > 1 || result.variables.len() > 1 {
-        events.push(EquationRuleEmission::new(
+    if result.status == SolveStatus::Solved && (equations.len() > 1 || result.variables.len() > 1) {
+        events.push(EquationRuleEmission::analysis(
             "equation-system-eliminate",
             &result.raw,
             "联立消元并保留相容的解分支。",
@@ -353,7 +423,7 @@ fn system_rule_emissions(equations: &[&str], result: &SolveResult) -> Vec<Equati
     match result.status {
         SolveStatus::Solved => {
             for solution in &result.solutions {
-                events.push(EquationRuleEmission::new(
+                events.push(EquationRuleEmission::analysis(
                     "equation-system-branch",
                     assignments_expression(solution),
                     if result.completeness == SolveCompleteness::Parametric {
@@ -364,14 +434,14 @@ fn system_rule_emissions(equations: &[&str], result: &SolveResult) -> Vec<Equati
                     RuleImportance::Normal,
                 ));
             }
-            events.push(EquationRuleEmission::new(
+            events.push(EquationRuleEmission::analysis(
                 "equation-system-verify",
                 "0",
                 "将各分支代回全部原方程，残差均为零。",
                 RuleImportance::Routine,
             ));
         }
-        SolveStatus::NoSolution => events.push(EquationRuleEmission::new(
+        SolveStatus::NoSolution => events.push(EquationRuleEmission::analysis(
             "equation-system-inconsistent",
             "False",
             "消元后不存在能同时满足全部方程的分支。",
@@ -406,19 +476,23 @@ fn algebraic_equation_emissions(
         .split_once("==")
         .map(|(left, right)| format!("({left})-({right})"))
         .unwrap_or_else(|| equation.to_string());
-    let denominator = equation
-        .split_once("==")
-        .map(|(left, right)| {
-            format!("NormalForm(GetNumerDenom({left})[2]*GetNumerDenom({right})[2])")
-        })
-        .unwrap_or_else(|| format!("GetNumerDenom({equation})[2]"));
+    let denominator = if equation.contains('/') {
+        equation
+            .split_once("==")
+            .map(|(left, right)| {
+                format!("NormalForm(GetNumerDenom({left})[2]*GetNumerDenom({right})[2])")
+            })
+            .unwrap_or_else(|| format!("GetNumerDenom({equation})[2]"))
+    } else {
+        "1".into()
+    };
     let [p, d, f, q] = fresh_internal_symbols(
         "EquationDiagnostic",
         &[equation, variable, &residual, &denominator],
         ["Polynomial", "Degree", "Factored", "Denominator"],
     );
     let diagnostic = engine.eval_expr(&format!(
-        "[Local({p},{d},{f},{q}); {p}:=NormalForm({residual}); {q}:={denominator}; If(CanBeUni({variable},{p}), [{d}:=Degree({p},{variable}); {f}:=If({d}<=8,Factor({p}),{p}); {{True,{p},{d},{f},{q}}};], {{False,{p},0,{p},{q}}});]"
+        "[ClearErrors(); Local({p},{d},{f},{q}); {p}:=NormalForm({residual}); {q}:={denominator}; If(CanBeUni({variable},{p}), [{d}:=Degree({p},{variable}); {f}:=If({d}<=8,Factor({p}),{p}); {{True,{p},{d},{f},{q}}};], {{False,{p},0,{p},{q}}});]"
     ))?;
     let Expr::Call { head, args } = diagnostic else {
         return Err(EngineError::Parse("方程步骤诊断不是列表".into()));
@@ -446,7 +520,7 @@ fn algebraic_equation_emissions(
         RuleImportance::Routine,
     )];
     if has_domain_exclusion {
-        events.push(EquationRuleEmission::new(
+        events.push(EquationRuleEmission::analysis(
             "equation-domain-exclusion",
             format!("{denominator}!=0"),
             "原方程的分母不能为零；这些值不属于定义域。",
@@ -466,18 +540,21 @@ fn algebraic_equation_emissions(
                 expression: result.raw.clone(),
                 explanation: format!("合并同类项并解出 {variable}。"),
                 importance: RuleImportance::Normal,
+                class: crate::semantic_core::RuleEventClass::MathematicalAnalysis,
             }),
             Some(2) => events.push(EquationRuleEmission {
                 rule: "equation-quadratic".into(),
                 expression: format!("{normalized}==0"),
                 explanation: "使用二次方程求根公式求出各个分支。".into(),
                 importance: RuleImportance::Normal,
+                class: crate::semantic_core::RuleEventClass::MathematicalAnalysis,
             }),
             Some(3..=8) if factored != normalized => events.push(EquationRuleEmission {
                 rule: "equation-factor".into(),
                 expression: format!("{factored}==0"),
                 explanation: "因式分解后令每个因式分别为零。".into(),
                 importance: RuleImportance::Key,
+                class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
             }),
             _ => {}
         }
@@ -494,6 +571,7 @@ fn algebraic_equation_emissions(
                     expression: format!("{}=={}", solution[0].variable, solution[0].value),
                     explanation: "得到一个候选解分支。".into(),
                     importance: RuleImportance::Normal,
+                    class: crate::semantic_core::RuleEventClass::MathematicalAnalysis,
                 });
                 events.push(EquationRuleEmission {
                     rule: "equation-verify".into(),
@@ -504,6 +582,7 @@ fn algebraic_equation_emissions(
                         "将该候选解代回原方程，残差为零；去根号产生的增根会在此被拒绝。".into()
                     },
                     importance: RuleImportance::Routine,
+                    class: crate::semantic_core::RuleEventClass::MathematicalAnalysis,
                 });
             }
         }
@@ -519,6 +598,7 @@ fn algebraic_equation_emissions(
         }
         .into(),
         importance: RuleImportance::Key,
+        class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
     });
 
     Ok(events)
@@ -564,7 +644,7 @@ fn direct_radical_event(
                 yacas_rs::printer::infix_print(env, other),
             )
         });
-        return Ok(Some(EquationRuleEmission::new(
+        return Ok(Some(EquationRuleEmission::analysis(
             "equation-radical-square",
             format!("{radicand}==({other})^2"),
             "孤立平方根后两边平方；这一步可能产生增根，最终必须代回原方程。",
@@ -1319,6 +1399,13 @@ mod tests {
     }
 
     #[test]
+    fn proxy_engine_preserves_no_solution_results() {
+        let mut engine = crate::engine::RustEngineProxy::spawn().unwrap();
+        let (result, _) = equation_evaluation(&mut engine, &["Sqrt(x)==-1"], &["x"]).unwrap();
+        assert_eq!(result.status, SolveStatus::NoSolution);
+    }
+
+    #[test]
     fn rejects_invalid_requests_without_poisoning_the_engine() {
         let mut engine = RustEngine::spawn().unwrap();
         assert!(solve(&mut engine, &[], &["x"]).is_err());
@@ -1413,12 +1500,10 @@ mod tests {
                 },
             )
             .unwrap();
-        let rules = computation
-            .trace
-            .unwrap()
-            .events
-            .into_iter()
-            .map(|event| event.rule)
+        let events = computation.trace.unwrap().events;
+        let rules = events
+            .iter()
+            .map(|event| event.rule.clone())
             .collect::<Vec<_>>();
         assert!(rules.contains(&"equation-quadratic".into()));
         assert_eq!(
@@ -1428,7 +1513,17 @@ mod tests {
                 .count(),
             2
         );
-        assert_eq!(rules.last().map(String::as_str), Some("solve-equations"));
+        assert!(rules.contains(&"solve-equations".into()));
+        assert!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.rule.as_str(),
+                    "equation-quadratic" | "equation-branch" | "equation-verify"
+                ))
+                .all(|event| event.class
+                    == crate::semantic_core::RuleEventClass::MathematicalAnalysis)
+        );
     }
 
     #[test]
