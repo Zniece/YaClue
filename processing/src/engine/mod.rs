@@ -5,6 +5,7 @@ mod proxy;
 mod repl;
 mod rust;
 
+pub(crate) use model::canonical_call_ast;
 pub use model::{Engine, EngineError, ErrorCode, ErrorResponse, EvalResult, Expr};
 pub use proxy::RustEngineProxy;
 pub use repl::{cpp_reference_available, ReplEngine};

@@ -1,5 +1,7 @@
 use serde::Serialize;
 use std::fmt;
+use std::rc::Rc;
+use yacas_rs::value::{atom_or_number, build_list, clone_kind, LispObject, ObjectKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -60,6 +62,42 @@ impl Expr {
         }
         Ok(expr)
     }
+
+    /// Adapt the engine's structured FullForm DTO directly into the shared
+    /// canonical AST. `Expr::Call` is already prefix/full-form data, so infix
+    /// and bodied surface syntax require no reparsing or precedence recovery.
+    pub(crate) fn to_canonical_ast(
+        &self,
+        env: &mut yacas_rs::env::Environment,
+    ) -> Result<Rc<LispObject>, EngineError> {
+        match self {
+            Expr::Number(value) | Expr::Symbol(value) => Ok(atom_or_number(&mut env.symtab, value)),
+            Expr::Call { head, args } => {
+                let mut kinds = Vec::with_capacity(args.len() + 1);
+                kinds.push(ObjectKind::Atom(env.symtab.look_up(head)));
+                for argument in args {
+                    let node = argument.to_canonical_ast(env)?;
+                    kinds.push(clone_kind(&node.kind));
+                }
+                let list = build_list(kinds)
+                    .ok_or_else(|| EngineError::Parse("结构化引擎调用缺少 head".into()))?;
+                Ok(LispObject::new(ObjectKind::Sublist(list)))
+            }
+        }
+    }
+}
+
+pub(crate) fn canonical_call_ast(
+    env: &mut yacas_rs::env::Environment,
+    head: &str,
+    args: &[Rc<LispObject>],
+) -> Result<Rc<LispObject>, EngineError> {
+    let mut kinds = Vec::with_capacity(args.len() + 1);
+    kinds.push(ObjectKind::Atom(env.symtab.look_up(head)));
+    kinds.extend(args.iter().map(|argument| clone_kind(&argument.kind)));
+    let list =
+        build_list(kinds).ok_or_else(|| EngineError::Parse("结构化引擎调用缺少 head".into()))?;
+    Ok(LispObject::new(ObjectKind::Sublist(list)))
 }
 
 /// 分词:空白分隔,且 `(`/`)` 独立成 token(真实输出中会粘连,如 `))1`)。
@@ -266,5 +304,62 @@ pub trait Engine {
     #[allow(dead_code)] // 步骤层接口,暂未消费
     fn trace(&mut self, _command: &str) -> Result<Vec<String>, EngineError> {
         Ok(vec![])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_same_ast_projection(expression: Expr, source: &str) {
+        crate::input::with_parse_env(|env| {
+            let actual = expression.to_canonical_ast(env).unwrap();
+            let expected = yacas_rs::parser::parse_expression(env, &format!("{source};"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                yacas_rs::printer::infix_print(env, &actual),
+                yacas_rs::printer::infix_print(env, &expected)
+            );
+        });
+    }
+
+    #[test]
+    fn structured_expr_adapts_infix_relations_lists_and_bodied_calls() {
+        assert_same_ast_projection(
+            Expr::Call {
+                head: "+".into(),
+                args: vec![Expr::Symbol("x".into()), Expr::Number("2".into())],
+            },
+            "x+2",
+        );
+        assert_same_ast_projection(
+            Expr::Call {
+                head: "==".into(),
+                args: vec![Expr::Symbol("x".into()), Expr::Number("0".into())],
+            },
+            "x==0",
+        );
+        assert_same_ast_projection(
+            Expr::Call {
+                head: "List".into(),
+                args: vec![Expr::Symbol("x".into()), Expr::Number("1".into())],
+            },
+            "{x,1}",
+        );
+        assert_same_ast_projection(
+            Expr::Call {
+                head: "D".into(),
+                args: vec![
+                    Expr::Symbol("x".into()),
+                    Expr::Number("2".into()),
+                    Expr::Call {
+                        head: "Sin".into(),
+                        args: vec![Expr::Symbol("x".into())],
+                    },
+                ],
+            },
+            "D(x,2)Sin(x)",
+        );
     }
 }

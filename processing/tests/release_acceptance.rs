@@ -133,6 +133,32 @@ fn cross_domain_rule_emission_release_contract() {
 }
 
 #[test]
+fn derivative_rule_transitions_remain_ast_native_and_mode_invariant() {
+    let mut engine = RustEngine::spawn().expect("engine boot");
+    let source = "D(x)Limit(t,0)(Sin(t)/t+x^2)";
+    let off = execute_with_metrics(&mut engine, source, TraceMode::Off);
+    let detailed = execute_with_metrics(&mut engine, source, TraceMode::Detailed);
+
+    assert_eq!(
+        mathematical_facts(&off.value),
+        mathematical_facts(&detailed.value)
+    );
+    let off_trace = off.value.trace.as_ref().unwrap();
+    let detailed_trace = detailed.value.trace.as_ref().unwrap();
+    assert!(off_trace.same_facts_as(detailed_trace));
+    assert_eq!(off.metrics.object_transitions, 11);
+    assert_eq!(detailed.metrics.object_transitions, 11);
+    assert!(detailed_trace.events.iter().all(|event| {
+        event.input.object != event.output.object
+            || event.output.revision.0 == event.input.revision.0 + 1
+    }));
+    // Parse counts are process-global in yacas-rs and therefore unsuitable
+    // for a parallel test assertion. The release baseline records the
+    // single-threaded 18/46 ceilings; the adapter unit test seals the typed
+    // boundary here without accepting a source fallback.
+}
+
+#[test]
 fn domain_rule_events_reference_actual_object_deltas() {
     let mut engine = RustEngine::spawn().expect("engine boot");
     let cases = [

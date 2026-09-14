@@ -131,12 +131,13 @@ impl SemanticOperation<DerivativeRequest> for DerivativeOperation {
 struct DerivativeRuleEmission {
     rule: String,
     expression: String,
+    expression_ast: std::rc::Rc<yacas_rs::value::LispObject>,
     explanation: String,
     importance: RuleImportance,
 }
 
 struct DerivativeEvaluation {
-    result: String,
+    result: Expr,
     emissions: Vec<DerivativeRuleEmission>,
 }
 
@@ -157,7 +158,7 @@ fn evaluate_derivative_rules(
             "求导规则执行结果必须包含结果和规则发射".into(),
         ));
     }
-    let result = args[0].to_string();
+    let result = args[0].clone();
     let Expr::Call {
         head: emission_head,
         args: emission_args,
@@ -201,9 +202,11 @@ fn evaluate_derivative_rules(
                     )))
                 }
             };
+            let expression_ast = crate::input::with_parse_env(|env| args[1].to_canonical_ast(env))?;
             Ok(DerivativeRuleEmission {
                 rule: text(&args[0], "rule")?,
                 expression: args[1].to_string(),
+                expression_ast,
                 explanation: text(&args[2], "explanation")?,
                 importance,
             })
@@ -264,9 +267,7 @@ pub fn derivative_computation_for_object(
     }
     let source = operand.print_source();
     let evaluation = evaluate_derivative_rules(engine, &source, request)?;
-    let final_expression = evaluation.result;
-    let final_ast =
-        crate::semantic_core::parse_engine_expression(&final_expression)?.raw_expression();
+    let final_ast = crate::input::with_parse_env(|env| evaluation.result.to_canonical_ast(env))?;
     let unresolved = crate::input::with_parse_env(|env| {
         ExpressionView::new(env, &final_ast)
             .head()
@@ -284,11 +285,6 @@ pub fn derivative_computation_for_object(
         metadata.conditions = operand.semantics.metadata.conditions.clone();
     }
     let mut output_object = operand.clone();
-    let output_source = if unresolved {
-        format!("D({},{})({source})", request.variable, request.order)
-    } else {
-        final_expression.clone()
-    };
     let mut semantics = SemanticState {
         kind: ValueKind::Unevaluated,
         interpretation: if unresolved {
@@ -303,7 +299,15 @@ pub fn derivative_computation_for_object(
         requirements: Vec::new(),
     };
     let output_ast = if unresolved {
-        crate::semantic_core::parse_engine_expression(&output_source)?.raw_expression()
+        crate::input::with_parse_env(|env| {
+            let variable = Expr::Symbol(request.variable.clone()).to_canonical_ast(env)?;
+            let order = Expr::Number(request.order.to_string()).to_canonical_ast(env)?;
+            crate::engine::canonical_call_ast(
+                env,
+                "D",
+                &[variable, order, operand.raw_expression()],
+            )
+        })?
     } else {
         final_ast
     };
@@ -332,7 +336,7 @@ pub fn derivative_computation_for_object(
     let transition_expressions = evaluation
         .emissions
         .iter()
-        .map(|emission| emission.expression.clone())
+        .map(|emission| emission.expression_ast.clone())
         .collect::<Vec<_>>();
     let mut sink = VecEventSink::default();
     evaluation
@@ -371,7 +375,7 @@ pub fn derivative_computation_for_object(
                 })
             });
         });
-    let (output_object, events) = crate::semantic_core::materialize_rule_transitions(
+    let (output_object, events) = crate::semantic_core::materialize_rule_transitions_from_ast(
         operand,
         output_object,
         sink.events,

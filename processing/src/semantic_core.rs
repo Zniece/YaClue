@@ -30,8 +30,10 @@ pub use operator_signature::{
     PartialApplication, RecursiveExecutionHandler, ResultTypeConstraint, ScopeArgument,
     TypedApplication, TypedArgument, ValueArgument, OPERATOR_DESCRIPTORS,
 };
-pub(crate) use trace_computation::materialize_rule_transitions;
 pub use trace_computation::*;
+pub(crate) use trace_computation::{
+    materialize_rule_transitions, materialize_rule_transitions_from_ast,
+};
 
 #[cfg(test)]
 mod tests {

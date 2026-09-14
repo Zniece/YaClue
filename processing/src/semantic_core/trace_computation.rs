@@ -105,8 +105,28 @@ impl RuleEvent {
 pub(crate) fn materialize_rule_transitions(
     input: &MathematicalObject,
     final_output: MathematicalObject,
-    mut events: Vec<RuleEvent>,
+    events: Vec<RuleEvent>,
     transition_expressions: &[String],
+) -> Result<(MathematicalObject, Vec<RuleEvent>), EngineError> {
+    let mut expressions = transition_expressions
+        .iter()
+        .take(transition_expressions.len().saturating_sub(1))
+        .map(|expression| parse_engine_expression(expression).map(|parsed| parsed.raw_expression()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if !transition_expressions.is_empty() {
+        expressions.push(final_output.raw_expression());
+    }
+    materialize_rule_transitions_from_ast(input, final_output, events, &expressions)
+}
+
+/// Typed counterpart used when a domain engine already returned structured
+/// expressions. Keeping this boundary AST-native avoids lossy print/parse
+/// cycles while retaining one real object revision per emitted rule.
+pub(crate) fn materialize_rule_transitions_from_ast(
+    input: &MathematicalObject,
+    final_output: MathematicalObject,
+    mut events: Vec<RuleEvent>,
+    transition_expressions: &[std::rc::Rc<yacas_rs::value::LispObject>],
 ) -> Result<(MathematicalObject, Vec<RuleEvent>), EngineError> {
     if events.is_empty() {
         return Ok((final_output, events));
@@ -132,7 +152,7 @@ pub(crate) fn materialize_rule_transitions(
         let expression = if index == last {
             final_expression.clone()
         } else {
-            parse_engine_expression(&transition_expressions[index])?.raw_expression()
+            transition_expressions[index].clone()
         };
         object.apply(ObjectDelta {
             expression: Some(expression),
