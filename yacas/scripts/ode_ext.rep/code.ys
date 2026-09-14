@@ -118,8 +118,10 @@ OdeExtSolveLinearFirstOrderPartsData(_p, _q, _collect) <--
             {{candidate}, LinearFirstOrder,
              If(collect,
                 {{OdeLinearForm, y' + p*y == q, 2},
-                 {OdeIntegratingFactor, integratingFactor, 2},
-                 {OdeIntegrateLinear, integratingFactor*y == antiderivative + constant, 1}},
+                 {OdeMultiplyLinear,
+                  OdeLinearMultiplyData(p, q, integratingFactor), 2},
+                 {OdeIntegrateLinear,
+                  integratingFactor*y == antiderivative + constant, 2}},
                 {})};
         ];
     ];

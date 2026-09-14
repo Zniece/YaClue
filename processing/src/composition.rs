@@ -968,6 +968,38 @@ mod tests {
     }
 
     #[test]
+    fn linear_ode_steps_define_and_apply_the_integrating_factor_to_the_whole_equation() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(&mut engine, "OdeSolve(y'==y+2*x)", StepVerbosity::Standard)
+            .unwrap()
+            .unwrap();
+        let multiply = result
+            .steps
+            .iter()
+            .find(|step| step.rule == "ode-multiply-linear")
+            .expect("linear ODE must apply its integrating factor");
+        assert!(multiply.expr.contains("Exp(-x)"), "{multiply:#?}");
+        assert!(multiply.expr.contains("y'"), "{multiply:#?}");
+        assert!(multiply.expr.contains("2*x"), "{multiply:#?}");
+        assert!(multiply.why.contains("p(x)=-1"), "{multiply:#?}");
+        assert!(multiply.why.contains("积分因子定义"), "{multiply:#?}");
+        assert!(result.steps.iter().all(|step| step.expr != "Exp(-x)"));
+        let integrate = result
+            .steps
+            .iter()
+            .find(|step| step.rule == "ode-integrate-linear")
+            .unwrap();
+        assert!(integrate.why.contains("(μy)'"), "{integrate:#?}");
+        let solved = result
+            .steps
+            .iter()
+            .find(|step| step.rule == "ode-solve-dependent")
+            .unwrap();
+        assert!(solved.why.contains("解出因变量"), "{solved:#?}");
+        assert!(result.steps.iter().all(|step| step.before_expr.is_some()));
+    }
+
+    #[test]
     fn pending_outer_operations_remain_visible_during_inner_steps() {
         let mut engine = RustEngine::spawn().unwrap();
         let result = execute_steps(

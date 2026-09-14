@@ -323,9 +323,9 @@ pub(crate) fn ode_rule_emissions(
     events.extend(solver_events);
     if !result.constants.is_empty() {
         events.push(OdeEvent::new(
-            "ode-constant",
+            "ode-solve-dependent",
             &result.solution,
-            "引入任意常数，得到通解。",
+            "整理上一关系并解出因变量；保留任意常数，以表示完整解族。",
             RuleImportance::Normal,
         ));
     }
@@ -1047,10 +1047,54 @@ fn parse_solver_events(
                 "2" => RuleImportance::Key,
                 _ => RuleImportance::Normal,
             };
+            let (expression, explanation) = if rule == "OdeMultiplyLinear" {
+                let Expr::Call {
+                    head,
+                    args: multiply_args,
+                } = &args[1]
+                else {
+                    return Err(EngineError::Parse(
+                        "ODE 积分因子乘法事件缺少结构化参数".into(),
+                    ));
+                };
+                if head != "OdeLinearMultiplyData" || multiply_args.len() != 3 {
+                    return Err(EngineError::Parse("ODE 积分因子乘法事件形态异常".into()));
+                }
+                let source = |expression: &Expr| {
+                    crate::input::with_parse_env(|env| {
+                        expression
+                            .to_canonical_ast(env)
+                            .map(|ast| yacas_rs::printer::infix_print(env, &ast))
+                    })
+                    .map(|source| translate_event_expression(&source, independent, dependent))
+                };
+                let p = source(&multiply_args[0])?;
+                let q = source(&multiply_args[1])?;
+                let factor = source(&multiply_args[2])?;
+                let standard_left = match p.as_str() {
+                    "-1" => format!("{dependent}'-{dependent}"),
+                    "1" => format!("{dependent}'+{dependent}"),
+                    _ => format!("{dependent}'+({p})*{dependent}"),
+                };
+                (
+                    format!("({factor})*({standard_left})==({factor})*({q})"),
+                    format!(
+                        "标准式 {dependent}'+p({independent}){dependent}=q({independent}) 中，\
+                         本题 p({independent})={p}。积分因子定义为 \
+                         μ({independent})=Exp(∫p({independent})d{independent})={factor}；\
+                         它恒不为零，所以可将方程两边同乘该因子。"
+                    ),
+                )
+            } else {
+                (
+                    translate_event_expression(&args[1].to_string(), independent, dependent),
+                    solver_event_explanation(&rule).into(),
+                )
+            };
             Ok(OdeEvent::new(
                 solver_event_rule(&rule),
-                translate_event_expression(&args[1].to_string(), independent, dependent),
-                solver_event_explanation(&rule),
+                expression,
+                explanation,
                 importance,
             ))
         })
@@ -1073,8 +1117,10 @@ fn solver_event_explanation(rule: &str) -> &'static str {
         "OdeSeparableForm" => "将方程整理为可分离变量形式。",
         "OdeLinearForm" => "整理为一阶线性方程的标准形式。",
         "OdeBernoulliForm" => "整理为 Bernoulli 方程的标准形式。",
-        "OdeIntegratingFactor" => "计算积分因子。",
-        "OdeIntegrateLinear" => "乘以积分因子并积分。",
+        "OdeMultiplyLinear" => "计算积分因子并将标准方程两边同乘该因子。",
+        "OdeIntegrateLinear" => {
+            "乘入积分因子后，左侧正好是 (μy)'；对等式两边积分，得到 μy=∫μq dx+C。"
+        }
         "OdeReciprocalSubstitution" => "作倒数代换。",
         "OdeBernoulliLinear" => "代换后得到一阶线性方程。",
         "OdeRestoreZeroBranch" => "补回倒数代换可能遗漏的零解。",
@@ -2015,7 +2061,7 @@ mod tests {
                 "y'+y==x",
                 &[
                     "ode-linear-form",
-                    "ode-integrating-factor",
+                    "ode-multiply-linear",
                     "ode-integrate-linear",
                 ][..],
             ),
