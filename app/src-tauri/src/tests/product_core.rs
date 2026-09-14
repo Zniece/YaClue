@@ -373,3 +373,60 @@ fn product_session_preserves_assumptions_and_recovers_after_invalid_input() {
         process_expression_with_engine(request("Simplify(Sqrt(x^2))", false), &mut engine).unwrap();
     assert_ne!(cleared.expression, "x");
 }
+
+#[test]
+fn remaining_operator_families_emit_translated_product_messages() {
+    let mut engine = RustEngineProxy::spawn().unwrap();
+    let catalogue = include_str!("../../../src/i18n.js");
+    let cases = [
+        "Factor(x^2-1)",
+        "Expand((x+1)^2)",
+        "Apart((x+1)/(x^2-1),x)",
+        "Subst(x,2)(x^2+1)",
+        "Taylor(Exp(x),0,3)",
+        "Determinant({{1,2},{3,4}})",
+        "Inverse({{1,2},{3,4}})",
+        "EigenValues({{2,1},{1,2}})",
+        "Transpose({{1,2},{3,4}})",
+        "Rank({{1,2},{2,4}})",
+        "MatrixSolve({{1,0},{0,1}},{2,3})",
+        "PLDU({{4,2},{2,2}})",
+        "Factors(PLDU({{4,2},{2,2}}))",
+        "DoubleIntegral(x+y,y,0,2,x,0,1)",
+        "PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)",
+        "Gradient(x^2+y^2,{x,y})",
+        "DirectionalDerivative(x^2+y^2,{x,y},{1,0})",
+        "ScalarLineIntegral(x,{x,y},{t,0},t,0,1)",
+        "VectorLineIntegral({y,x},{x,y},{t,t^2},t,0,1)",
+        "ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{1,1})",
+        "VectorSurfaceIntegral({0,0,1},{x,y,z},{u,v,0},{u,v},{0,0},{2,3},Reversed)",
+        "Sum(k,1,3,k)",
+        "Sum(k,1,Infinity,1/k^2)",
+        "N(Pi,12)",
+        "OdeSolveNumeric(y'==y,x,y,0,1,0.1)",
+        "FindRoot(x^2-2,x,1)",
+        "Plot(x^2,x,0,1)",
+        "Extrema(x^2+y^2,x,y)",
+        "Lagrange(x+y,x^2+y^2-1,x,y)",
+        "ImproperIntegral(Exp(-x),x,0,Infinity)",
+        "ImproperIntegral(1/x,x,1,Infinity)",
+        "PrincipalValueIntegral(1/x,x,-1,1,{0})",
+    ];
+    let mut missing = BTreeSet::new();
+    for source in cases {
+        let result = process_expression_with_engine(request(source, true), &mut engine)
+            .unwrap_or_else(|error| panic!("{source}: {}", error.message));
+        let keys = result
+            .steps
+            .iter()
+            .map(|step| &step.message_ref.key)
+            .chain(result.analyses.iter().map(|item| &item.message_ref.key))
+            .chain(result.conclusions.iter().map(|item| &item.message_ref.key));
+        for key in keys {
+            if catalogue.matches(&format!("\"{key}\"")).count() != 2 {
+                missing.insert(key.clone());
+            }
+        }
+    }
+    assert!(missing.is_empty(), "missing locale keys: {missing:#?}");
+}
