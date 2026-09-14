@@ -2715,16 +2715,16 @@ pub enum CertificateEvidence {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ExtensionCertificateEnvelope {
-    pub namespace: String,
-    pub name: String,
-    pub version: u32,
-    pub document: serde_json::Value,
+    namespace: String,
+    name: String,
+    version: u32,
+    document: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Certificate {
-    pub version: u32,
-    pub evidence: CertificateEvidence,
+    version: u32,
+    evidence: CertificateEvidence,
 }
 
 /// Product-facing analysis facts. The enum is strongly typed inside Rust but
@@ -2751,6 +2751,14 @@ impl Certificate {
         }
     }
 
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    pub fn evidence(&self) -> &CertificateEvidence {
+        &self.evidence
+    }
+
     pub fn analysis(&self) -> Option<ComputationAnalysis> {
         match &self.evidence {
             CertificateEvidence::MultivariateShape(shape) => {
@@ -2770,6 +2778,36 @@ impl Certificate {
             }
             _ => None,
         }
+    }
+}
+
+impl ExtensionCertificateEnvelope {
+    pub fn new(
+        namespace: impl Into<String>,
+        name: impl Into<String>,
+        version: u32,
+        document: serde_json::Value,
+    ) -> Result<Self, &'static str> {
+        let namespace = namespace.into();
+        let name = name.into();
+        if namespace.trim().is_empty() {
+            return Err("extension certificate namespace cannot be empty");
+        }
+        if name.trim().is_empty() {
+            return Err("extension certificate name cannot be empty");
+        }
+        if version == 0 {
+            return Err("extension certificate version must be positive");
+        }
+        if !document.is_object() {
+            return Err("extension certificate document must be an object");
+        }
+        Ok(Self {
+            namespace,
+            name,
+            version,
+            document,
+        })
     }
 }
 
@@ -3593,5 +3631,55 @@ mod tests {
         assert!(invalid.validate_classification().is_err());
         invalid.class = RuleEventClass::MathematicalAnalysis;
         assert!(invalid.validate_classification().is_ok());
+    }
+
+    #[test]
+    fn certificate_wire_protocol_is_versioned_and_stable() {
+        let certificate = Certificate::new(CertificateEvidence::EquivalentRepresentation {
+            operation: "factor".into(),
+            before: "x^2-1".into(),
+            after: "(x-1)*(x+1)".into(),
+        });
+
+        assert_eq!(certificate.version(), Certificate::CURRENT_VERSION);
+        assert_eq!(
+            serde_json::to_value(&certificate).unwrap(),
+            serde_json::json!({
+                "version": 1,
+                "evidence": {
+                    "kind": "equivalent_representation",
+                    "payload": {
+                        "operation": "factor",
+                        "before": "x^2-1",
+                        "after": "(x-1)*(x+1)"
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn typed_analysis_preserves_the_legacy_product_json_shape() {
+        let analysis = ComputationAnalysis::MultivariateShape(vec![2]);
+        assert_eq!(
+            serde_json::to_value(analysis).unwrap(),
+            serde_json::json!([2])
+        );
+    }
+
+    #[test]
+    fn extension_certificates_reject_invalid_envelopes() {
+        let object = || serde_json::json!({ "proof": "external" });
+        assert!(ExtensionCertificateEnvelope::new("", "proof", 1, object()).is_err());
+        assert!(ExtensionCertificateEnvelope::new("org.example", "", 1, object()).is_err());
+        assert!(ExtensionCertificateEnvelope::new("org.example", "proof", 0, object()).is_err());
+        assert!(ExtensionCertificateEnvelope::new(
+            "org.example",
+            "proof",
+            1,
+            serde_json::json!("free-form-string")
+        )
+        .is_err());
+        assert!(ExtensionCertificateEnvelope::new("org.example", "proof", 1, object()).is_ok());
     }
 }

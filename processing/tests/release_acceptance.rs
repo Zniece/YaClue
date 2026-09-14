@@ -633,14 +633,14 @@ fn migrated_object_pipeline_release_contract() {
         processing::semantic::ValueKind::SolutionSet
     );
     assert!(extrema.certificates.iter().any(|item| matches!(
-        item.evidence,
+        item.evidence(),
         processing::semantic_core::CertificateEvidence::ExtremaAnalysis(_)
     )));
 
     let lagrange = execute(&mut engine, "Lagrange(x+y,x^2+y^2-1,x,y)");
     assert!(matches!(lagrange.output, ComputationOutput::Value(_)));
     assert!(lagrange.certificates.iter().any(|item| matches!(
-        item.evidence,
+        item.evidence(),
         processing::semantic_core::CertificateEvidence::LagrangeAnalysis(_)
     )));
 

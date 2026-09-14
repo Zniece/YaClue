@@ -909,7 +909,7 @@ mod tests {
             .print_source()
             .starts_with("FindRoot("));
         assert!(matches!(
-            failed.certificates[0].evidence,
+            failed.certificates[0].evidence(),
             CertificateEvidence::NumericRootAttempt { .. }
         ));
     }

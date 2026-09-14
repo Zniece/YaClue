@@ -715,8 +715,8 @@ mod tests {
             SemanticInterpretation::NumericTrajectory(ref trajectory) if trajectory.points.len() > 1
         ));
         assert!(matches!(
-            result.certificates[0].evidence,
-            CertificateEvidence::NumericOdeBudget { evaluations, .. } if evaluations > 0
+            result.certificates[0].evidence(),
+            CertificateEvidence::NumericOdeBudget { evaluations, .. } if *evaluations > 0
         ));
     }
 
