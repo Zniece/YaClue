@@ -1,9 +1,11 @@
 use processing::composition::execute_steps;
 use processing::engine::{Engine, RustEngine};
 use processing::multiple_integrals::{
-    double_integral, double_integral_steps, polar_integral, polar_integral_steps, triple_integral,
-    triple_integral_steps, IntegralBound, IteratedIntegralStatus, PolarRegion,
-    TripleIntegralStatus,
+    double_integral, polar_integral, triple_integral, IntegralBound, IteratedIntegralStatus,
+    PolarRegion, TripleIntegralStatus,
+};
+use processing::step_compatibility::{
+    double_integral_steps, polar_integral_steps, triple_integral_steps,
 };
 use processing::steps::StepVerbosity;
 

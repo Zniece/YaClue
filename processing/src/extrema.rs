@@ -16,7 +16,6 @@ use crate::semantic_core::{
     OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticOperation, SemanticState,
 };
-use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -60,10 +59,27 @@ pub struct ExtremaResult {
     pub tex: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtremaStepResult {
-    pub result: ExtremaResult,
-    pub steps: Vec<Step>,
+pub(crate) struct ExtremaEmission {
+    pub(crate) rule: String,
+    pub(crate) expr: String,
+    pub(crate) why: String,
+    pub(crate) importance: RuleImportance,
+}
+
+impl ExtremaEmission {
+    fn new(
+        rule: impl Into<String>,
+        expr: impl Into<String>,
+        why: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expr: expr.into(),
+            why: why.into(),
+            importance,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -98,12 +114,6 @@ pub struct LagrangeResult {
     pub equations: Vec<String>,
     pub candidates: Vec<LagrangeCandidate>,
     pub tex: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LagrangeStepResult {
-    pub result: LagrangeResult,
-    pub steps: Vec<Step>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,7 +193,7 @@ impl SemanticOperation<LagrangeRequest> for LagrangeOperation {
 fn extrema_computation(
     input: &MathematicalObject,
     result: ExtremaResult,
-    events: Vec<StepEvent>,
+    events: Vec<ExtremaEmission>,
 ) -> Result<Computation, EngineError> {
     let source = match result.status {
         ExtremaStatus::Classified | ExtremaStatus::PartiallyClassified => format!(
@@ -223,7 +233,7 @@ fn extrema_computation(
 fn lagrange_computation(
     input: &MathematicalObject,
     result: LagrangeResult,
-    events: Vec<StepEvent>,
+    events: Vec<ExtremaEmission>,
 ) -> Result<Computation, EngineError> {
     let source = match result.status {
         LagrangeStatus::Candidates => lagrange_display(&result.candidates),
@@ -261,7 +271,7 @@ fn structured_extrema_output(
     operator: OperatorId,
     spelling: &str,
     resolution: u8,
-    events: Vec<StepEvent>,
+    events: Vec<ExtremaEmission>,
     certificate: Certificate,
 ) -> Result<Computation, EngineError> {
     let interpretation = if resolution == 2 {
@@ -320,11 +330,7 @@ fn structured_extrema_output(
             bindings: Vec::new(),
             conditions: Vec::new(),
             payload: RulePayload::Rewrite,
-            importance: match event.importance {
-                StepImportance::Key => RuleImportance::Key,
-                StepImportance::Normal => RuleImportance::Normal,
-                StepImportance::Routine => RuleImportance::Routine,
-            },
+            importance: event.importance,
             transformation: None,
             presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                 expression: event.expr,
@@ -345,42 +351,42 @@ fn structured_extrema_output(
     })
 }
 
-fn lagrange_step_events(result: &LagrangeResult) -> Vec<StepEvent> {
+pub(crate) fn lagrange_step_events(result: &LagrangeResult) -> Vec<ExtremaEmission> {
     let system = format!("{{{}}}", result.equations.join(","));
-    let mut events = vec![StepEvent::new(
+    let mut events = vec![ExtremaEmission::new(
         "lagrange-system",
         &system,
         "建立目标梯度等于乘子乘约束梯度的方程组，并同时满足约束。",
-        StepImportance::Key,
+        RuleImportance::Key,
     )];
     for candidate in &result.candidates {
         let coordinates = assignments_expression(&candidate.coordinates);
-        events.push(StepEvent::new(
+        events.push(ExtremaEmission::new(
             "lagrange-candidate",
             &coordinates,
             "求得一个有限实数候选点。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ));
-        events.push(StepEvent::new(
+        events.push(ExtremaEmission::new(
             "lagrange-verify",
-            &format!(
+            format!(
                 "{{{},{}}}",
                 candidate.stationarity_residuals.join(","),
                 candidate.constraint_residual
             ),
             "代回乘子方程和约束，所有残差为零；约束梯度在该点非零。",
-            StepImportance::Routine,
+            RuleImportance::Routine,
         ));
-        events.push(StepEvent::new(
+        events.push(ExtremaEmission::new(
             "lagrange-value",
             &candidate.value,
             "计算目标函数在该候选点的值。",
-            StepImportance::Key,
+            RuleImportance::Key,
         ));
     }
-    events.push(StepEvent::new(
+    events.push(ExtremaEmission::new(
         "lagrange-result",
-        &lagrange_display(&result.candidates),
+        lagrange_display(&result.candidates),
         match result.status {
             LagrangeStatus::Candidates => {
                 "得到经过验证的约束极值候选；当前结果不自动宣称全局最值。"
@@ -391,41 +397,41 @@ fn lagrange_step_events(result: &LagrangeResult) -> Vec<StepEvent> {
             }
             LagrangeStatus::Unresolved => "当前方程求解能力未能完整确定 Lagrange 候选。",
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
     events
 }
 
-fn extrema_step_events(result: &ExtremaResult) -> Vec<StepEvent> {
+pub(crate) fn extrema_step_events(result: &ExtremaResult) -> Vec<ExtremaEmission> {
     let gradient_equations = format!("{{{}==0,{}==0}}", result.gradient[0], result.gradient[1]);
-    let mut events = vec![StepEvent::new(
+    let mut events = vec![ExtremaEmission::new(
         "extrema-gradient",
         &gradient_equations,
         "令两个一阶偏导数为零以寻找临界点。",
-        StepImportance::Key,
+        RuleImportance::Key,
     )];
     for point in &result.critical_points {
         let coordinates = assignments_expression(&point.coordinates);
-        events.push(StepEvent::new(
+        events.push(ExtremaEmission::new(
             "extrema-critical-point",
             &coordinates,
             "得到一个经过梯度零检验的临界点。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ));
-        events.push(StepEvent::new(
+        events.push(ExtremaEmission::new(
             "extrema-hessian",
-            &matrix_expression(&point.hessian),
-            &format!(
+            matrix_expression(&point.hessian),
+            format!(
                 "在该点计算 Hessian；其行列式为 {}。",
                 point.hessian_determinant
             ),
-            StepImportance::Routine,
+            RuleImportance::Routine,
         ));
-        events.push(StepEvent::new(
+        events.push(ExtremaEmission::new(
             "extrema-classify",
             &coordinates,
             classification_explanation(point.kind),
-            StepImportance::Key,
+            RuleImportance::Key,
         ));
     }
     let final_expression = if result.critical_points.is_empty() {
@@ -441,7 +447,7 @@ fn extrema_step_events(result: &ExtremaResult) -> Vec<StepEvent> {
                 .join(",")
         )
     };
-    events.push(StepEvent::new(
+    events.push(ExtremaEmission::new(
         "extrema-result",
         &final_expression,
         match result.status {
@@ -452,7 +458,7 @@ fn extrema_step_events(result: &ExtremaResult) -> Vec<StepEvent> {
             ExtremaStatus::NoCriticalPoints => "没有有限临界点。",
             ExtremaStatus::Unresolved => "当前方程求解能力未能完整确定临界点。",
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
     events
 }
@@ -468,41 +474,6 @@ pub fn analyze_lagrange(
     analyze_lagrange_internal(engine, expression, constraint, x, y, true)
 }
 
-pub fn analyze_lagrange_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    constraint: &str,
-    x: &str,
-    y: &str,
-) -> Result<LagrangeStepResult, EngineError> {
-    analyze_lagrange_steps_with_verbosity(
-        engine,
-        expression,
-        constraint,
-        x,
-        y,
-        StepVerbosity::Detailed,
-    )
-}
-
-pub fn analyze_lagrange_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    constraint: &str,
-    x: &str,
-    y: &str,
-    verbosity: StepVerbosity,
-) -> Result<LagrangeStepResult, EngineError> {
-    validate_lagrange_request(expression, constraint, x, y)?;
-    let mut result = analyze_lagrange_internal(engine, expression, constraint, x, y, false)?;
-    let steps = render_events(engine, lagrange_step_events(&result), verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(LagrangeStepResult { result, steps })
-}
-
 pub fn analyze(
     engine: &mut dyn Engine,
     expression: &str,
@@ -513,33 +484,7 @@ pub fn analyze(
     analyze_internal(engine, expression, x, y, true)
 }
 
-pub fn analyze_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    x: &str,
-    y: &str,
-) -> Result<ExtremaStepResult, EngineError> {
-    analyze_steps_with_verbosity(engine, expression, x, y, StepVerbosity::Detailed)
-}
-
-pub fn analyze_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    x: &str,
-    y: &str,
-    verbosity: StepVerbosity,
-) -> Result<ExtremaStepResult, EngineError> {
-    validate_request(expression, x, y)?;
-    let mut result = analyze_internal(engine, expression, x, y, false)?;
-    let steps = render_events(engine, extrema_step_events(&result), verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(ExtremaStepResult { result, steps })
-}
-
-fn analyze_lagrange_internal(
+pub(crate) fn analyze_lagrange_internal(
     engine: &mut dyn Engine,
     expression: &str,
     constraint: &str,
@@ -845,7 +790,7 @@ struct LagrangeVerification {
     saw_singular_constraint: bool,
 }
 
-fn validate_lagrange_request(
+pub(crate) fn validate_lagrange_request(
     expression: &str,
     constraint: &str,
     x: &str,
@@ -894,7 +839,7 @@ fn lagrange_display(candidates: &[LagrangeCandidate]) -> String {
     }
 }
 
-fn analyze_internal(
+pub(crate) fn analyze_internal(
     engine: &mut dyn Engine,
     expression: &str,
     x: &str,
@@ -1132,7 +1077,7 @@ fn parse_point(solution: &[Assignment], record: &Expr) -> Result<CriticalPoint, 
     })
 }
 
-fn validate_request(expression: &str, x: &str, y: &str) -> Result<(), EngineError> {
+pub(crate) fn validate_request(expression: &str, x: &str, y: &str) -> Result<(), EngineError> {
     validate_expression(expression, "多元极值表达式")?;
     validate_symbol(x, "第一个极值变量")?;
     validate_symbol(y, "第二个极值变量")?;
@@ -1204,6 +1149,13 @@ fn boolean(expression: &Expr, label: &str) -> Result<bool, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::step_compatibility::{
+        extrema_analyze_lagrange_steps as analyze_lagrange_steps,
+        extrema_analyze_lagrange_steps_with_verbosity as analyze_lagrange_steps_with_verbosity,
+        extrema_analyze_steps as analyze_steps,
+        extrema_analyze_steps_with_verbosity as analyze_steps_with_verbosity,
+    };
+    use crate::steps::{StepImportance, StepVerbosity};
     use crate::test_support::CountingEngine;
 
     #[test]

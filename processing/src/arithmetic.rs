@@ -8,8 +8,9 @@ use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
     object_from_source, BinarySemanticOperation, CapabilitySet, Computation, ComputationOutput,
     NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
-    ObjectId, OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
-    SemanticInterpretation, SemanticOperation, SemanticState, UnarySemanticOperation,
+    ObjectId, OperatorId, RecursiveExecutionHandler, RuleEvent, RuleImportance, RulePayload,
+    RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
+    UnarySemanticOperation,
 };
 
 pub fn has_object_native_descendant(expression: &crate::elaboration::ElaboratedObject) -> bool {
@@ -44,404 +45,15 @@ pub fn contains_operator(
             .any(|child| contains_operator(child, expected))
 }
 
-pub(crate) fn execute_calculus_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_calculus_application(engine, expression, spelling)
-}
-
-pub(crate) fn execute_algebra_transform_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_transform_application(engine, expression, spelling)
-}
-
-macro_rules! execution_adapter {
-    ($adapter:ident, $implementation:ident) => {
-        pub(crate) fn $adapter(
-            engine: &mut dyn Engine,
-            expression: &crate::elaboration::ElaboratedObject,
-            _spelling: &str,
-        ) -> Result<Computation, EngineError> {
-            $implementation(engine, expression)
-        }
-    };
-}
-
-execution_adapter!(
-    execute_substitution_adapter,
-    execute_substitution_application
-);
-execution_adapter!(execute_taylor_adapter, execute_taylor_application);
-execution_adapter!(execute_equation_solve_adapter, execute_solve_application);
-execution_adapter!(execute_ode_solve_adapter, execute_ode_solve_application);
-execution_adapter!(
-    execute_factor_projection_adapter,
-    execute_factor_projection_application
-);
-execution_adapter!(
-    execute_matrix_solve_adapter,
-    execute_matrix_solve_application
-);
-execution_adapter!(execute_series_adapter, execute_sum_application);
-execution_adapter!(execute_numeric_ode_adapter, execute_numeric_ode_application);
-execution_adapter!(execute_numeric_root_adapter, execute_find_root_application);
-
-pub(crate) fn execute_approximate_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_numeric_application(engine, expression, spelling)
-}
-
-pub(crate) fn execute_matrix_unary_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_matrix_unary_application(engine, expression, spelling)
-}
-
-pub(crate) fn execute_improper_integral_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_defined_integral_application(
-        engine,
-        expression,
-        spelling,
-        crate::improper_integrals::DefinedIntegralOperationKind::Improper,
-    )
-}
-
-pub(crate) fn execute_principal_value_integral_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_defined_integral_application(
-        engine,
-        expression,
-        spelling,
-        crate::improper_integrals::DefinedIntegralOperationKind::PrincipalValue,
-    )
-}
-
 #[derive(Clone, Copy)]
-enum MultipleIntegralAdapterKind {
+pub(crate) enum MultipleIntegralAdapterKind {
     Double,
     Polar,
 }
 
-pub(crate) fn execute_double_integral_adapter(
+pub(crate) fn execute_effect_application(
     engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_multiple_integral_application(
-        engine,
-        expression,
-        spelling,
-        MultipleIntegralAdapterKind::Double,
-    )
-}
-
-pub(crate) fn execute_polar_integral_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_multiple_integral_application(
-        engine,
-        expression,
-        spelling,
-        MultipleIntegralAdapterKind::Polar,
-    )
-}
-
-pub(crate) fn execute_plot_effect_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_effect_application(engine, expression, spelling)
-}
-
-pub(crate) fn execute_extrema_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    _spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_extrema_application(engine, expression)
-}
-
-pub(crate) fn execute_lagrange_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    _spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_lagrange_application(engine, expression)
-}
-
-pub(crate) fn execute_multivariate_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_multivariate_application(engine, expression, spelling)
-}
-
-pub(crate) fn execute_line_integral_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_line_integral_application(engine, expression, spelling)
-}
-
-pub(crate) fn execute_surface_integral_adapter(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    spelling: &str,
-) -> Result<Computation, EngineError> {
-    execute_surface_integral_application(engine, expression, spelling)
-}
-
-pub fn execute_elaborated_structure(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-) -> Result<Computation, EngineError> {
-    execute_elaborated_structure_in_context(engine, expression)
-}
-
-pub fn execute_elaborated_structure_with_context(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-    context: crate::semantic_core::ComputationContext,
-) -> Result<Computation, EngineError> {
-    crate::semantic_core::with_computation_context(context, || {
-        execute_elaborated_structure_in_context(engine, expression)
-    })
-}
-
-fn execute_elaborated_structure_in_context(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-) -> Result<Computation, EngineError> {
-    let mut computation = execute_elaborated_node(engine, expression)?;
-    if matches!(
-        expression.form,
-        crate::elaboration::MathematicalForm::Structural { .. }
-    ) && computation
-        .subject()
-        .is_some_and(|result| result.print_source() != expression.object.print_source())
-    {
-        if let Some(event) = computation
-            .trace
-            .as_mut()
-            .and_then(|trace| trace.events.last_mut())
-            .filter(|event| {
-                event.class == crate::semantic_core::RuleEventClass::InternalExecution
-                    && event.output.object == expression.object.id
-            })
-        {
-            event.class = crate::semantic_core::RuleEventClass::EquivalentTransformation;
-            if let Some(presentation) = event.presentation.as_mut() {
-                presentation.explanation = "化简这个子表达式。".into();
-            }
-        }
-    }
-    if let Some(trace) = computation.trace.as_mut() {
-        for event in &mut trace.events {
-            if event.class == crate::semantic_core::RuleEventClass::EquivalentTransformation
-                && event.transformation.is_none()
-            {
-                event.transformation = Some(crate::semantic_core::TransformationContext {
-                    root_before: crate::semantic_core::ObjectReference {
-                        object: expression.object.id,
-                        revision: event.input.revision,
-                        focus: None,
-                    },
-                    root_after: crate::semantic_core::ObjectReference {
-                        object: expression.object.id,
-                        revision: event.output.revision,
-                        focus: None,
-                    },
-                    focus: crate::semantic_core::ExpressionPath::root(),
-                });
-            }
-        }
-        trace.apply_mode(crate::semantic_core::current_computation_context().trace_mode);
-    }
-    Ok(computation)
-}
-
-fn execute_elaborated_node(
-    engine: &mut dyn Engine,
-    expression: &crate::elaboration::ElaboratedObject,
-) -> Result<Computation, EngineError> {
-    if let crate::elaboration::MathematicalForm::Application { head } = &expression.form {
-        if let Some(lowered) = crate::lowering::try_lower_application(
-            engine,
-            &expression.object,
-            crate::semantic_core::current_computation_context().trace_mode,
-        )? {
-            return Ok(lowered);
-        }
-        if let Some(descriptor) = crate::semantic_core::operator_descriptor(head) {
-            return (descriptor.execution_handler)(engine, expression, head);
-        }
-        return execute_function_application(engine, expression, head);
-    }
-    if matches!(
-        expression.form,
-        crate::elaboration::MathematicalForm::Relation { .. }
-            | crate::elaboration::MathematicalForm::Collection
-    ) {
-        return execute_container(expression, engine);
-    }
-    if let crate::elaboration::MathematicalForm::EffectApplication { head } = &expression.form {
-        let descriptor = crate::semantic_core::operator_descriptor(head)
-            .ok_or_else(|| EngineError::InvalidInput(format!("未登记的效果运算符: {head}")))?;
-        return (descriptor.execution_handler)(engine, expression, head);
-    }
-    let crate::elaboration::MathematicalForm::Structural { operator } = &expression.form else {
-        return Ok(Computation {
-            output: if expression.object.semantics.metadata.resolution
-                == ResolutionState::Unresolved
-            {
-                ComputationOutput::Held(expression.object.clone())
-            } else {
-                ComputationOutput::Value(expression.object.clone())
-            },
-            trace: None,
-            certificates: Vec::new(),
-            effects: Vec::new(),
-        });
-    };
-    let operation = match (operator.as_str(), expression.children.len()) {
-        ("-", 1) => ArithmeticOperation::Negate,
-        ("+", 2) => ArithmeticOperation::Add,
-        ("-", 2) => ArithmeticOperation::Subtract,
-        ("*", 2) => ArithmeticOperation::Multiply,
-        ("/", 2) => ArithmeticOperation::Divide,
-        ("^", 2) => ArithmeticOperation::Power,
-        _ => {
-            return Err(EngineError::InvalidInput(format!(
-                "结构运算 {operator} 不支持 {} 个操作数",
-                expression.children.len()
-            )))
-        }
-    };
-    let mut child_computations = expression
-        .children
-        .iter()
-        .map(|child| execute_elaborated_structure(engine, child))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut child_traces = Vec::new();
-    for child in &mut child_computations {
-        if let Some(trace) = child.trace.take() {
-            child_traces.extend(trace.events);
-        }
-    }
-    if child_computations
-        .iter()
-        .any(|child| matches!(child.output, ComputationOutput::EffectsOnly))
-    {
-        return Err(EngineError::InvalidInput(
-            "带副作用的动作不能作为数学结构运算的操作数".into(),
-        ));
-    }
-    let request = ArithmeticRequest {
-        output_id: expression.object.id,
-        operation,
-    };
-    let left_object = child_computations[0]
-        .subject()
-        .expect("mathematical child has an object");
-    let right_object = child_computations.get(1).and_then(Computation::subject);
-    let left_matrix = matches!(
-        left_object.semantics.interpretation,
-        SemanticInterpretation::Matrix { .. }
-    );
-    let right_matrix = right_object.is_some_and(|right| {
-        matches!(
-            right.semantics.interpretation,
-            SemanticInterpretation::Matrix { .. }
-        )
-    });
-    let matrix_binary = matches!(
-        operation,
-        ArithmeticOperation::Add | ArithmeticOperation::Subtract | ArithmeticOperation::Multiply
-    ) && (left_matrix || right_matrix);
-    let mut computation = if matrix_binary {
-        let matrix_operation = match operation {
-            ArithmeticOperation::Add => crate::linear_algebra::MatrixOperation::Add,
-            ArithmeticOperation::Subtract => crate::linear_algebra::MatrixOperation::Subtract,
-            ArithmeticOperation::Multiply if left_matrix && right_matrix => {
-                crate::linear_algebra::MatrixOperation::Multiply
-            }
-            ArithmeticOperation::Multiply => crate::linear_algebra::MatrixOperation::Scale,
-            _ => unreachable!(),
-        };
-        let (matrix, other) = if left_matrix {
-            (
-                left_object,
-                right_object.expect("matrix binary has right operand"),
-            )
-        } else {
-            (
-                right_object.expect("matrix binary has matrix operand"),
-                left_object,
-            )
-        };
-        BinarySemanticOperation::compute(
-            &crate::linear_algebra::BinaryMatrixOperation,
-            engine,
-            matrix,
-            other,
-            &crate::linear_algebra::BinaryMatrixRequest {
-                operation: matrix_operation,
-                output_id: expression.object.id,
-            },
-        )?
-    } else if operation == ArithmeticOperation::Negate {
-        UnarySemanticOperation::compute(
-            &ArithmeticOperationExecutor,
-            engine,
-            child_computations[0]
-                .subject()
-                .expect("mathematical child has an object"),
-            &request,
-        )?
-    } else {
-        BinarySemanticOperation::compute(
-            &ArithmeticOperationExecutor,
-            engine,
-            child_computations[0]
-                .subject()
-                .expect("mathematical child has an object"),
-            child_computations[1]
-                .subject()
-                .expect("mathematical child has an object"),
-            &request,
-        )?
-    };
-    if let Some(trace) = computation.trace.as_mut() {
-        child_traces.append(&mut trace.events);
-        trace.events = child_traces;
-    }
-    Ok(computation)
-}
-
-fn execute_effect_application(
-    engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
@@ -453,7 +65,7 @@ fn execute_effect_application(
             "Plot 需要表达式、变量和区间上下界".into(),
         ));
     };
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return Err(EngineError::InvalidInput(
             "Plot 的表达式必须先成为可计算的数学值".into(),
@@ -479,8 +91,9 @@ fn execute_effect_application(
     Ok(current)
 }
 
-fn execute_sum_application(
+pub(crate) fn execute_sum_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [variable, lower, upper, term_node] = expression.children.as_slice() else {
@@ -488,7 +101,7 @@ fn execute_sum_application(
             "Sum 需要变量、下限、上限和求和项".into(),
         ));
     };
-    let mut term = execute_elaborated_structure(engine, term_node)?;
+    let mut term = recurse(engine, term_node)?;
     if !matches!(term.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, term, "Sum", 3);
     }
@@ -506,8 +119,9 @@ fn execute_sum_application(
     Ok(current)
 }
 
-fn execute_defined_integral_application(
+pub(crate) fn execute_defined_integral_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     spelling: &str,
     kind: crate::improper_integrals::DefinedIntegralOperationKind,
@@ -532,7 +146,7 @@ fn execute_defined_integral_application(
             vec![points.object.print_source()]
         }
     });
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, spelling, 0);
     }
@@ -558,8 +172,9 @@ fn execute_defined_integral_application(
     Ok(current)
 }
 
-fn execute_multiple_integral_application(
+pub(crate) fn execute_multiple_integral_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     spelling: &str,
     kind: MultipleIntegralAdapterKind,
@@ -588,7 +203,7 @@ fn execute_multiple_integral_application(
             )))
         }
     };
-    let mut operand = execute_elaborated_structure(engine, &expression.children[0])?;
+    let mut operand = recurse(engine, &expression.children[0])?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, spelling, 0);
     }
@@ -602,8 +217,9 @@ fn execute_multiple_integral_application(
     Ok(current)
 }
 
-fn execute_numeric_ode_application(
+pub(crate) fn execute_numeric_ode_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     if expression.children.len() != 6 {
@@ -611,7 +227,7 @@ fn execute_numeric_ode_application(
             "OdeSolveNumeric 需要方程、自变量、因变量、初值点、初值和终点".into(),
         ));
     }
-    let mut equation = execute_elaborated_structure(engine, &expression.children[0])?;
+    let mut equation = recurse(engine, &expression.children[0])?;
     if !matches!(equation.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, equation, "OdeSolveNumeric", 0);
     }
@@ -638,8 +254,9 @@ fn execute_numeric_ode_application(
     Ok(current)
 }
 
-fn execute_find_root_application(
+pub(crate) fn execute_find_root_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [operand_node, variable, initial] = expression.children.as_slice() else {
@@ -647,7 +264,7 @@ fn execute_find_root_application(
             "FindRoot 需要表达式、变量和初值".into(),
         ));
     };
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, "FindRoot", 0);
     }
@@ -670,14 +287,15 @@ fn execute_find_root_application(
     Ok(current)
 }
 
-fn execute_extrema_application(
+pub(crate) fn execute_extrema_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [operand_node, x, y] = expression.children.as_slice() else {
         return Err(EngineError::InvalidInput("Extrema 的参数签名无效".into()));
     };
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, "Extrema", 0);
     }
@@ -694,18 +312,19 @@ fn execute_extrema_application(
     Ok(current)
 }
 
-fn execute_lagrange_application(
+pub(crate) fn execute_lagrange_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [operand_node, constraint_node, x, y] = expression.children.as_slice() else {
         return Err(EngineError::InvalidInput("Lagrange 的参数签名无效".into()));
     };
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, "Lagrange", 0);
     }
-    let mut constraint = execute_elaborated_structure(engine, constraint_node)?;
+    let mut constraint = recurse(engine, constraint_node)?;
     if !matches!(constraint.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, constraint, "Lagrange", 1);
     }
@@ -728,8 +347,9 @@ fn execute_lagrange_application(
     Ok(current)
 }
 
-fn execute_multivariate_application(
+pub(crate) fn execute_multivariate_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
@@ -784,7 +404,7 @@ fn execute_multivariate_application(
     } else {
         Vec::new()
     };
-    let mut operand = execute_elaborated_structure(engine, &expression.children[0])?;
+    let mut operand = recurse(engine, &expression.children[0])?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, head, 0);
     }
@@ -808,8 +428,9 @@ fn execute_multivariate_application(
     Ok(current)
 }
 
-fn execute_line_integral_application(
+pub(crate) fn execute_line_integral_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
@@ -832,7 +453,7 @@ fn execute_line_integral_application(
             .map(|child| child.object.print_source())
             .collect())
     };
-    let mut field = execute_elaborated_structure(engine, field_node)?;
+    let mut field = recurse(engine, field_node)?;
     if !matches!(field.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, field, head, 0);
     }
@@ -857,8 +478,9 @@ fn execute_line_integral_application(
     Ok(current)
 }
 
-fn execute_surface_integral_application(
+pub(crate) fn execute_surface_integral_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
@@ -887,7 +509,7 @@ fn execute_surface_integral_application(
         }
         Ok(values)
     };
-    let mut field = execute_elaborated_structure(engine, &expression.children[0])?;
+    let mut field = recurse(engine, &expression.children[0])?;
     if !matches!(field.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, field, head, 0);
     }
@@ -934,8 +556,9 @@ fn execute_surface_integral_application(
     Ok(current)
 }
 
-fn execute_numeric_application(
+pub(crate) fn execute_numeric_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
@@ -955,7 +578,7 @@ fn execute_numeric_application(
             )))
         }
     };
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, head, 0);
     }
@@ -978,8 +601,9 @@ fn execute_numeric_application(
     Ok(current)
 }
 
-fn execute_taylor_application(
+pub(crate) fn execute_taylor_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let (operand_index, variable, point, degree_source) = match expression.children.as_slice() {
@@ -1004,7 +628,7 @@ fn execute_taylor_application(
     let degree = degree_source
         .parse::<u32>()
         .map_err(|_| EngineError::InvalidInput("Taylor 阶数必须是非负整数".into()))?;
-    let mut operand = execute_elaborated_structure(engine, &expression.children[operand_index])?;
+    let mut operand = recurse(engine, &expression.children[operand_index])?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, "Taylor", operand_index);
     }
@@ -1022,8 +646,9 @@ fn execute_taylor_application(
     Ok(current)
 }
 
-fn execute_solve_application(
+pub(crate) fn execute_solve_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [equations_node, variables_node] = expression.children.as_slice() else {
@@ -1031,7 +656,7 @@ fn execute_solve_application(
             "Solve 需要 equations 和 variables".into(),
         ));
     };
-    let mut equations = execute_elaborated_structure(engine, equations_node)?;
+    let mut equations = recurse(engine, equations_node)?;
     if !matches!(equations.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, equations, "Solve", 0);
     }
@@ -1075,14 +700,15 @@ fn execute_solve_application(
     Ok(current)
 }
 
-fn execute_ode_solve_application(
+pub(crate) fn execute_ode_solve_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [equation_node] = expression.children.as_slice() else {
         return Err(EngineError::InvalidInput("OdeSolve 需要一个方程".into()));
     };
-    let mut equation = execute_elaborated_structure(engine, equation_node)?;
+    let mut equation = recurse(engine, equation_node)?;
     if !matches!(equation.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, equation, "OdeSolve", 0);
     }
@@ -1099,15 +725,16 @@ fn execute_ode_solve_application(
     Ok(current)
 }
 
-fn execute_matrix_unary_application(
+pub(crate) fn execute_matrix_unary_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
     let [operand_node] = expression.children.as_slice() else {
         return Err(EngineError::InvalidInput(format!("{head} 需要一个矩阵")));
     };
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, head, 0);
     }
@@ -1161,8 +788,9 @@ fn execute_matrix_unary_application(
     Ok(current)
 }
 
-fn execute_matrix_solve_application(
+pub(crate) fn execute_matrix_solve_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [matrix_node, vector_node] = expression.children.as_slice() else {
@@ -1170,8 +798,8 @@ fn execute_matrix_solve_application(
             "MatrixSolve 需要矩阵和向量".into(),
         ));
     };
-    let mut matrix = execute_elaborated_structure(engine, matrix_node)?;
-    let mut vector = execute_elaborated_structure(engine, vector_node)?;
+    let mut matrix = recurse(engine, matrix_node)?;
+    let mut vector = recurse(engine, vector_node)?;
     if !matches!(matrix.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, matrix, "MatrixSolve", 0);
     }
@@ -1190,8 +818,9 @@ fn execute_matrix_solve_application(
     Ok(current)
 }
 
-fn execute_factor_projection_application(
+pub(crate) fn execute_factor_projection_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [operand_node] = expression.children.as_slice() else {
@@ -1199,7 +828,7 @@ fn execute_factor_projection_application(
             "Factors 需要一个矩阵分解对象".into(),
         ));
     };
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, "Factors", 0);
     }
@@ -1213,8 +842,9 @@ fn execute_factor_projection_application(
     Ok(current)
 }
 
-fn execute_substitution_application(
+pub(crate) fn execute_substitution_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
 ) -> Result<Computation, EngineError> {
     let [variable, replacement_node, operand_node] = expression.children.as_slice() else {
@@ -1222,8 +852,8 @@ fn execute_substitution_application(
             "Subst 需要 variable、replacement 和 operand".into(),
         ));
     };
-    let mut replacement = execute_elaborated_structure(engine, replacement_node)?;
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut replacement = recurse(engine, replacement_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if matches!(replacement.output, ComputationOutput::EffectsOnly)
         || matches!(operand.output, ComputationOutput::EffectsOnly)
     {
@@ -1260,8 +890,9 @@ fn execute_substitution_application(
     Ok(current)
 }
 
-fn execute_transform_application(
+pub(crate) fn execute_transform_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
@@ -1270,7 +901,7 @@ fn execute_transform_application(
         (_, [operand]) => (operand, None),
         _ => return Err(EngineError::InvalidInput(format!("{head} 参数数量错误"))),
     };
-    let mut operand = execute_elaborated_structure(engine, operand_node)?;
+    let mut operand = recurse(engine, operand_node)?;
     if !matches!(operand.output, ComputationOutput::Value(_)) {
         return retain_pending_application(expression, operand, head, 0);
     }
@@ -1292,14 +923,15 @@ fn execute_transform_application(
     Ok(current)
 }
 
-fn execute_container(
+pub(crate) fn execute_container(
     expression: &crate::elaboration::ElaboratedObject,
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
 ) -> Result<Computation, EngineError> {
     let mut children = expression
         .children
         .iter()
-        .map(|child| execute_elaborated_structure(engine, child))
+        .map(|child| recurse(engine, child))
         .collect::<Result<Vec<_>, _>>()?;
     if children
         .iter()
@@ -1437,15 +1069,16 @@ fn execute_container(
     })
 }
 
-fn execute_function_application(
+pub(crate) fn execute_function_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
     let mut children = expression
         .children
         .iter()
-        .map(|child| execute_elaborated_structure(engine, child))
+        .map(|child| recurse(engine, child))
         .collect::<Result<Vec<_>, _>>()?;
     if children
         .iter()
@@ -1615,8 +1248,9 @@ fn execute_function_application(
     })
 }
 
-fn execute_calculus_application(
+pub(crate) fn execute_calculus_application(
     engine: &mut dyn Engine,
+    recurse: RecursiveExecutionHandler,
     expression: &crate::elaboration::ElaboratedObject,
     head: &str,
 ) -> Result<Computation, EngineError> {
@@ -1749,7 +1383,7 @@ fn execute_calculus_application(
             );
         }
     }
-    let mut operand = execute_elaborated_structure(engine, &expression.children[operand_index])?;
+    let mut operand = recurse(engine, &expression.children[operand_index])?;
     let derivative_accepts_held = matches!(request, CalculusRequest::Derivative(_))
         && matches!(
             operand
@@ -2346,6 +1980,7 @@ fn no_value_structure(
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::execution_visitor::execute_elaborated_structure;
     use crate::semantic_core::{ObjectId, SemanticState};
 
     fn expression(
@@ -2786,13 +2421,13 @@ fn trace_modes_preserve_computation_facts_across_domains() {
         "D(x)HypergeometricPFQ({a},{b},x)",
     ] {
         let input = crate::elaboration::elaborate_input(source).unwrap();
-        let off = execute_elaborated_structure_with_context(
+        let off = crate::execution_visitor::execute_elaborated_structure_with_context(
             &mut engine,
             &input.root,
             crate::semantic_core::ComputationContext::new(crate::semantic_core::TraceMode::Off),
         )
         .unwrap();
-        let detailed = execute_elaborated_structure_with_context(
+        let detailed = crate::execution_visitor::execute_elaborated_structure_with_context(
             &mut engine,
             &input.root,
             crate::semantic_core::ComputationContext::new(

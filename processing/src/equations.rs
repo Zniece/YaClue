@@ -13,15 +13,14 @@ use crate::semantic_core::{
     RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
     SemanticOperation, SemanticState, VecEventSink,
 };
-use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 use yacas_rs::value::{spine_refs, ObjectKind};
 
-struct EquationRuleEmission {
-    rule: String,
-    expression: String,
-    explanation: String,
-    importance: RuleImportance,
+pub(crate) struct EquationRuleEmission {
+    pub(crate) rule: String,
+    pub(crate) expression: String,
+    pub(crate) explanation: String,
+    pub(crate) importance: RuleImportance,
 }
 
 impl EquationRuleEmission {
@@ -309,50 +308,6 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             effects: Vec::new(),
         })
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct EquationStepResult {
-    pub result: SolveResult,
-    pub steps: Vec<Step>,
-}
-
-pub fn solve_steps(
-    engine: &mut dyn Engine,
-    equation: &str,
-    variable: &str,
-) -> Result<EquationStepResult, EngineError> {
-    solve_steps_with_verbosity(engine, equation, variable, StepVerbosity::Detailed)
-}
-
-pub fn solve_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    equation: &str,
-    variable: &str,
-    verbosity: StepVerbosity,
-) -> Result<EquationStepResult, EngineError> {
-    let (result, emissions) = equation_evaluation(engine, &[equation], &[variable])?;
-    let steps = render_equation_emissions(engine, emissions, verbosity)?;
-    Ok(EquationStepResult { result, steps })
-}
-
-pub fn solve_system_steps(
-    engine: &mut dyn Engine,
-    equations: &[&str],
-    variables: &[&str],
-) -> Result<EquationStepResult, EngineError> {
-    solve_system_steps_with_verbosity(engine, equations, variables, StepVerbosity::Detailed)
-}
-
-pub fn solve_system_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    equations: &[&str],
-    variables: &[&str],
-    verbosity: StepVerbosity,
-) -> Result<EquationStepResult, EngineError> {
-    let (result, emissions) = equation_evaluation(engine, equations, variables)?;
-    let steps = render_equation_emissions(engine, emissions, verbosity)?;
-    Ok(EquationStepResult { result, steps })
 }
 
 fn system_rule_emissions(equations: &[&str], result: &SolveResult) -> Vec<EquationRuleEmission> {
@@ -666,7 +621,7 @@ fn direct_inverse_event(
     Ok(Some(event))
 }
 
-fn equation_evaluation(
+pub(crate) fn equation_evaluation(
     engine: &mut dyn Engine,
     equations: &[&str],
     variables: &[&str],
@@ -678,27 +633,6 @@ fn equation_evaluation(
         system_rule_emissions(equations, &result)
     };
     Ok((result, emissions))
-}
-
-fn render_equation_emissions(
-    engine: &mut dyn Engine,
-    emissions: Vec<EquationRuleEmission>,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    let events = emissions
-        .into_iter()
-        .map(|emission| StepEvent {
-            rule: emission.rule,
-            expr: emission.expression,
-            why: emission.explanation,
-            importance: match emission.importance {
-                RuleImportance::Routine => StepImportance::Routine,
-                RuleImportance::Normal => StepImportance::Normal,
-                RuleImportance::Key => StepImportance::Key,
-            },
-        })
-        .collect();
-    render_events(engine, events, verbosity)
 }
 
 pub fn solve(
@@ -1244,6 +1178,8 @@ fn parse_assignment(expr: &Expr) -> Result<Assignment, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::step_compatibility::{solve_steps, solve_steps_with_verbosity, solve_system_steps};
+    use crate::steps::StepVerbosity;
     use crate::test_support::CountingEngine;
 
     #[test]

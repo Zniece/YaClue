@@ -12,7 +12,6 @@ use crate::semantic_core::{
     OperatorId, Requirement, RuleFact, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticOperation, SemanticState, VecEventSink,
 };
-use crate::steps::{Step, StepVerbosity};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1109,65 +1108,12 @@ pub fn derivative_result(
     }
 }
 
-pub fn derivative_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    order: u32,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    let computation = derivative_computation(engine, expression, variable, order)?;
-    crate::steps::render_rule_trace(
-        engine,
-        computation
-            .trace
-            .as_ref()
-            .expect("derivative always emits trace"),
-        verbosity,
-    )
-}
-
-pub fn derive_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-) -> Result<Vec<Step>, EngineError> {
-    derivative_steps_with_verbosity(engine, expression, variable, 1, StepVerbosity::Detailed)
-}
-
-pub fn derive_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    derivative_steps_with_verbosity(engine, expression, variable, 1, verbosity)
-}
-
-pub fn derive_steps_order(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    order: u32,
-) -> Result<Vec<Step>, EngineError> {
-    derivative_steps_with_verbosity(engine, expression, variable, order, StepVerbosity::Detailed)
-}
-
-pub fn derive_steps_order_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    order: u32,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    derivative_steps_with_verbosity(engine, expression, variable, order, verbosity)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
     use crate::semantic_core::{object_from_source, ObjectId};
+    use crate::steps::StepVerbosity;
 
     #[test]
     fn semantic_operation_preserves_object_identity_and_projects_steps() {
@@ -1291,7 +1237,8 @@ mod tests {
     fn differentiates_native_gamma_and_preserves_lowering_conditions() {
         let mut engine = RustEngine::spawn().unwrap();
         let direct = crate::elaboration::elaborate("D(x)Gamma(x)").unwrap();
-        let result = crate::arithmetic::execute_elaborated_structure(&mut engine, &direct).unwrap();
+        let result =
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &direct).unwrap();
         assert_eq!(
             result.value().unwrap().print_source().replace(' ', ""),
             "Gamma(x)*PolyGamma(0,x)"
@@ -1306,7 +1253,7 @@ mod tests {
 
         let chained = crate::elaboration::elaborate("D(x)Gamma(x^2)").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &chained).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &chained).unwrap();
         let source = result.value().unwrap().print_source().replace(' ', "");
         assert!(source.contains("Gamma(x^2)*PolyGamma(0,x^2)"));
         assert!(source.contains("2*x"));
@@ -1315,7 +1262,7 @@ mod tests {
             crate::elaboration::elaborate("D(x)(Integrate(t,0,Infinity)(t^(x-1)*Exp(-t)))")
                 .unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &lowered).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &lowered).unwrap();
         assert_eq!(
             result.value().unwrap().print_source().replace(' ', ""),
             "Gamma(x)*PolyGamma(0,x)"
@@ -1348,7 +1295,8 @@ mod tests {
         for (source, rule_id) in cases {
             let elaborated = crate::elaboration::elaborate(source).unwrap();
             let result =
-                crate::arithmetic::execute_elaborated_structure(&mut engine, &elaborated).unwrap();
+                crate::execution_visitor::execute_elaborated_structure(&mut engine, &elaborated)
+                    .unwrap();
             let value = result.value().expect(source);
             assert!(
                 !value.print_source().contains("D("),
@@ -1370,7 +1318,7 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         let lambert = crate::elaboration::elaborate("D(x)LambertW(x)").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &lambert).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &lambert).unwrap();
         assert!(result
             .value()
             .unwrap()
@@ -1383,7 +1331,8 @@ mod tests {
 
         let poly_gamma = crate::elaboration::elaborate("D(x)PolyGamma(n,x)").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &poly_gamma).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &poly_gamma)
+                .unwrap();
         assert!(result
             .value()
             .unwrap()
@@ -1396,7 +1345,8 @@ mod tests {
 
         let varying_order = crate::elaboration::elaborate("D(x)PolyGamma(x,x)").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &varying_order).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &varying_order)
+                .unwrap();
         assert!(matches!(result.output, ComputationOutput::Held(_)));
         assert!(result
             .trace
@@ -1412,7 +1362,7 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         let beta = crate::elaboration::elaborate("D(x)Beta(x,x^2)").unwrap();
         let beta_result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &beta).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &beta).unwrap();
         let beta_source = beta_result.value().unwrap().print_source();
         assert!(beta_source.contains("PolyGamma(0,x)"), "{beta_source}");
         assert!(beta_source.contains("PolyGamma(0,x^2)"), "{beta_source}");
@@ -1429,7 +1379,8 @@ mod tests {
 
         let incomplete = crate::elaboration::elaborate("D(x)IncompleteGamma(x^2,x+1)").unwrap();
         let incomplete_result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &incomplete).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &incomplete)
+                .unwrap();
         let incomplete_source = incomplete_result.value().unwrap().print_source();
         assert!(incomplete_source.contains("Ln(x^2)"), "{incomplete_source}");
         assert!(
@@ -1459,7 +1410,8 @@ mod tests {
         )
         .unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &expression)
+                .unwrap();
         let source = result.value().unwrap().print_source();
         assert!(source.contains("Integrate(s,0,"), "{source}");
         assert!(!source.contains("YaClueIncompleteGammaDerivativeInternal1T"));
@@ -1471,7 +1423,8 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         let expression = crate::elaboration::elaborate("D(x)BesselJ(n,Sin(x^2))").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &expression)
+                .unwrap();
         let source = result.value().unwrap().print_source();
         assert!(source.contains("BesselJ(n-1,Sin(x^2))"), "{source}");
         assert!(source.contains("BesselJ(n+1,Sin(x^2))"), "{source}");
@@ -1487,14 +1440,16 @@ mod tests {
 
         let half_order = crate::elaboration::elaborate("D(x)BesselJ(1/2,x)").unwrap();
         let half_order_result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &half_order).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &half_order)
+                .unwrap();
         let half_order_source = half_order_result.value().unwrap().print_source();
         assert!(half_order_source.matches("BesselJ(").count() == 2);
         assert!(!half_order_source.contains("Sin("), "{half_order_source}");
 
         let varying_order = crate::elaboration::elaborate("D(x)BesselJ(x,x^2)").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &varying_order).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &varying_order)
+                .unwrap();
         assert!(matches!(result.output, ComputationOutput::Held(_)));
         assert!(result
             .subject()
@@ -1522,7 +1477,8 @@ mod tests {
         ] {
             let expression = crate::elaboration::elaborate(source).unwrap();
             let result =
-                crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+                crate::execution_visitor::execute_elaborated_structure(&mut engine, &expression)
+                    .unwrap();
             assert!(
                 matches!(result.output, ComputationOutput::Held(_)),
                 "{source}"
@@ -1548,7 +1504,8 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         let expression = crate::elaboration::elaborate("1+D(x)Zeta(x^2)").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &expression)
+                .unwrap();
         assert!(matches!(result.output, ComputationOutput::Held(_)));
         let source = result.subject().unwrap().print_source();
         assert!(source.contains("D(x,1)Zeta(x^2)"), "{source}");
@@ -1564,7 +1521,8 @@ mod tests {
         let expression =
             crate::elaboration::elaborate("D(x)(Integrate(t,0,1)(Sin(x*t)/(1+t^2)))").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &expression)
+                .unwrap();
         assert!(matches!(result.output, ComputationOutput::Held(_)));
         assert!(matches!(
             result.subject().unwrap().semantics.interpretation,
@@ -1599,7 +1557,8 @@ mod tests {
         let mut engine = RustEngine::spawn().unwrap();
         let expression = crate::elaboration::elaborate("D(x)UnknownSpecial(x)").unwrap();
         let result =
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &expression).unwrap();
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &expression)
+                .unwrap();
         assert!(matches!(result.output, ComputationOutput::Held(_)));
         assert!(result
             .trace

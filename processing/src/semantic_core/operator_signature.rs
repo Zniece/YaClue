@@ -103,10 +103,16 @@ pub enum ObjectNativeRoute {
     SurfaceIntegral,
 }
 
+pub type RecursiveExecutionHandler = fn(
+    &mut dyn crate::engine::Engine,
+    &crate::elaboration::ElaboratedObject,
+) -> Result<Computation, crate::engine::EngineError>;
+
 pub type OperatorExecutionHandler = fn(
     &mut dyn crate::engine::Engine,
     &crate::elaboration::ElaboratedObject,
     &str,
+    RecursiveExecutionHandler,
 ) -> Result<Computation, crate::engine::EngineError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

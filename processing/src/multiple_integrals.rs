@@ -5,7 +5,6 @@ use crate::input::{
     analyze_expression, fresh_internal_symbols, render_one_tex, validate_expression,
     validate_symbol,
 };
-use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
@@ -19,11 +18,11 @@ use crate::semantic_core::{
     SemanticState, VecEventSink,
 };
 
-struct MultipleIntegralRuleEmission {
-    rule: String,
-    expression: String,
-    explanation: String,
-    importance: RuleImportance,
+pub(crate) struct MultipleIntegralRuleEmission {
+    pub(crate) rule: String,
+    pub(crate) expression: String,
+    pub(crate) explanation: String,
+    pub(crate) importance: RuleImportance,
 }
 
 impl MultipleIntegralRuleEmission {
@@ -289,12 +288,6 @@ pub struct DoubleIntegralResult {
     pub tex: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct DoubleIntegralStepResult {
-    pub result: DoubleIntegralResult,
-    pub steps: Vec<Step>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TripleIntegralStatus {
@@ -312,12 +305,6 @@ pub struct TripleIntegralResult {
     pub layers: Vec<IntegralLayerResult>,
     pub value: String,
     pub tex: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TripleIntegralStepResult {
-    pub result: TripleIntegralResult,
-    pub steps: Vec<Step>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -351,12 +338,6 @@ pub struct PolarIntegralResult {
     pub integral: DoubleIntegralResult,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct PolarIntegralStepResult {
-    pub result: PolarIntegralResult,
-    pub steps: Vec<Step>,
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn polar_integral(
     engine: &mut dyn Engine,
@@ -372,50 +353,7 @@ pub fn polar_integral(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn polar_integral_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    x: &str,
-    y: &str,
-    radius: &str,
-    angle: &str,
-    region: PolarRegion<'_>,
-) -> Result<PolarIntegralStepResult, EngineError> {
-    polar_integral_steps_with_verbosity(
-        engine,
-        expression,
-        x,
-        y,
-        radius,
-        angle,
-        region,
-        StepVerbosity::Detailed,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn polar_integral_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    x: &str,
-    y: &str,
-    radius: &str,
-    angle: &str,
-    region: PolarRegion<'_>,
-    verbosity: StepVerbosity,
-) -> Result<PolarIntegralStepResult, EngineError> {
-    let (mut result, emissions) =
-        polar_integral_evaluation(engine, expression, x, y, radius, angle, region)?;
-    let steps = render_multiple_integral_emissions(engine, emissions, verbosity)?;
-    result.integral.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(PolarIntegralStepResult { result, steps })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn polar_integral_evaluation(
+pub(crate) fn polar_integral_evaluation(
     engine: &mut dyn Engine,
     expression: &str,
     x: &str,
@@ -494,33 +432,7 @@ pub fn double_integral(
     evaluate(engine, expression, inner, outer, true)
 }
 
-pub fn double_integral_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    inner: IntegralBound<'_>,
-    outer: IntegralBound<'_>,
-) -> Result<DoubleIntegralStepResult, EngineError> {
-    double_integral_steps_with_verbosity(engine, expression, inner, outer, StepVerbosity::Detailed)
-}
-
-pub fn double_integral_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    inner_bound: IntegralBound<'_>,
-    outer_bound: IntegralBound<'_>,
-    verbosity: StepVerbosity,
-) -> Result<DoubleIntegralStepResult, EngineError> {
-    let (mut result, emissions) =
-        double_integral_evaluation(engine, expression, inner_bound, outer_bound)?;
-    let steps = render_multiple_integral_emissions(engine, emissions, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(DoubleIntegralStepResult { result, steps })
-}
-
-fn double_integral_evaluation(
+pub(crate) fn double_integral_evaluation(
     engine: &mut dyn Engine,
     expression: &str,
     inner_bound: IntegralBound<'_>,
@@ -585,42 +497,7 @@ pub fn triple_integral(
     evaluate_triple(engine, expression, inner, middle, outer, true)
 }
 
-pub fn triple_integral_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    inner: IntegralBound<'_>,
-    middle: IntegralBound<'_>,
-    outer: IntegralBound<'_>,
-) -> Result<TripleIntegralStepResult, EngineError> {
-    triple_integral_steps_with_verbosity(
-        engine,
-        expression,
-        inner,
-        middle,
-        outer,
-        StepVerbosity::Detailed,
-    )
-}
-
-pub fn triple_integral_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    inner: IntegralBound<'_>,
-    middle: IntegralBound<'_>,
-    outer: IntegralBound<'_>,
-    verbosity: StepVerbosity,
-) -> Result<TripleIntegralStepResult, EngineError> {
-    let (mut result, emissions) =
-        triple_integral_evaluation(engine, expression, inner, middle, outer)?;
-    let steps = render_multiple_integral_emissions(engine, emissions, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(TripleIntegralStepResult { result, steps })
-}
-
-fn triple_integral_evaluation(
+pub(crate) fn triple_integral_evaluation(
     engine: &mut dyn Engine,
     expression: &str,
     inner: IntegralBound<'_>,
@@ -674,32 +551,6 @@ fn triple_integral_evaluation(
         RuleImportance::Key,
     ));
     Ok((result, emissions))
-}
-
-fn render_multiple_integral_emissions(
-    engine: &mut dyn Engine,
-    emissions: Vec<MultipleIntegralRuleEmission>,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    render_events(
-        engine,
-        emissions
-            .into_iter()
-            .map(|emission| {
-                StepEvent::new(
-                    &emission.rule,
-                    &emission.expression,
-                    &emission.explanation,
-                    match emission.importance {
-                        RuleImportance::Routine => StepImportance::Routine,
-                        RuleImportance::Normal => StepImportance::Normal,
-                        RuleImportance::Key => StepImportance::Key,
-                    },
-                )
-            })
-            .collect(),
-        verbosity,
-    )
 }
 
 fn validate_polar_request(
@@ -1200,6 +1051,12 @@ fn boolean(value: &Expr, label: &str) -> Result<bool, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::step_compatibility::{
+        double_integral_steps, double_integral_steps_with_verbosity, polar_integral_steps,
+        polar_integral_steps_with_verbosity, triple_integral_steps,
+        triple_integral_steps_with_verbosity,
+    };
+    use crate::steps::StepVerbosity;
     use crate::test_support::CountingEngine;
 
     fn object(source: &str) -> crate::semantic_core::MathematicalObject {

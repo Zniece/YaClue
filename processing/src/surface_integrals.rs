@@ -2,9 +2,6 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{analyze_expression, fresh_internal_symbols, render_one_tex, validate_symbol};
-#[cfg(test)]
-use crate::steps::{render_events, Step, StepVerbosity};
-use crate::steps::{StepEvent, StepImportance};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use yacas_rs::value::{spine_refs, ObjectKind};
@@ -33,7 +30,7 @@ pub enum SurfaceOrientation {
 }
 
 #[derive(Debug, Clone)]
-struct SurfaceIntegralRequest {
+pub(crate) struct SurfaceIntegralRequest {
     pub kind: SurfaceIntegralKind,
     pub orientation: SurfaceOrientation,
     pub field: Vec<String>,
@@ -162,11 +159,7 @@ impl SemanticOperation<SurfaceIntegralObjectRequest> for SurfaceIntegralOperatio
                     .collect(),
                 conditions: Vec::new(),
                 payload: RulePayload::Structural,
-                importance: match event.importance {
-                    StepImportance::Routine => RuleImportance::Routine,
-                    StepImportance::Normal => RuleImportance::Normal,
-                    StepImportance::Key => RuleImportance::Key,
-                },
+                importance: event.importance,
                 transformation: None,
                 presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                     expression: event.expr,
@@ -232,93 +225,75 @@ pub struct SurfaceIntegralResult {
     pub tex: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[cfg(test)]
-struct SurfaceIntegralStepResult {
-    pub result: SurfaceIntegralResult,
-    pub steps: Vec<Step>,
+pub(crate) struct SurfaceIntegralEmission {
+    pub(crate) rule: String,
+    pub(crate) expr: String,
+    pub(crate) why: String,
+    pub(crate) importance: RuleImportance,
 }
 
-#[cfg(test)]
-fn compute(
-    engine: &mut dyn Engine,
-    request: &SurfaceIntegralRequest,
-) -> Result<SurfaceIntegralResult, EngineError> {
-    validate_request(request)?;
-    evaluate(engine, request, true)
+impl SurfaceIntegralEmission {
+    fn new(
+        rule: impl Into<String>,
+        expr: impl Into<String>,
+        why: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expr: expr.into(),
+            why: why.into(),
+            importance,
+        }
+    }
 }
 
-#[cfg(test)]
-fn compute_steps(
-    engine: &mut dyn Engine,
-    request: &SurfaceIntegralRequest,
-) -> Result<SurfaceIntegralStepResult, EngineError> {
-    compute_steps_with_verbosity(engine, request, StepVerbosity::Detailed)
-}
-
-#[cfg(test)]
-fn compute_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    request: &SurfaceIntegralRequest,
-    verbosity: StepVerbosity,
-) -> Result<SurfaceIntegralStepResult, EngineError> {
-    validate_request(request)?;
-    let mut result = evaluate(engine, request, false)?;
-    let events = surface_integral_events(&result, request);
-    let steps = render_events(engine, events, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(SurfaceIntegralStepResult { result, steps })
-}
-
-fn surface_integral_events(
+pub(crate) fn surface_integral_events(
     result: &SurfaceIntegralResult,
     request: &SurfaceIntegralRequest,
-) -> Vec<StepEvent> {
-    let mut events = vec![StepEvent::new(
+) -> Vec<SurfaceIntegralEmission> {
+    let mut events = vec![SurfaceIntegralEmission::new(
         "surface-integral-parameterize",
-        &list(&result.surface),
+        list(&result.surface),
         "使用给定的双参数表示积分曲面。",
-        StepImportance::Key,
+        RuleImportance::Key,
     )];
-    events.push(StepEvent::new(
+    events.push(SurfaceIntegralEmission::new(
         "surface-integral-tangents",
-        &format!(
+        format!(
             "{{{},{}}}",
             list(&result.tangent_u),
             list(&result.tangent_v)
         ),
         "分别对两个曲面参数求偏导，得到两条切向量。",
-        StepImportance::Normal,
+        RuleImportance::Normal,
     ));
-    events.push(StepEvent::new(
+    events.push(SurfaceIntegralEmission::new(
         "surface-integral-normal",
-        &list(&result.oriented_normal),
+        list(&result.oriented_normal),
         match request.orientation {
             SurfaceOrientation::ParameterOrder => "按参数顺序计算叉积，得到定向法向量。",
             SurfaceOrientation::Reversed => "反转参数顺序给出的法向方向。",
         },
-        StepImportance::Normal,
+        RuleImportance::Normal,
     ));
     if let Some(area_factor) = &result.area_factor {
-        events.push(StepEvent::new(
+        events.push(SurfaceIntegralEmission::new(
             "surface-integral-area-factor",
             area_factor,
             "计算法向量的长度，得到曲面面积微元的系数。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ));
     }
-    events.push(StepEvent::new(
+    events.push(SurfaceIntegralEmission::new(
         "surface-integral-pullback",
-        &list(&result.field_on_surface),
+        list(&result.field_on_surface),
         "将参数曲面代入被积函数或向量场。",
-        StepImportance::Normal,
+        RuleImportance::Normal,
     ));
-    events.push(StepEvent::new(
+    events.push(SurfaceIntegralEmission::new(
         "surface-integral-integrand",
-        &format!(
+        format!(
             "Integrate({},{},{})Integrate({},{},{})({})",
             request.parameters[1],
             request.lower[1],
@@ -332,9 +307,9 @@ fn surface_integral_events(
             SurfaceIntegralKind::ScalarArea => "乘以面积因子，化为参数域上的二重积分。",
             SurfaceIntegralKind::VectorFlux => "与定向法向量作点积，化为参数域上的二重积分。",
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
-    events.push(StepEvent::new(
+    events.push(SurfaceIntegralEmission::new(
         "surface-integral-inner",
         &result.inner_value,
         if result.inner_completed {
@@ -343,12 +318,12 @@ fn surface_integral_events(
             "内层积分未得到解析结果。"
         },
         if result.inner_completed {
-            StepImportance::Normal
+            RuleImportance::Normal
         } else {
-            StepImportance::Key
+            RuleImportance::Key
         },
     ));
-    events.push(StepEvent::new(
+    events.push(SurfaceIntegralEmission::new(
         "surface-integral-result",
         &result.value,
         if result.completed {
@@ -356,12 +331,12 @@ fn surface_integral_events(
         } else {
             "当前积分规则未能得到完整解析结果。"
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
     events
 }
 
-fn evaluate(
+pub(crate) fn evaluate(
     engine: &mut dyn Engine,
     request: &SurfaceIntegralRequest,
     render_value: bool,
@@ -491,7 +466,7 @@ fn evaluate(
     })
 }
 
-fn validate_request(request: &SurfaceIntegralRequest) -> Result<(), EngineError> {
+pub(crate) fn validate_request(request: &SurfaceIntegralRequest) -> Result<(), EngineError> {
     let mut variables = BTreeSet::new();
     for coordinate in &request.coordinates {
         validate_symbol(coordinate, "空间坐标")?;
@@ -612,6 +587,11 @@ fn boolean(expression: &Expr, label: &str) -> Result<bool, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::{Engine, RustEngine};
+    use crate::step_compatibility::{
+        surface_integral_compute as compute, surface_integral_compute_steps as compute_steps,
+        surface_integral_compute_steps_with_verbosity as compute_steps_with_verbosity,
+    };
+    use crate::steps::StepVerbosity;
     use crate::test_support::CountingEngine;
 
     fn request(kind: SurfaceIntegralKind, field: &[&str]) -> SurfaceIntegralRequest {

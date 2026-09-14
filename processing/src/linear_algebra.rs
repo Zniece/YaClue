@@ -12,7 +12,6 @@ use crate::semantic_core::{
     OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticOperation, SemanticState,
 };
-use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 pub const MAX_LINEAR_STRUCTURE_DIMENSION: usize = 16;
@@ -954,11 +953,11 @@ pub struct RowOperation {
     pub matrix: Vec<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct LinearStructureStepResult {
-    pub result: LinearStructureResult,
-    pub operations: Vec<RowOperation>,
-    pub steps: Vec<Step>,
+pub(crate) struct LinearStructureEmission {
+    pub(crate) rule: String,
+    pub(crate) expression: String,
+    pub(crate) explanation: String,
+    pub(crate) importance: RuleImportance,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1222,18 +1221,17 @@ pub fn linear_structure(
     parse_linear_structure(fields, strip_tex_delimiters(&evaluated.tex))
 }
 
-pub fn linear_structure_steps(
+pub(crate) fn linear_structure_evaluation(
     engine: &mut dyn Engine,
     matrix: &str,
-) -> Result<LinearStructureStepResult, EngineError> {
-    linear_structure_steps_with_verbosity(engine, matrix, StepVerbosity::Detailed)
-}
-
-pub fn linear_structure_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    matrix: &str,
-    verbosity: StepVerbosity,
-) -> Result<LinearStructureStepResult, EngineError> {
+) -> Result<
+    (
+        LinearStructureResult,
+        Vec<RowOperation>,
+        Vec<LinearStructureEmission>,
+    ),
+    EngineError,
+> {
     validate_expression(matrix, "矩阵")?;
     let [a] = fresh_internal_symbols("LinearStructureDetailed", &[matrix], ["Matrix"]);
     let command = format!(
@@ -1247,17 +1245,17 @@ pub fn linear_structure_steps_with_verbosity(
     );
     let evaluated = engine.eval_expr(&command)?;
     let fields = exact_fields(&evaluated, "LinearStructureDetailed result", 6)?;
-    let mut result = parse_linear_structure(&fields[..5], String::new())?;
+    let result = parse_linear_structure(&fields[..5], String::new())?;
     let operations = list_items(&fields[5], "行操作事件")?
         .iter()
         .map(parse_row_operation)
         .collect::<Result<Vec<_>, _>>()?;
-    let mut events = vec![StepEvent::new(
-        "row-reduction-start",
-        matrix,
-        "从原矩阵开始进行高斯–若尔当消元。",
-        StepImportance::Routine,
-    )];
+    let mut events = vec![LinearStructureEmission {
+        rule: "row-reduction-start".into(),
+        expression: matrix.into(),
+        explanation: "从原矩阵开始进行高斯–若尔当消元。".into(),
+        importance: RuleImportance::Routine,
+    }];
     for operation in &operations {
         let (rule, why, importance) = match operation.kind {
             RowOperationKind::Swap => (
@@ -1269,7 +1267,7 @@ pub fn linear_structure_steps_with_verbosity(
                         .source_row
                         .expect("swap operations have a source row")
                 ),
-                StepImportance::Key,
+                RuleImportance::Key,
             ),
             RowOperationKind::Scale => (
                 "row-scale",
@@ -1277,7 +1275,7 @@ pub fn linear_structure_steps_with_verbosity(
                     "第 {} 行乘以 {}，将主元化为 1。",
                     operation.target_row, operation.factor
                 ),
-                StepImportance::Normal,
+                RuleImportance::Normal,
             ),
             RowOperationKind::AddMultiple => (
                 "row-eliminate",
@@ -1289,35 +1287,26 @@ pub fn linear_structure_steps_with_verbosity(
                         .expect("elimination operations have a source row"),
                     operation.factor
                 ),
-                StepImportance::Normal,
+                RuleImportance::Normal,
             ),
         };
-        events.push(StepEvent::new(
-            rule,
-            &matrix_expression(&operation.matrix),
-            &why,
+        events.push(LinearStructureEmission {
+            rule: rule.into(),
+            expression: matrix_expression(&operation.matrix),
+            explanation: why,
             importance,
-        ));
+        });
     }
-    events.push(StepEvent::new(
-        "row-reduction-result",
-        &matrix_expression(&result.rref),
-        &format!(
+    events.push(LinearStructureEmission {
+        rule: "row-reduction-result".into(),
+        expression: matrix_expression(&result.rref),
+        explanation: format!(
             "得到行最简形；秩为 {}，主元列为 {:?}。",
             result.rank, result.pivot_columns
         ),
-        StepImportance::Key,
-    ));
-    let steps = render_events(engine, events, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(LinearStructureStepResult {
-        result,
-        operations,
-        steps,
-    })
+        importance: RuleImportance::Key,
+    });
+    Ok((result, operations, events))
 }
 
 fn parse_linear_structure(
@@ -1529,6 +1518,10 @@ fn unresolved(expr: &Expr, operation: MatrixOperation) -> bool {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::step_compatibility::{
+        linear_structure_steps, linear_structure_steps_with_verbosity,
+    };
+    use crate::steps::StepVerbosity;
     use crate::test_support::CountingEngine;
 
     #[test]

@@ -21,7 +21,6 @@ use crate::semantic_core::{
     NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance, RulePayload,
     RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
 };
-use crate::steps::{render_events, StepEvent, StepImportance, StepVerbosity};
 
 const MAX_SINGULAR_POINTS: usize = 8;
 
@@ -56,10 +55,8 @@ impl SemanticOperation<(DefinedIntegralOperationKind, ImproperIntegralRequest)>
         let mut request = template.clone();
         request.expression = input.print_source();
         let result = match kind {
-            DefinedIntegralOperationKind::Improper => evaluate(engine, &request, None)?,
-            DefinedIntegralOperationKind::PrincipalValue => {
-                principal_value(engine, &request, None)?
-            }
+            DefinedIntegralOperationKind::Improper => evaluate(engine, &request)?,
+            DefinedIntegralOperationKind::PrincipalValue => principal_value(engine, &request)?,
         };
         let rule_events = defined_integral_rule_events(&result);
         let (metadata, held, no_value) = match result.status {
@@ -149,11 +146,7 @@ impl SemanticOperation<(DefinedIntegralOperationKind, ImproperIntegralRequest)>
                 ],
                 conditions: result.conditions.conditions().to_vec(),
                 payload: RulePayload::Structural,
-                importance: match event.importance {
-                    StepImportance::Routine => RuleImportance::Routine,
-                    StepImportance::Normal => RuleImportance::Normal,
-                    StepImportance::Key => RuleImportance::Key,
-                },
+                importance: event.importance,
                 transformation: None,
                 presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                     expression: event.expr,
@@ -203,7 +196,6 @@ struct Segment {
 pub fn evaluate(
     engine: &mut dyn Engine,
     request: &ImproperIntegralRequest,
-    steps: Option<StepVerbosity>,
 ) -> Result<DefinedObjectResult, EngineError> {
     validate_request(request)?;
     let segments = reduction_segments(request)?;
@@ -212,7 +204,6 @@ pub fn evaluate(
         request,
         segments,
         DefinedObjectKind::ImproperIntegral,
-        steps,
     )
 }
 
@@ -221,7 +212,6 @@ pub fn evaluate(
 pub fn principal_value(
     engine: &mut dyn Engine,
     request: &ImproperIntegralRequest,
-    steps: Option<StepVerbosity>,
 ) -> Result<DefinedObjectResult, EngineError> {
     validate_request(request)?;
     let source = source_expression("PrincipalValueIntegral", request);
@@ -340,9 +330,7 @@ pub fn principal_value(
             tex: String::new(),
             conditions,
             components,
-            steps: Vec::new(),
         },
-        steps,
     )
 }
 
@@ -351,7 +339,6 @@ fn execute_segments(
     request: &ImproperIntegralRequest,
     segments: Vec<Segment>,
     kind: DefinedObjectKind,
-    steps: Option<StepVerbosity>,
 ) -> Result<DefinedObjectResult, EngineError> {
     let source = source_expression("ImproperIntegral", request);
     let mut components = Vec::new();
@@ -397,9 +384,7 @@ fn execute_segments(
             tex: String::new(),
             conditions: ConditionSet::new(conditions)?,
             components,
-            steps: Vec::new(),
         },
-        steps,
     )
 }
 
@@ -593,21 +578,16 @@ fn validate_request(request: &ImproperIntegralRequest) -> Result<(), EngineError
 fn finish_result(
     engine: &mut dyn Engine,
     mut result: DefinedObjectResult,
-    verbosity: Option<StepVerbosity>,
 ) -> Result<DefinedObjectResult, EngineError> {
     if result.status == DefinedObjectStatus::Converged {
         result.tex = strip_tex_delimiters(&engine.eval(&result.value)?.tex);
     }
-    result.steps = if let Some(verbosity) = verbosity {
-        let events = defined_integral_rule_events(&result);
-        render_events(engine, events, verbosity)?
-    } else {
-        Vec::new()
-    };
     Ok(result)
 }
 
-fn defined_integral_rule_events(result: &DefinedObjectResult) -> Vec<StepEvent> {
+pub(crate) fn defined_integral_rule_events(
+    result: &DefinedObjectResult,
+) -> Vec<DefinedIntegralEmission> {
     result
         .components
         .iter()
@@ -625,9 +605,21 @@ fn defined_integral_rule_events(result: &DefinedObjectResult) -> Vec<StepEvent> 
                 }
                 PrimitiveOperation::Assemble => ("object-assemble", "所有分支均收敛后再合并结果。"),
             };
-            StepEvent::new(rule, &component.value, why, StepImportance::Normal)
+            DefinedIntegralEmission {
+                rule: rule.into(),
+                expr: component.value.clone(),
+                why: why.into(),
+                importance: RuleImportance::Normal,
+            }
         })
         .collect()
+}
+
+pub(crate) struct DefinedIntegralEmission {
+    pub(crate) rule: String,
+    pub(crate) expr: String,
+    pub(crate) why: String,
+    pub(crate) importance: RuleImportance,
 }
 
 fn source_expression(head: &str, request: &ImproperIntegralRequest) -> String {
@@ -791,6 +783,7 @@ fn convert_condition(condition: &LimitCondition, output: &mut Vec<Condition>) {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::steps::StepVerbosity;
 
     fn object(source: &str) -> crate::semantic_core::MathematicalObject {
         object_from_source(
@@ -885,15 +878,13 @@ mod tests {
     #[test]
     fn converges_at_single_and_double_infinite_endpoints() {
         let mut engine = RustEngine::spawn().unwrap();
-        let single =
-            evaluate(&mut engine, &request("Exp(-x)", "0", "Infinity", &[]), None).unwrap();
+        let single = evaluate(&mut engine, &request("Exp(-x)", "0", "Infinity", &[])).unwrap();
         assert_eq!(single.status, DefinedObjectStatus::Converged);
         assert_eq!(single.value, "1");
 
         let double = evaluate(
             &mut engine,
             &request("1/(1+x^2)", "-Infinity", "Infinity", &[]),
-            None,
         )
         .unwrap();
         assert_eq!(double.status, DefinedObjectStatus::Converged);
@@ -910,12 +901,11 @@ mod tests {
     #[test]
     fn endpoint_and_internal_singularities_are_independent_branches() {
         let mut engine = RustEngine::spawn().unwrap();
-        let endpoint =
-            evaluate(&mut engine, &request("1/Sqrt(x)", "0", "1", &["0"]), None).unwrap();
+        let endpoint = evaluate(&mut engine, &request("1/Sqrt(x)", "0", "1", &["0"])).unwrap();
         assert_eq!(endpoint.status, DefinedObjectStatus::Converged);
         assert_eq!(endpoint.value, "2");
 
-        let ordinary = evaluate(&mut engine, &request("1/x", "-1", "1", &["0"]), None).unwrap();
+        let ordinary = evaluate(&mut engine, &request("1/x", "-1", "1", &["0"])).unwrap();
         assert_eq!(ordinary.status, DefinedObjectStatus::Divergent);
         assert!(!ordinary
             .components
@@ -926,22 +916,23 @@ mod tests {
     #[test]
     fn principal_value_is_an_explicit_distinct_object() {
         let mut engine = RustEngine::spawn().unwrap();
-        let value = principal_value(
-            &mut engine,
-            &request("1/x", "-1", "1", &["0"]),
-            Some(StepVerbosity::Standard),
-        )
-        .unwrap();
+        let value = principal_value(&mut engine, &request("1/x", "-1", "1", &["0"])).unwrap();
         assert_eq!(value.kind, DefinedObjectKind::CauchyPrincipalValue);
         assert_eq!(value.status, DefinedObjectStatus::Converged, "{value:#?}");
         assert_eq!(value.value, "0");
-        assert!(!value.steps.is_empty());
+        let steps = crate::step_compatibility::defined_integral_steps(
+            &mut engine,
+            &value,
+            StepVerbosity::Standard,
+        )
+        .unwrap();
+        assert!(!steps.is_empty());
     }
 
     #[test]
     fn invalid_or_excessive_singularities_are_bounded() {
         let mut engine = RustEngine::spawn().unwrap();
-        assert!(evaluate(&mut engine, &request("1/x", "-1", "1", &["a"]), None).is_err());
+        assert!(evaluate(&mut engine, &request("1/x", "-1", "1", &["a"])).is_err());
         let points = (0..=MAX_SINGULAR_POINTS)
             .map(|index| index.to_string())
             .collect::<Vec<_>>();
@@ -952,6 +943,6 @@ mod tests {
             upper: "20".into(),
             singular_points: points,
         };
-        assert!(evaluate(&mut engine, &request, None).is_err());
+        assert!(evaluate(&mut engine, &request).is_err());
     }
 }

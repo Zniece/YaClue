@@ -1,6 +1,8 @@
 //! Bounded, inside-out execution of elaborated mathematical objects. This is
 //! an execution protocol over the shared AST, not a second CAS AST.
 
+mod execution;
+
 use serde::Serialize;
 
 use crate::engine::{Engine, EngineError};
@@ -75,15 +77,7 @@ pub fn execute_elaborated(
         crate::elaboration::MathematicalForm::EffectApplication { .. }
     );
     if root_is_effect {
-        let computation = crate::arithmetic::execute_elaborated_structure_with_context(
-            engine,
-            &input.root,
-            crate::semantic_core::ComputationContext::new(if include_steps {
-                crate::semantic_core::TraceMode::Detailed
-            } else {
-                crate::semantic_core::TraceMode::Off
-            }),
-        )?;
+        let computation = execution::execute_computation(engine, input, include_steps)?;
         validate_trace(&computation)?;
         let steps = if include_steps {
             computation
@@ -139,15 +133,7 @@ pub fn execute_elaborated(
             analysis: None,
         }));
     }
-    let computation = crate::arithmetic::execute_elaborated_structure_with_context(
-        engine,
-        &input.root,
-        crate::semantic_core::ComputationContext::new(if include_steps {
-            crate::semantic_core::TraceMode::Detailed
-        } else {
-            crate::semantic_core::TraceMode::Off
-        }),
-    )?;
+    let computation = execution::execute_computation(engine, input, include_steps)?;
     validate_trace(&computation)?;
     let subject = computation
         .subject()

@@ -27,8 +27,8 @@ pub use operator_signature::{
     require_operand_partial, typed_application_state, ApplicationForm, ApplicationSlot,
     BinderDescriptor, BinderScope, BoundArgument, CapabilityId, ObjectNativeRoute,
     OperatorDescriptor, OperatorExecutionHandler, OperatorId, OperatorSlotSignature,
-    PartialApplication, ResultTypeConstraint, ScopeArgument, TypedApplication, TypedArgument,
-    ValueArgument, OPERATOR_DESCRIPTORS,
+    PartialApplication, RecursiveExecutionHandler, ResultTypeConstraint, ScopeArgument,
+    TypedApplication, TypedArgument, ValueArgument, OPERATOR_DESCRIPTORS,
 };
 pub(crate) use trace_computation::materialize_rule_transitions;
 pub use trace_computation::*;

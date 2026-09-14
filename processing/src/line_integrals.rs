@@ -2,9 +2,6 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{analyze_expression, fresh_internal_symbols, render_one_tex, validate_symbol};
-#[cfg(test)]
-use crate::steps::{render_events, Step, StepVerbosity};
-use crate::steps::{StepEvent, StepImportance};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use yacas_rs::value::{spine_refs, ObjectKind};
@@ -26,7 +23,7 @@ pub enum LineIntegralKind {
 }
 
 #[derive(Debug, Clone)]
-struct LineIntegralRequest {
+pub(crate) struct LineIntegralRequest {
     pub kind: LineIntegralKind,
     pub field: Vec<String>,
     pub coordinates: Vec<String>,
@@ -143,11 +140,7 @@ impl SemanticOperation<LineIntegralObjectRequest> for LineIntegralOperation {
                 bindings: vec![("parameter".into(), request.parameter.clone())],
                 conditions: Vec::new(),
                 payload: RulePayload::Structural,
-                importance: match event.importance {
-                    StepImportance::Routine => RuleImportance::Routine,
-                    StepImportance::Normal => RuleImportance::Normal,
-                    StepImportance::Key => RuleImportance::Key,
-                },
+                importance: event.importance,
                 transformation: None,
                 presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
                     expression: event.expr,
@@ -206,83 +199,65 @@ pub struct LineIntegralResult {
     pub tex: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[cfg(test)]
-struct LineIntegralStepResult {
-    pub result: LineIntegralResult,
-    pub steps: Vec<Step>,
+pub(crate) struct LineIntegralEmission {
+    pub(crate) rule: String,
+    pub(crate) expr: String,
+    pub(crate) why: String,
+    pub(crate) importance: RuleImportance,
 }
 
-#[cfg(test)]
-fn compute(
-    engine: &mut dyn Engine,
-    request: &LineIntegralRequest,
-) -> Result<LineIntegralResult, EngineError> {
-    validate_request(request)?;
-    evaluate(engine, request, true)
+impl LineIntegralEmission {
+    fn new(
+        rule: impl Into<String>,
+        expr: impl Into<String>,
+        why: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expr: expr.into(),
+            why: why.into(),
+            importance,
+        }
+    }
 }
 
-#[cfg(test)]
-fn compute_steps(
-    engine: &mut dyn Engine,
-    request: &LineIntegralRequest,
-) -> Result<LineIntegralStepResult, EngineError> {
-    compute_steps_with_verbosity(engine, request, StepVerbosity::Detailed)
-}
-
-#[cfg(test)]
-fn compute_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    request: &LineIntegralRequest,
-    verbosity: StepVerbosity,
-) -> Result<LineIntegralStepResult, EngineError> {
-    validate_request(request)?;
-    let mut result = evaluate(engine, request, false)?;
-    let events = line_integral_events(&result, request);
-    let steps = render_events(engine, events, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(LineIntegralStepResult { result, steps })
-}
-
-fn line_integral_events(
+pub(crate) fn line_integral_events(
     result: &LineIntegralResult,
     request: &LineIntegralRequest,
-) -> Vec<StepEvent> {
-    let mut events = vec![StepEvent::new(
+) -> Vec<LineIntegralEmission> {
+    let mut events = vec![LineIntegralEmission::new(
         "line-integral-parameterize",
-        &format!("{{{}}}", result.curve.join(",")),
+        format!("{{{}}}", result.curve.join(",")),
         "使用给定参数表示积分曲线。",
-        StepImportance::Key,
+        RuleImportance::Key,
     )];
-    events.push(StepEvent::new(
+    events.push(LineIntegralEmission::new(
         "line-integral-tangent",
-        &format!("{{{}}}", result.velocity.join(",")),
+        format!("{{{}}}", result.velocity.join(",")),
         "对参数曲线逐分量求导，得到切向量。",
-        StepImportance::Normal,
+        RuleImportance::Normal,
     ));
     if request.kind == LineIntegralKind::ScalarArcLength {
-        events.push(StepEvent::new(
+        events.push(LineIntegralEmission::new(
             "line-integral-speed",
             result
                 .speed
                 .as_deref()
                 .expect("scalar arc-length results include speed"),
             "计算切向量的长度，得到弧长微元的系数。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ));
     }
-    events.push(StepEvent::new(
+    events.push(LineIntegralEmission::new(
         "line-integral-pullback",
-        &format!("{{{}}}", result.field_on_curve.join(",")),
+        format!("{{{}}}", result.field_on_curve.join(",")),
         "将参数曲线代入被积函数或向量场。",
-        StepImportance::Normal,
+        RuleImportance::Normal,
     ));
-    events.push(StepEvent::new(
+    events.push(LineIntegralEmission::new(
         "line-integral-integrand",
-        &format!(
+        format!(
             "Integrate({},{},{})({})",
             request.parameter, request.lower, request.upper, result.integrand
         ),
@@ -290,9 +265,9 @@ fn line_integral_events(
             LineIntegralKind::ScalarArcLength => "乘以曲线速度，化为参数上的定积分。",
             LineIntegralKind::VectorWork => "与切向量作点积，化为参数上的定积分。",
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
-    events.push(StepEvent::new(
+    events.push(LineIntegralEmission::new(
         "line-integral-result",
         &result.value,
         if result.completed {
@@ -300,12 +275,12 @@ fn line_integral_events(
         } else {
             "当前积分规则未能得到解析结果。"
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
     events
 }
 
-fn evaluate(
+pub(crate) fn evaluate(
     engine: &mut dyn Engine,
     request: &LineIntegralRequest,
     render_value: bool,
@@ -421,7 +396,7 @@ fn evaluate(
     })
 }
 
-fn validate_request(request: &LineIntegralRequest) -> Result<(), EngineError> {
+pub(crate) fn validate_request(request: &LineIntegralRequest) -> Result<(), EngineError> {
     let dimension = request.coordinates.len();
     if !(2..=3).contains(&dimension) || request.curve.len() != dimension {
         return Err(EngineError::InvalidInput(
@@ -512,6 +487,11 @@ fn boolean(expression: &Expr, label: &str) -> Result<bool, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::{Engine, RustEngine};
+    use crate::step_compatibility::{
+        line_integral_compute as compute, line_integral_compute_steps as compute_steps,
+        line_integral_compute_steps_with_verbosity as compute_steps_with_verbosity,
+    };
+    use crate::steps::StepVerbosity;
     use crate::test_support::CountingEngine;
 
     fn request(kind: LineIntegralKind, field: &[&str], curve: &[&str]) -> LineIntegralRequest {

@@ -4,7 +4,6 @@
 use serde::Serialize;
 
 use crate::protocol::ConditionSet;
-use crate::steps::Step;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,5 +55,4 @@ pub struct DefinedObjectResult {
     pub tex: String,
     pub conditions: ConditionSet,
     pub components: Vec<ObjectComponent>,
-    pub steps: Vec<Step>,
 }

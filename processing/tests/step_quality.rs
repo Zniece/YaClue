@@ -1,11 +1,8 @@
 use processing::composition::execute_steps;
 use processing::engine::RustEngine;
-use processing::equations;
-use processing::extrema;
-use processing::limits::{self, LimitDirection};
-use processing::linear_algebra;
-use processing::multiple_integrals::{self, IntegralBound, PolarRegion};
-use processing::ode;
+use processing::limits::LimitDirection;
+use processing::multiple_integrals::{IntegralBound, PolarRegion};
+use processing::step_compatibility;
 use processing::steps::{Step, StepImportance, StepVerbosity};
 
 fn assert_teaching_steps(domain: &str, steps: &[Step]) {
@@ -47,13 +44,13 @@ fn equation_limit_and_extrema_steps_have_complete_teaching_fields() {
     let mut engine = RustEngine::spawn().unwrap();
     assert_teaching_steps(
         "equation",
-        &equations::solve_steps(&mut engine, "x^2-3*x+2==0", "x")
+        &step_compatibility::solve_steps(&mut engine, "x^2-3*x+2==0", "x")
             .unwrap()
             .steps,
     );
     assert_teaching_steps(
         "limit",
-        &limits::limit_steps(
+        &step_compatibility::limit_steps(
             &mut engine,
             "(1-Cos(x))/x^2",
             "x",
@@ -64,21 +61,27 @@ fn equation_limit_and_extrema_steps_have_complete_teaching_fields() {
     );
     assert_teaching_steps(
         "ode",
-        &ode::solve_steps(&mut engine, "y'+y==x", "x", "y", &[])
+        &step_compatibility::ode_solve_steps(&mut engine, "y'+y==x", "x", "y", &[])
             .unwrap()
             .steps,
     );
     assert_teaching_steps(
         "extrema",
-        &extrema::analyze_steps(&mut engine, "x^2+y^2", "x", "y")
+        &step_compatibility::extrema_analyze_steps(&mut engine, "x^2+y^2", "x", "y")
             .unwrap()
             .steps,
     );
     assert_teaching_steps(
         "lagrange",
-        &extrema::analyze_lagrange_steps(&mut engine, "x+y", "x^2+y^2-1", "x", "y")
-            .unwrap()
-            .steps,
+        &step_compatibility::extrema_analyze_lagrange_steps(
+            &mut engine,
+            "x+y",
+            "x^2+y^2-1",
+            "x",
+            "y",
+        )
+        .unwrap()
+        .steps,
     );
 }
 
@@ -97,7 +100,7 @@ fn multivariable_integral_steps_show_complete_formula_chains() {
     };
     assert_teaching_steps(
         "double integral",
-        &multiple_integrals::double_integral_steps(&mut engine, "x+y", inner, outer)
+        &step_compatibility::double_integral_steps(&mut engine, "x+y", inner, outer)
             .unwrap()
             .steps,
     );
@@ -118,13 +121,13 @@ fn multivariable_integral_steps_show_complete_formula_chains() {
     };
     assert_teaching_steps(
         "triple integral",
-        &multiple_integrals::triple_integral_steps(&mut engine, "1", inner, middle, outer)
+        &step_compatibility::triple_integral_steps(&mut engine, "1", inner, middle, outer)
             .unwrap()
             .steps,
     );
     assert_teaching_steps(
         "polar integral",
-        &multiple_integrals::polar_integral_steps(
+        &step_compatibility::polar_integral_steps(
             &mut engine,
             "1",
             "x",
@@ -172,7 +175,7 @@ fn multivariable_integral_steps_show_complete_formula_chains() {
 #[test]
 fn row_reduction_steps_have_complete_teaching_fields() {
     let mut engine = RustEngine::spawn().unwrap();
-    let result = linear_algebra::linear_structure_steps(&mut engine, "{{0,2},{1,1}}").unwrap();
+    let result = step_compatibility::linear_structure_steps(&mut engine, "{{0,2},{1,1}}").unwrap();
     assert_teaching_steps("row reduction", &result.steps);
     assert!(result.steps.iter().any(|step| step.rule == "row-swap"));
     assert!(result.steps.iter().any(|step| step.rule == "row-scale"));

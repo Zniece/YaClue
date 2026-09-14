@@ -241,7 +241,8 @@ mod tests {
         let mut engine = crate::engine::RustEngine::spawn().unwrap();
         (
             input_id,
-            crate::arithmetic::execute_elaborated_structure(&mut engine, &elaborated).unwrap(),
+            crate::execution_visitor::execute_elaborated_structure(&mut engine, &elaborated)
+                .unwrap(),
         )
     }
 

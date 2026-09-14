@@ -165,7 +165,7 @@ mod tests {
         let input = crate::elaboration::elaborate_input("D(x)Limit(t,0)(Sin(t)/t+x^2)").unwrap();
         let mut engine = RustEngine::spawn().unwrap();
         let off = measure(|| {
-            crate::arithmetic::execute_elaborated_structure_with_context(
+            crate::execution_visitor::execute_elaborated_structure_with_context(
                 &mut engine,
                 &input.root,
                 crate::semantic_core::ComputationContext::new(crate::semantic_core::TraceMode::Off),
@@ -173,7 +173,7 @@ mod tests {
             .unwrap()
         });
         let detailed = measure(|| {
-            crate::arithmetic::execute_elaborated_structure_with_context(
+            crate::execution_visitor::execute_elaborated_structure_with_context(
                 &mut engine,
                 &input.root,
                 crate::semantic_core::ComputationContext::new(

@@ -11,7 +11,6 @@ use crate::binding;
 use crate::engine::{Engine, EngineError, Expr};
 use crate::protocol::ConditionSet;
 use crate::semantic;
-use crate::steps::{Step, StepImportance};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,21 +105,6 @@ pub struct TransformationCertificate {
     pub bindings: Vec<RuleBinding>,
     pub conditions: ConditionSet,
     pub verification: VerificationMethod,
-}
-
-impl TransformationCertificate {
-    pub fn project_step(&self, tex: String) -> Step {
-        Step {
-            kind: crate::steps::StepKind::EquivalentTransformation,
-            before_expr: Some(self.before.clone()),
-            before_tex: None,
-            rule: self.rule.clone(),
-            expr: self.after.clone(),
-            why: format!("应用经 {:?} 验证的有限变换。", self.verification),
-            tex,
-            importance: StepImportance::Key,
-        }
-    }
 }
 
 struct ProofContext {
@@ -487,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn certificate_projects_to_a_step() {
+    fn certificate_preserves_verified_transformation() {
         let certificate = TransformationCertificate {
             rule: "factor-common-term".into(),
             before: "a*x+a*y".into(),
@@ -500,7 +484,7 @@ mod tests {
             conditions: ConditionSet::empty(),
             verification: VerificationMethod::BoundedRewrite,
         };
-        let step = certificate.project_step("a(x+y)".into());
-        assert_eq!(step.expr, certificate.after);
+        assert_eq!(certificate.after, "a*(x+y)");
+        assert_eq!(certificate.verification, VerificationMethod::BoundedRewrite);
     }
 }

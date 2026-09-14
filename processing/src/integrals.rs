@@ -2,7 +2,7 @@
 //! domain adapter, while the operation boundary owns Held/family semantics.
 
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{validate_expression, validate_symbol};
+use crate::input::validate_symbol;
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::quadrature::{adaptive_simpson, QuadratureOptions};
 use crate::semantic::{Exactness, ValueKind};
@@ -11,9 +11,6 @@ use crate::semantic_core::{
     NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, ObjectId,
     OperatorId, Requirement, RuleFact, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticOperation, SemanticState, VecEventSink,
-};
-use crate::steps::{
-    render_events, render_rule_trace, Step, StepEvent, StepImportance, StepKind, StepVerbosity,
 };
 use serde::Serialize;
 
@@ -27,71 +24,16 @@ pub struct AntiderivativeFamily {
     pub arbitrary_constants: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct AntiderivativeStepResult {
-    pub result: AntiderivativeFamily,
-    pub steps: Vec<Step>,
+pub(crate) struct IntegralRuleEmission {
+    pub(crate) rule: String,
+    pub(crate) expression: String,
+    pub(crate) explanation: String,
+    pub(crate) importance: RuleImportance,
 }
 
-struct IntegralRuleEmission {
-    rule: String,
-    expression: String,
-    explanation: String,
-    importance: RuleImportance,
-}
-
-struct IntegralEvaluation {
-    result: String,
-    emissions: Vec<IntegralRuleEmission>,
-}
-
-pub fn derive_integrals_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    Ok(integral_compatibility_evaluation(engine, expression, variable, verbosity)?.1)
-}
-
-fn integral_compatibility_evaluation(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    verbosity: StepVerbosity,
-) -> Result<(IntegralEvaluation, Vec<Step>), EngineError> {
-    validate_expression(expression, "表达式")?;
-    validate_symbol(variable, "积分变量")?;
-    let evaluation = evaluate_integral_rules(
-        engine,
-        &format!("StepsI'Computation({expression},{variable})"),
-    )?;
-    let events = evaluation
-        .emissions
-        .iter()
-        .map(|emission| {
-            StepEvent::new(
-                &emission.rule,
-                &emission.expression,
-                &emission.explanation,
-                match emission.importance {
-                    RuleImportance::Routine => StepImportance::Routine,
-                    RuleImportance::Normal => StepImportance::Normal,
-                    RuleImportance::Key => StepImportance::Key,
-                },
-            )
-        })
-        .collect();
-    let steps = render_events(engine, events, verbosity)?;
-    Ok((evaluation, steps))
-}
-
-pub fn derive_integrals(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-) -> Result<Vec<Step>, EngineError> {
-    derive_integrals_with_verbosity(engine, expression, variable, StepVerbosity::Detailed)
+pub(crate) struct IntegralEvaluation {
+    pub(crate) result: String,
+    pub(crate) emissions: Vec<IntegralRuleEmission>,
 }
 
 pub fn antiderivative_family(
@@ -117,41 +59,7 @@ pub fn antiderivative_family(
     }
 }
 
-pub fn derive_antiderivative_family_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    arbitrary_constant: String,
-    verbosity: StepVerbosity,
-) -> Result<AntiderivativeStepResult, EngineError> {
-    let (evaluation, mut steps) =
-        integral_compatibility_evaluation(engine, expression, variable, verbosity)?;
-    let representative = evaluation.result;
-    let representative_tex = engine
-        .render_syntax_tex_batch(std::slice::from_ref(&representative))?
-        .pop()
-        .map(|tex| crate::input::strip_tex_delimiters(&tex))
-        .ok_or_else(|| EngineError::Parse("不定积分代表元缺少 TeX 投影".into()))?;
-    let result = antiderivative_family(
-        representative,
-        representative_tex,
-        variable,
-        arbitrary_constant,
-    );
-    steps.push(Step {
-        kind: StepKind::EquivalentTransformation,
-        before_expr: None,
-        before_tex: None,
-        rule: "antiderivative-family".into(),
-        expr: result.expression.clone(),
-        why: "加入任意常数，表示全部原函数。".into(),
-        tex: result.tex.clone(),
-        importance: StepImportance::Key,
-    });
-    Ok(AntiderivativeStepResult { result, steps })
-}
-
-fn evaluate_integral_rules(
+pub(crate) fn evaluate_integral_rules(
     engine: &mut dyn Engine,
     command: &str,
 ) -> Result<IntegralEvaluation, EngineError> {
@@ -717,88 +625,6 @@ pub(crate) fn definite_integral_computation_with_options(
         certificates,
         effects,
     })
-}
-
-pub fn derive_definite(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    lower: &str,
-    upper: &str,
-) -> Result<Vec<Step>, EngineError> {
-    derive_definite_configured(
-        engine,
-        expression,
-        variable,
-        lower,
-        upper,
-        None,
-        StepVerbosity::Detailed,
-    )
-}
-
-pub fn derive_definite_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    lower: &str,
-    upper: &str,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    derive_definite_configured(engine, expression, variable, lower, upper, None, verbosity)
-}
-
-pub fn derive_definite_with_options(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    lower: &str,
-    upper: &str,
-    options: &QuadratureOptions,
-) -> Result<Vec<Step>, EngineError> {
-    derive_definite_configured(
-        engine,
-        expression,
-        variable,
-        lower,
-        upper,
-        Some(options),
-        StepVerbosity::Detailed,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn derive_definite_configured(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    lower: &str,
-    upper: &str,
-    numeric_fallback: Option<&QuadratureOptions>,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    validate_expression(expression, "被积表达式")?;
-    validate_expression(lower, "下限")?;
-    validate_expression(upper, "上限")?;
-    validate_symbol(variable, "积分变量")?;
-    let computation = definite_integral_computation_with_options(
-        engine,
-        expression,
-        &DefiniteIntegralRequest {
-            variable: variable.into(),
-            lower: lower.into(),
-            upper: upper.into(),
-        },
-        numeric_fallback,
-    )?;
-    render_rule_trace(
-        engine,
-        computation
-            .trace
-            .as_ref()
-            .ok_or_else(|| EngineError::Eval("定积分计算缺少规则轨迹".into()))?,
-        verbosity,
-    )
 }
 
 fn numeric_bound(

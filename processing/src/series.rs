@@ -4,7 +4,6 @@ use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{
     analyze_expression, strip_tex_delimiters, validate_expression, validate_symbol,
 };
-use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 use crate::protocol::{Condition, ConditionSet, OutcomeReason, ResultMetadata};
@@ -18,11 +17,11 @@ use crate::semantic_core::{
     SemanticState, VecEventSink,
 };
 
-struct SeriesRuleEmission {
-    rule: String,
-    expression: String,
-    explanation: String,
-    importance: RuleImportance,
+pub(crate) struct SeriesRuleEmission {
+    pub(crate) rule: String,
+    pub(crate) expression: String,
+    pub(crate) explanation: String,
+    pub(crate) importance: RuleImportance,
 }
 
 impl SeriesRuleEmission {
@@ -335,12 +334,6 @@ pub struct InfiniteSeriesResult {
     pub tex: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct InfiniteSeriesStepResult {
-    pub result: InfiniteSeriesResult,
-    pub steps: Vec<Step>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PowerSeriesStatus {
@@ -364,12 +357,6 @@ pub struct PowerSeriesResult {
     pub left_included: bool,
     pub right_included: bool,
     pub tex: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PowerSeriesStepResult {
-    pub result: PowerSeriesResult,
-    pub steps: Vec<Step>,
 }
 
 pub fn finite_sum(
@@ -478,32 +465,7 @@ fn infinite_series_internal(
     })
 }
 
-pub fn infinite_series_steps(
-    engine: &mut dyn Engine,
-    term: &str,
-    variable: &str,
-    from: &str,
-) -> Result<InfiniteSeriesStepResult, EngineError> {
-    infinite_series_steps_with_verbosity(engine, term, variable, from, StepVerbosity::Detailed)
-}
-
-pub fn infinite_series_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    term: &str,
-    variable: &str,
-    from: &str,
-    verbosity: StepVerbosity,
-) -> Result<InfiniteSeriesStepResult, EngineError> {
-    let (mut result, emissions) = infinite_series_evaluation(engine, term, variable, from)?;
-    let steps = render_series_emissions(engine, emissions, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(InfiniteSeriesStepResult { result, steps })
-}
-
-fn infinite_series_evaluation(
+pub(crate) fn infinite_series_evaluation(
     engine: &mut dyn Engine,
     term: &str,
     variable: &str,
@@ -623,42 +585,7 @@ fn power_series_internal(
     })
 }
 
-pub fn power_series_steps(
-    engine: &mut dyn Engine,
-    coefficient: &str,
-    index: &str,
-    variable: &str,
-    center: &str,
-) -> Result<PowerSeriesStepResult, EngineError> {
-    power_series_steps_with_verbosity(
-        engine,
-        coefficient,
-        index,
-        variable,
-        center,
-        StepVerbosity::Detailed,
-    )
-}
-
-pub fn power_series_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    coefficient: &str,
-    index: &str,
-    variable: &str,
-    center: &str,
-    verbosity: StepVerbosity,
-) -> Result<PowerSeriesStepResult, EngineError> {
-    let (mut result, emissions) =
-        power_series_evaluation(engine, coefficient, index, variable, center)?;
-    let steps = render_series_emissions(engine, emissions, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(PowerSeriesStepResult { result, steps })
-}
-
-fn power_series_evaluation(
+pub(crate) fn power_series_evaluation(
     engine: &mut dyn Engine,
     coefficient: &str,
     index: &str,
@@ -719,32 +646,6 @@ fn power_series_evaluation(
         RuleImportance::Key,
     ));
     Ok((result, emissions))
-}
-
-fn render_series_emissions(
-    engine: &mut dyn Engine,
-    emissions: Vec<SeriesRuleEmission>,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    render_events(
-        engine,
-        emissions
-            .into_iter()
-            .map(|emission| {
-                StepEvent::new(
-                    &emission.rule,
-                    &emission.expression,
-                    &emission.explanation,
-                    match emission.importance {
-                        RuleImportance::Routine => StepImportance::Routine,
-                        RuleImportance::Normal => StepImportance::Normal,
-                        RuleImportance::Key => StepImportance::Key,
-                    },
-                )
-            })
-            .collect(),
-        verbosity,
-    )
 }
 
 fn validate_request(term: &str, variable: &str, from: &str) -> Result<(), EngineError> {
@@ -858,6 +759,7 @@ fn parse_bool(expr: &Expr, label: &str) -> Result<bool, EngineError> {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::step_compatibility::{infinite_series_steps, power_series_steps};
 
     fn object(source: &str) -> crate::semantic_core::MathematicalObject {
         object_from_source(

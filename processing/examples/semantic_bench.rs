@@ -58,7 +58,7 @@ fn main() {
     let definition = request("t^(1/x-1)*Exp(-t)");
     let defined = measure(|| {
         black_box(
-            try_lower_improper_integral(&mut engine, &definition, None)
+            try_lower_improper_integral(&mut engine, &definition)
                 .expect("definition")
                 .expect("definition match"),
         );
@@ -66,14 +66,14 @@ fn main() {
     let equivalent = request("3*Exp(-(2*t))*t^a/t");
     let equivalent_form = measure(|| {
         black_box(
-            try_lower_improper_integral(&mut engine, &equivalent, None)
+            try_lower_improper_integral(&mut engine, &equivalent)
                 .expect("equivalent form")
                 .expect("equivalent match"),
         );
     });
     let miss = request("Sin(t)/(1+t^2)");
     let recognition_miss = measure(|| {
-        black_box(try_lower_improper_integral(&mut engine, &miss, None).expect("bounded miss"));
+        black_box(try_lower_improper_integral(&mut engine, &miss).expect("bounded miss"));
     });
     let long_chain = measure(|| {
         black_box(

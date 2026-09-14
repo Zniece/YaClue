@@ -11,14 +11,15 @@ use std::collections::BTreeMap;
 
 use crate::semantic_core::{ExpressionPath, ObjectId};
 
-pub use crate::derivatives::{
+pub use crate::integrals::{antiderivative_family, AntiderivativeFamily};
+pub use crate::step_compatibility::{
+    derive_antiderivative_family_with_verbosity, derive_definite, derive_definite_with_options,
+    derive_definite_with_verbosity, derive_integrals, derive_integrals_with_verbosity,
+    AntiderivativeStepResult,
+};
+pub use crate::step_compatibility::{
     derive_steps, derive_steps_order, derive_steps_order_with_verbosity,
     derive_steps_with_verbosity,
-};
-pub use crate::integrals::{
-    antiderivative_family, derive_antiderivative_family_with_verbosity, derive_definite,
-    derive_definite_with_options, derive_definite_with_verbosity, derive_integrals,
-    derive_integrals_with_verbosity, AntiderivativeFamily, AntiderivativeStepResult,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

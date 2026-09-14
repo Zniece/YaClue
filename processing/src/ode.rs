@@ -21,7 +21,6 @@ use crate::semantic_core::{
     RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
     SemanticOperation, SemanticState, VecEventSink,
 };
-use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
 pub const MAX_ODE_ORDER: u32 = 2;
@@ -301,58 +300,7 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct OdeStepResult {
-    pub result: OdeResult,
-    pub steps: Vec<Step>,
-}
-
-pub fn solve_steps(
-    engine: &mut dyn Engine,
-    equation: &str,
-    independent: &str,
-    dependent: &str,
-    initial_conditions: &[InitialCondition<'_>],
-) -> Result<OdeStepResult, EngineError> {
-    solve_steps_with_verbosity(
-        engine,
-        equation,
-        independent,
-        dependent,
-        initial_conditions,
-        StepVerbosity::Detailed,
-    )
-}
-
-pub fn solve_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    equation: &str,
-    independent: &str,
-    dependent: &str,
-    initial_conditions: &[InitialCondition<'_>],
-    verbosity: StepVerbosity,
-) -> Result<OdeStepResult, EngineError> {
-    let (result, solver_events) = solve_internal(
-        engine,
-        equation,
-        independent,
-        dependent,
-        initial_conditions,
-        true,
-    )?;
-    let events = ode_rule_emissions(
-        equation,
-        independent,
-        dependent,
-        initial_conditions,
-        &result,
-        solver_events,
-    );
-    let steps = render_ode_emissions(engine, events, verbosity)?;
-    Ok(OdeStepResult { result, steps })
-}
-
-fn ode_rule_emissions(
+pub(crate) fn ode_rule_emissions(
     equation: &str,
     independent: &str,
     dependent: &str,
@@ -441,32 +389,11 @@ fn ode_rule_emissions(
     events
 }
 
-fn render_ode_emissions(
-    engine: &mut dyn Engine,
-    emissions: Vec<OdeEvent>,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    let events = emissions
-        .into_iter()
-        .map(|event| StepEvent {
-            rule: event.rule,
-            expr: event.expr,
-            why: event.explanation,
-            importance: match event.importance {
-                RuleImportance::Routine => StepImportance::Routine,
-                RuleImportance::Normal => StepImportance::Normal,
-                RuleImportance::Key => StepImportance::Key,
-            },
-        })
-        .collect();
-    render_events(engine, events, verbosity)
-}
-
-struct OdeEvent {
-    rule: String,
-    expr: String,
-    explanation: String,
-    importance: RuleImportance,
+pub(crate) struct OdeEvent {
+    pub(crate) rule: String,
+    pub(crate) expr: String,
+    pub(crate) explanation: String,
+    pub(crate) importance: RuleImportance,
 }
 
 impl OdeEvent {
@@ -569,7 +496,7 @@ pub fn solve(
     .map(|(result, _)| result)
 }
 
-fn solve_internal(
+pub(crate) fn solve_internal(
     engine: &mut dyn Engine,
     equation: &str,
     independent: &str,
@@ -1491,6 +1418,11 @@ fn apply_implicit_initial_condition(
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::step_compatibility::{
+        ode_solve_steps as solve_steps,
+        ode_solve_steps_with_verbosity as solve_steps_with_verbosity,
+    };
+    use crate::steps::{StepImportance, StepVerbosity};
 
     fn assert_stable_ode_constants(expression: &str, allowed: &[&str]) {
         let analysis = analyze_expression(expression, "ODE 公开表达式").unwrap();

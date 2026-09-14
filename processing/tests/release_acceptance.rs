@@ -6,17 +6,15 @@
 //! honest non-success state, classified bad input, and structured evidence.
 
 use processing::algebra::{transform, TransformKind};
-use processing::arithmetic::execute_elaborated_structure;
 use processing::elaboration::elaborate;
 use processing::engine::{EngineError, RustEngine};
 use processing::equations::{solve as solve_equations, SolveCompleteness, SolveStatus};
 use processing::equivalence::{verify, Equivalence, ProofBudget, VerificationMethod};
+use processing::execution_visitor::execute_elaborated_structure;
 use processing::improper_integrals::{evaluate as improper_integral, ImproperIntegralRequest};
 use processing::intrinsics::{try_lower_improper_integral, IntrinsicKind};
-use processing::limits::{limit, limit_steps, LimitDirection, LimitStatus};
-use processing::linear_algebra::{
-    compute as matrix_compute, linear_structure_steps, MatrixOperation,
-};
+use processing::limits::{limit, LimitDirection, LimitStatus};
+use processing::linear_algebra::{compute as matrix_compute, MatrixOperation};
 use processing::metrics::measure;
 use processing::numeric::{approximate, find_root, NumericKind, RootStatus};
 use processing::objects::{DefinedObjectStatus, PrimitiveOperation};
@@ -28,6 +26,8 @@ use processing::semantic_core::{
     transformation_chain_is_continuous, ComputationContext, ComputationOutput, Effect,
     NormalizationLevel, OperatorId, SemanticInterpretation, TraceMode,
 };
+use processing::step_compatibility::limit_steps;
+use processing::step_compatibility::linear_structure_steps;
 use processing::steps::{derive_integrals, derive_steps};
 
 fn assert_invalid_input(result: Result<impl Sized, EngineError>) {
@@ -54,7 +54,7 @@ fn execute_with_metrics(
 ) -> processing::metrics::Measured<processing::semantic_core::Computation> {
     let elaborated = processing::elaboration::elaborate_input(source).unwrap();
     measure(|| {
-        processing::arithmetic::execute_elaborated_structure_with_context(
+        processing::execution_visitor::execute_elaborated_structure_with_context(
             engine,
             &elaborated.root,
             ComputationContext::new(mode),
@@ -338,7 +338,7 @@ fn defined_object_release_contract() {
         upper: "Infinity".into(),
         singular_points: Vec::new(),
     };
-    let converged = improper_integral(&mut engine, &request, None).unwrap();
+    let converged = improper_integral(&mut engine, &request).unwrap();
     assert_eq!(converged.status, DefinedObjectStatus::Converged);
     assert_eq!(converged.value, "1");
     assert!(converged
@@ -355,7 +355,6 @@ fn defined_object_release_contract() {
             upper: "1".into(),
             singular_points: vec!["0".into()],
         },
-        None,
     )
     .unwrap();
     assert_eq!(divergent.status, DefinedObjectStatus::Divergent);
@@ -370,7 +369,6 @@ fn defined_object_release_contract() {
             singular_points: vec!["outside".into()],
             ..request
         },
-        None,
     ));
 
     let lowered = try_lower_improper_integral(
@@ -382,7 +380,6 @@ fn defined_object_release_contract() {
             upper: "Infinity".into(),
             singular_points: Vec::new(),
         },
-        None,
     )
     .unwrap()
     .expect("Euler kernel should lower");

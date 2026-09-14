@@ -10,7 +10,6 @@ use crate::semantic_core::{
     ObjectReference, OperatorId, Requirement, RuleEvent, RuleImportance, RulePayload,
     RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
 };
-use crate::steps::{Step, StepVerbosity};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -675,45 +674,6 @@ fn limit_metadata(result: &LimitResult) -> Result<ResultMetadata, EngineError> {
     })
 }
 
-pub fn limit_steps(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    at: &str,
-    direction: LimitDirection,
-) -> Result<Vec<Step>, EngineError> {
-    limit_steps_with_verbosity(
-        engine,
-        expression,
-        variable,
-        at,
-        direction,
-        StepVerbosity::Detailed,
-    )
-}
-
-pub fn limit_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expression: &str,
-    variable: &str,
-    at: &str,
-    direction: LimitDirection,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    validate_expression(expression, "极限表达式")?;
-    validate_expression(at, "趋近点")?;
-    validate_symbol(variable, "极限变量")?;
-    let computation = limit_computation(engine, expression, variable, at, direction)?;
-    crate::steps::render_rule_trace(
-        engine,
-        computation
-            .trace
-            .as_ref()
-            .expect("limit computation always records its rule trace"),
-        verbosity,
-    )
-}
-
 fn format_condition_expression(condition: &LimitCondition) -> String {
     match condition {
         LimitCondition::Property { expression, fact } => {
@@ -871,6 +831,8 @@ fn classify(expr: &Expr, _value: &str) -> LimitStatus {
 mod tests {
     use super::*;
     use crate::engine::RustEngine;
+    use crate::step_compatibility::{limit_steps, limit_steps_with_verbosity};
+    use crate::steps::StepVerbosity;
 
     #[test]
     fn classifies_finite_infinite_and_directional_limits() {

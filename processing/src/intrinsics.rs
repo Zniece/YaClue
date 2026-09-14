@@ -10,7 +10,6 @@ use crate::improper_integrals::ImproperIntegralRequest;
 use crate::input::strip_tex_delimiters;
 use crate::objects::DefinedObjectKind;
 use crate::protocol::{Condition, ConditionSet};
-use crate::steps::{Step, StepImportance, StepVerbosity};
 
 const MAX_KERNEL_FACTORS: usize = 32;
 
@@ -69,12 +68,8 @@ pub struct IntrinsicLoweringResult {
     pub value: String,
     pub tex: String,
     pub conditions: ConditionSet,
-    /// Omitted on the no-steps fast path to keep teaching history out of the
-    /// current-value metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub certificate: Option<LoweringCertificate>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub steps: Vec<Step>,
 }
 
 struct GammaMatch {
@@ -88,9 +83,8 @@ struct GammaMatch {
 pub fn try_lower_improper_integral(
     engine: &mut dyn Engine,
     request: &ImproperIntegralRequest,
-    verbosity: Option<StepVerbosity>,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
-    try_lower_improper_integral_configured(engine, request, None, verbosity.is_some(), verbosity)
+    try_lower_improper_integral_configured(engine, request, None, false)
 }
 
 #[cfg(test)]
@@ -98,7 +92,7 @@ pub(crate) fn try_lower_improper_integral_with_certificate(
     engine: &mut dyn Engine,
     request: &ImproperIntegralRequest,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
-    try_lower_improper_integral_configured(engine, request, None, true, None)
+    try_lower_improper_integral_configured(engine, request, None, true)
 }
 
 pub(crate) fn try_lower_improper_integral_ast_with_certificate(
@@ -106,7 +100,7 @@ pub(crate) fn try_lower_improper_integral_ast_with_certificate(
     request: &ImproperIntegralRequest,
     expression: &Rc<LispObject>,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
-    try_lower_improper_integral_configured(engine, request, Some(expression), true, None)
+    try_lower_improper_integral_configured(engine, request, Some(expression), true)
 }
 
 fn try_lower_improper_integral_configured(
@@ -114,7 +108,6 @@ fn try_lower_improper_integral_configured(
     request: &ImproperIntegralRequest,
     expression: Option<&Rc<LispObject>>,
     include_certificate: bool,
-    verbosity: Option<StepVerbosity>,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
     let Some(signature) = select_signature(request) else {
         return Ok(None);
@@ -187,20 +180,6 @@ fn try_lower_improper_integral_configured(
         conditions: conditions.clone(),
         verification: LoweringVerification::StructuralKernelMatch,
     });
-    let steps = verbosity
-        .map(|_| {
-            vec![Step {
-                kind: crate::steps::StepKind::EquivalentTransformation,
-                before_expr: None,
-                before_tex: None,
-                rule: "recognize-gamma-integral".into(),
-                expr: value.clone(),
-                why: "识别 Euler 型积分核，在成立条件下使用原生 Gamma 对象。".into(),
-                tex: tex.clone(),
-                importance: StepImportance::Key,
-            }]
-        })
-        .unwrap_or_default();
     Ok(Some(IntrinsicLoweringResult {
         intrinsic: IntrinsicKind::Gamma,
         source: source_expression(request),
@@ -209,7 +188,6 @@ fn try_lower_improper_integral_configured(
         tex,
         conditions,
         certificate,
-        steps,
     }))
 }
 
@@ -478,37 +456,30 @@ mod tests {
     #[test]
     fn lowers_definition_with_arbitrary_parameter_expression() {
         let mut engine = RustEngine::spawn().unwrap();
-        let result = try_lower_improper_integral(
-            &mut engine,
-            &request("t^(1/x-1)*Exp(-t)"),
-            Some(StepVerbosity::Standard),
-        )
-        .unwrap()
-        .unwrap();
+        let result = try_lower_improper_integral(&mut engine, &request("t^(1/x-1)*Exp(-t)"))
+            .unwrap()
+            .unwrap();
         assert_eq!(result.value.replace(' ', ""), "Gamma((1/x))");
         assert!(
             matches!(result.conditions.conditions(), [Condition::RealPartPositive { expression }] if expression.replace(' ', "") == "1/x")
         );
-        assert!(!result.steps.is_empty());
     }
 
     #[test]
     fn accepts_reordering_divided_powers_constants_and_scale() {
         let mut engine = RustEngine::spawn().unwrap();
-        let reordered =
-            try_lower_improper_integral(&mut engine, &request("Exp(-t)*t^(a-1)*3"), None)
-                .unwrap()
-                .unwrap();
+        let reordered = try_lower_improper_integral(&mut engine, &request("Exp(-t)*t^(a-1)*3"))
+            .unwrap()
+            .unwrap();
         assert!(reordered.target.contains("Gamma"));
         assert!(reordered.target.contains('3'));
-        let divided = try_lower_improper_integral(&mut engine, &request("t^a/t*Exp(-t)"), None)
+        let divided = try_lower_improper_integral(&mut engine, &request("t^a/t*Exp(-t)"))
             .unwrap()
             .unwrap();
         assert!(divided.target.contains("Gamma((a))"));
-        let scaled =
-            try_lower_improper_integral(&mut engine, &request("t^(a-1)*Exp(-(b*t))"), None)
-                .unwrap()
-                .unwrap();
+        let scaled = try_lower_improper_integral(&mut engine, &request("t^(a-1)*Exp(-(b*t))"))
+            .unwrap()
+            .unwrap();
         assert!(scaled.conditions.conditions().iter().any(
             |condition| matches!(condition, Condition::Positive { expression } if expression == "b")
         ));
@@ -517,20 +488,16 @@ mod tests {
     #[test]
     fn bounded_misses_fall_back() {
         let mut engine = RustEngine::spawn().unwrap();
-        assert!(
-            try_lower_improper_integral(&mut engine, &request("Sin(t)"), None)
-                .unwrap()
-                .is_none()
-        );
+        assert!(try_lower_improper_integral(&mut engine, &request("Sin(t)"))
+            .unwrap()
+            .is_none());
         let mut wrong_bounds = request("t^(a-1)*Exp(-t)");
         wrong_bounds.lower = "1".into();
+        assert!(try_lower_improper_integral(&mut engine, &wrong_bounds)
+            .unwrap()
+            .is_none());
         assert!(
-            try_lower_improper_integral(&mut engine, &wrong_bounds, None)
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            try_lower_improper_integral(&mut engine, &request("t^(-2)*Exp(-t)"), None)
+            try_lower_improper_integral(&mut engine, &request("t^(-2)*Exp(-t)"))
                 .unwrap()
                 .is_none()
         );
@@ -548,34 +515,21 @@ mod tests {
     #[test]
     fn fast_paths_bound_engine_work_and_teaching_metadata() {
         let mut engine = CountingEngine::spawn();
-        let miss = try_lower_improper_integral(&mut engine, &request("Sin(t)"), None).unwrap();
+        let miss = try_lower_improper_integral(&mut engine, &request("Sin(t)")).unwrap();
         assert!(miss.is_none());
         assert_eq!((engine.evals, engine.expression_evals), (0, 0));
 
-        let lowered = try_lower_improper_integral(&mut engine, &request("t^(a-1)*Exp(-t)"), None)
+        let lowered = try_lower_improper_integral(&mut engine, &request("t^(a-1)*Exp(-t)"))
             .unwrap()
             .unwrap();
         assert_eq!((engine.evals, engine.expression_evals), (1, 0));
-        assert!(lowered.steps.is_empty());
         assert!(lowered.certificate.is_none());
 
         let evidenced =
             try_lower_improper_integral_with_certificate(&mut engine, &request("t^(a-1)*Exp(-t)"))
                 .unwrap()
                 .unwrap();
-        assert!(evidenced.steps.is_empty());
         assert!(evidenced.certificate.is_some());
         assert_eq!((engine.evals, engine.expression_evals), (2, 0));
-
-        let stepped = try_lower_improper_integral(
-            &mut engine,
-            &request("t^(a-1)*Exp(-t)"),
-            Some(StepVerbosity::Detailed),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!((engine.evals, engine.expression_evals), (3, 0));
-        assert_eq!(stepped.steps.len(), 1);
-        assert_eq!(stepped.certificate.unwrap().bindings.len(), 4);
     }
 }
