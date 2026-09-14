@@ -1432,7 +1432,7 @@ mod tests {
     }
 
     #[test]
-    fn equation_operation_emits_solver_facts_without_legacy_adaptation() {
+    fn equation_operation_emits_solver_facts() {
         let input = crate::semantic_core::object_from_source(
             crate::semantic_core::ObjectId(82),
             "x^2-3*x+2==0",
@@ -1446,21 +1446,17 @@ mod tests {
         )
         .unwrap();
         let mut engine = RustEngine::spawn().unwrap();
-        let measured = crate::metrics::measure(|| {
-            SolveOperation
-                .compute(
-                    &mut engine,
-                    &input,
-                    &SolveRequest {
-                        equations: vec!["x^2-3*x+2==0".into()],
-                        variables: vec!["x".into()],
-                    },
-                )
-                .unwrap()
-        });
-        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
-        let rules = measured
-            .value
+        let computation = SolveOperation
+            .compute(
+                &mut engine,
+                &input,
+                &SolveRequest {
+                    equations: vec!["x^2-3*x+2==0".into()],
+                    variables: vec!["x".into()],
+                },
+            )
+            .unwrap();
+        let rules = computation
             .trace
             .unwrap()
             .events

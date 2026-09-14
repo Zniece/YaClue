@@ -764,34 +764,4 @@ mod tests {
             .print_source()
             .starts_with("Integrate("));
     }
-
-    #[test]
-    fn integral_operations_do_not_cross_the_legacy_trace_adapter() {
-        let mut engine = RustEngine::spawn().unwrap();
-        let measured = crate::metrics::measure(|| {
-            let indefinite = IntegralOperation
-                .compute(
-                    &mut engine,
-                    &input("x^2"),
-                    &IntegralRequest {
-                        variable: "x".into(),
-                        arbitrary_constant: "C".into(),
-                    },
-                )
-                .unwrap();
-            let definite = DefiniteIntegralOperation
-                .compute(
-                    &mut engine,
-                    &input("x^2"),
-                    &DefiniteIntegralRequest {
-                        variable: "x".into(),
-                        lower: "0".into(),
-                        upper: "1".into(),
-                    },
-                )
-                .unwrap();
-            (indefinite, definite)
-        });
-        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
-    }
 }

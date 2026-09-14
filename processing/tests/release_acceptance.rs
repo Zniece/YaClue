@@ -96,9 +96,6 @@ fn cross_domain_rule_emission_release_contract() {
         let compact = execute_with_metrics(&mut engine, source, TraceMode::Compact);
         let detailed = execute_with_metrics(&mut engine, source, TraceMode::Detailed);
 
-        assert_eq!(off.metrics.legacy_trace_adaptations, 0, "{source}");
-        assert_eq!(compact.metrics.legacy_trace_adaptations, 0, "{source}");
-        assert_eq!(detailed.metrics.legacy_trace_adaptations, 0, "{source}");
         assert_eq!(
             mathematical_facts(&off.value),
             mathematical_facts(&compact.value),

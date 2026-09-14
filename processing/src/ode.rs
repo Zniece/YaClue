@@ -2298,7 +2298,7 @@ mod tests {
     }
 
     #[test]
-    fn ode_operation_emits_solver_facts_without_legacy_adaptation() {
+    fn ode_operation_emits_solver_facts() {
         let input = object_from_source(
             crate::semantic_core::ObjectId(92),
             "y'==y",
@@ -2312,21 +2312,17 @@ mod tests {
         )
         .unwrap();
         let mut engine = RustEngine::spawn().unwrap();
-        let measured = crate::metrics::measure(|| {
-            OdeSolveOperation
-                .compute(
-                    &mut engine,
-                    &input,
-                    &OdeSolveRequest {
-                        independent: "x".into(),
-                        dependent: "y".into(),
-                    },
-                )
-                .unwrap()
-        });
-        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
-        let rules = measured
-            .value
+        let computation = OdeSolveOperation
+            .compute(
+                &mut engine,
+                &input,
+                &OdeSolveRequest {
+                    independent: "x".into(),
+                    dependent: "y".into(),
+                },
+            )
+            .unwrap();
+        let rules = computation
             .trace
             .unwrap()
             .events

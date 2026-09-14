@@ -2,7 +2,9 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{analyze_expression, fresh_internal_symbols, render_one_tex, validate_symbol};
-use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
+#[cfg(test)]
+use crate::steps::{render_events, Step, StepVerbosity};
+use crate::steps::{StepEvent, StepImportance};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use yacas_rs::value::{spine_refs, ObjectKind};
@@ -82,8 +84,9 @@ impl SemanticOperation<SurfaceIntegralObjectRequest> for SurfaceIntegralOperatio
             lower: request.lower.clone(),
             upper: request.upper.clone(),
         };
-        let evaluated = compute_steps_with_verbosity(engine, &legacy, StepVerbosity::Detailed)?;
-        let result = evaluated.result;
+        validate_request(&legacy)?;
+        let result = evaluate(engine, &legacy, false)?;
+        let events = surface_integral_events(&result, &legacy);
         let source = if result.completed {
             result.value.clone()
         } else {
@@ -140,12 +143,11 @@ impl SemanticOperation<SurfaceIntegralObjectRequest> for SurfaceIntegralOperatio
                 mode: NormalizationMode::Operation(OperatorId::SurfaceIntegral),
             }),
         });
-        let events = evaluated
-            .steps
+        let events = events
             .into_iter()
-            .map(|step| RuleEvent {
+            .map(|event| RuleEvent {
                 class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-                rule: step.rule,
+                rule: event.rule,
                 input: input.reference(None),
                 additional_inputs: Vec::new(),
                 output: output.reference(None),
@@ -157,16 +159,16 @@ impl SemanticOperation<SurfaceIntegralObjectRequest> for SurfaceIntegralOperatio
                     .collect(),
                 conditions: Vec::new(),
                 payload: RulePayload::Structural,
-                importance: match step.importance {
+                importance: match event.importance {
                     StepImportance::Routine => RuleImportance::Routine,
                     StepImportance::Normal => RuleImportance::Normal,
                     StepImportance::Key => RuleImportance::Key,
                 },
                 transformation: None,
                 presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
-                    expression: step.expr,
-                    explanation: step.why,
-                    tex_override: Some(step.tex),
+                    expression: event.expr,
+                    explanation: event.why,
+                    tex_override: None,
                 }),
             })
             .collect();
@@ -230,6 +232,7 @@ struct SurfaceIntegralResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg(test)]
 struct SurfaceIntegralStepResult {
     pub result: SurfaceIntegralResult,
     pub steps: Vec<Step>,
@@ -252,6 +255,7 @@ fn compute_steps(
     compute_steps_with_verbosity(engine, request, StepVerbosity::Detailed)
 }
 
+#[cfg(test)]
 fn compute_steps_with_verbosity(
     engine: &mut dyn Engine,
     request: &SurfaceIntegralRequest,
@@ -259,6 +263,19 @@ fn compute_steps_with_verbosity(
 ) -> Result<SurfaceIntegralStepResult, EngineError> {
     validate_request(request)?;
     let mut result = evaluate(engine, request, false)?;
+    let events = surface_integral_events(&result, request);
+    let steps = render_events(engine, events, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(SurfaceIntegralStepResult { result, steps })
+}
+
+fn surface_integral_events(
+    result: &SurfaceIntegralResult,
+    request: &SurfaceIntegralRequest,
+) -> Vec<StepEvent> {
     let mut events = vec![StepEvent::new(
         "surface-integral-parameterize",
         &list(&result.surface),
@@ -340,12 +357,7 @@ fn compute_steps_with_verbosity(
         },
         StepImportance::Key,
     ));
-    let steps = render_events(engine, events, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(SurfaceIntegralStepResult { result, steps })
+    events
 }
 
 fn evaluate(

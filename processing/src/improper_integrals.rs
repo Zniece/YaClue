@@ -56,13 +56,12 @@ impl SemanticOperation<(DefinedIntegralOperationKind, ImproperIntegralRequest)>
         let mut request = template.clone();
         request.expression = input.print_source();
         let result = match kind {
-            DefinedIntegralOperationKind::Improper => {
-                evaluate(engine, &request, Some(StepVerbosity::Detailed))?
-            }
+            DefinedIntegralOperationKind::Improper => evaluate(engine, &request, None)?,
             DefinedIntegralOperationKind::PrincipalValue => {
-                principal_value(engine, &request, Some(StepVerbosity::Detailed))?
+                principal_value(engine, &request, None)?
             }
         };
+        let rule_events = defined_integral_rule_events(&result);
         let (metadata, held, no_value) = match result.status {
             DefinedObjectStatus::Converged => (
                 ResultMetadata::solved(Exactness::Symbolic, result.conditions.clone()),
@@ -139,12 +138,11 @@ impl SemanticOperation<(DefinedIntegralOperationKind, ImproperIntegralRequest)>
                 }),
             }),
         });
-        let events = result
-            .steps
+        let events = rule_events
             .into_iter()
-            .map(|step| RuleEvent {
+            .map(|event| RuleEvent {
                 class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-                rule: step.rule,
+                rule: event.rule,
                 input: input.reference(None),
                 additional_inputs: Vec::new(),
                 output: output.reference(None),
@@ -155,16 +153,16 @@ impl SemanticOperation<(DefinedIntegralOperationKind, ImproperIntegralRequest)>
                 ],
                 conditions: result.conditions.conditions().to_vec(),
                 payload: RulePayload::Structural,
-                importance: match step.importance {
+                importance: match event.importance {
                     StepImportance::Routine => RuleImportance::Routine,
                     StepImportance::Normal => RuleImportance::Normal,
                     StepImportance::Key => RuleImportance::Key,
                 },
                 transformation: None,
                 presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
-                    expression: step.expr,
-                    explanation: step.why,
-                    tex_override: Some(step.tex),
+                    expression: event.expr,
+                    explanation: event.why,
+                    tex_override: None,
                 }),
             })
             .collect();
@@ -605,33 +603,35 @@ fn finish_result(
         result.tex = strip_tex_delimiters(&engine.eval(&result.value)?.tex);
     }
     result.steps = if let Some(verbosity) = verbosity {
-        let events = result
-            .components
-            .iter()
-            .map(|component| {
-                let (rule, why) = match component.operation {
-                    PrimitiveOperation::FiniteIntegral => {
-                        ("object-finite-integral", "先计算该分支的截断定积分。")
-                    }
-                    PrimitiveOperation::OneSidedLimit => (
-                        "object-one-sided-limit",
-                        "分别判断该反常端点对应的单侧极限。",
-                    ),
-                    PrimitiveOperation::SymmetricLimit => {
-                        ("object-symmetric-limit", "按主值定义计算对称截断极限。")
-                    }
-                    PrimitiveOperation::Assemble => {
-                        ("object-assemble", "所有分支均收敛后再合并结果。")
-                    }
-                };
-                StepEvent::new(rule, &component.value, why, StepImportance::Normal)
-            })
-            .collect();
+        let events = defined_integral_rule_events(&result);
         render_events(engine, events, verbosity)?
     } else {
         Vec::new()
     };
     Ok(result)
+}
+
+fn defined_integral_rule_events(result: &DefinedObjectResult) -> Vec<StepEvent> {
+    result
+        .components
+        .iter()
+        .map(|component| {
+            let (rule, why) = match component.operation {
+                PrimitiveOperation::FiniteIntegral => {
+                    ("object-finite-integral", "先计算该分支的截断定积分。")
+                }
+                PrimitiveOperation::OneSidedLimit => (
+                    "object-one-sided-limit",
+                    "分别判断该反常端点对应的单侧极限。",
+                ),
+                PrimitiveOperation::SymmetricLimit => {
+                    ("object-symmetric-limit", "按主值定义计算对称截断极限。")
+                }
+                PrimitiveOperation::Assemble => ("object-assemble", "所有分支均收敛后再合并结果。"),
+            };
+            StepEvent::new(rule, &component.value, why, StepImportance::Normal)
+        })
+        .collect()
 }
 
 fn source_expression(head: &str, request: &ImproperIntegralRequest) -> String {

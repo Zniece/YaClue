@@ -942,25 +942,22 @@ mod tests {
     }
 
     #[test]
-    fn sum_operation_emits_domain_facts_without_legacy_adaptation() {
+    fn sum_operation_emits_domain_facts_with_conditions() {
         let mut engine = RustEngine::spawn().unwrap();
-        let measured = crate::metrics::measure(|| {
-            SumOperation
-                .compute(
-                    &mut engine,
-                    &object("r^k"),
-                    &SumRequest {
-                        variable: "k".into(),
-                        lower: "0".into(),
-                        upper: "Infinity".into(),
-                    },
-                )
-                .unwrap()
-        });
-        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
-        let output = measured.value.subject().unwrap();
+        let computation = SumOperation
+            .compute(
+                &mut engine,
+                &object("r^k"),
+                &SumRequest {
+                    variable: "k".into(),
+                    lower: "0".into(),
+                    upper: "Infinity".into(),
+                },
+            )
+            .unwrap();
+        let output = computation.subject().unwrap();
         assert!(!output.semantics.metadata.conditions.is_empty());
-        let trace = measured.value.trace.as_ref().unwrap();
+        let trace = computation.trace.as_ref().unwrap();
         assert!(trace
             .events
             .iter()

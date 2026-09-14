@@ -1287,24 +1287,6 @@ mod tests {
     }
 
     #[test]
-    fn multiple_integrals_emit_domain_facts_without_legacy_adaptation() {
-        let mut engine = RustEngine::spawn().unwrap();
-        let measured = crate::metrics::measure(|| {
-            MultipleIntegralOperation
-                .compute(
-                    &mut engine,
-                    &object("x+y"),
-                    &MultipleIntegralRequest::Double {
-                        inner: ("y".into(), "0".into(), "1".into()),
-                        outer: ("x".into(), "0".into(), "1".into()),
-                    },
-                )
-                .unwrap()
-        });
-        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
-    }
-
-    #[test]
     fn evaluates_rectangular_and_variable_bound_regions() {
         let mut engine = RustEngine::spawn().unwrap();
         let rectangle = double_integral(

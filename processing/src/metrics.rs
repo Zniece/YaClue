@@ -14,7 +14,6 @@ static OBJECT_TRANSITIONS: AtomicU64 = AtomicU64::new(0);
 static OBJECT_CLONES: AtomicU64 = AtomicU64::new(0);
 static SESSION_AST_HANDLES: AtomicU64 = AtomicU64::new(0);
 static RULE_PRESENTATIONS: AtomicU64 = AtomicU64::new(0);
-static LEGACY_TRACE_ADAPTATIONS: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     /// Per-execution-thread counters used by `measure`. Global atomics remain
@@ -31,7 +30,6 @@ pub struct ExecutionMetrics {
     pub object_clones: u64,
     pub session_ast_handles: u64,
     pub rule_presentations: u64,
-    pub legacy_trace_adaptations: u64,
 }
 
 impl ExecutionMetrics {
@@ -42,7 +40,6 @@ impl ExecutionMetrics {
         object_clones: 0,
         session_ast_handles: 0,
         rule_presentations: 0,
-        legacy_trace_adaptations: 0,
     };
 
     pub fn snapshot() -> Self {
@@ -53,7 +50,6 @@ impl ExecutionMetrics {
             object_clones: OBJECT_CLONES.load(Ordering::Relaxed),
             session_ast_handles: SESSION_AST_HANDLES.load(Ordering::Relaxed),
             rule_presentations: RULE_PRESENTATIONS.load(Ordering::Relaxed),
-            legacy_trace_adaptations: LEGACY_TRACE_ADAPTATIONS.load(Ordering::Relaxed),
         }
     }
 
@@ -79,9 +75,6 @@ impl Sub for ExecutionMetrics {
             rule_presentations: self
                 .rule_presentations
                 .saturating_sub(earlier.rule_presentations),
-            legacy_trace_adaptations: self
-                .legacy_trace_adaptations
-                .saturating_sub(earlier.legacy_trace_adaptations),
         }
     }
 }
@@ -141,12 +134,6 @@ pub(crate) fn record_rule_presentation() {
     record_thread_metric(|metrics| metrics.rule_presentations += 1);
 }
 
-#[allow(dead_code)] // Retained as the E4 migration tripwire until E4.3.3 removes it.
-pub(crate) fn record_legacy_trace_adaptations(count: usize) {
-    LEGACY_TRACE_ADAPTATIONS.fetch_add(count as u64, Ordering::Relaxed);
-    record_thread_metric(|metrics| metrics.legacy_trace_adaptations += count as u64);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,20 +191,5 @@ mod tests {
             .events
             .iter()
             .all(|event| event.presentation.is_none()));
-    }
-
-    #[test]
-    fn derivative_rule_facts_do_not_cross_the_legacy_trace_adapter() {
-        let input = crate::elaboration::elaborate_input("D(x)(x^2)").unwrap();
-        let mut engine = RustEngine::spawn().unwrap();
-        let measured = measure(|| {
-            crate::arithmetic::execute_elaborated_structure_with_context(
-                &mut engine,
-                &input.root,
-                crate::semantic_core::ComputationContext::new(crate::semantic_core::TraceMode::Off),
-            )
-            .unwrap()
-        });
-        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
     }
 }
