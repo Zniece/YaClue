@@ -44,3 +44,19 @@ fn gui_uses_stable_locale_keys_with_compatibility_fallbacks() {
         .chars()
         .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)));
 }
+
+#[test]
+fn core_branch_step_keys_exist_in_every_locale() {
+    let i18n = include_str!("../../../src/i18n.js");
+    for key in [
+        "steps.limit-one-sided-approach",
+        "steps.derivative-known-formal-function",
+        "steps.equation-system-eliminate",
+        "steps.equation-system-verify",
+        "analyses.ode-method-bernoulli",
+        "steps.ode-variation-wronskian",
+        "steps.ode-euler-characteristic-equation",
+    ] {
+        assert_eq!(i18n.matches(&format!("\"{key}\"")).count(), 2, "{key}");
+    }
+}

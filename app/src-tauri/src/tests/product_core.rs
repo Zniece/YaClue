@@ -81,6 +81,13 @@ fn unified_expression_dispatches_core_calculator_paths() {
         step.message_ref.key == format!("steps.{}", step.rule)
             && !step.message_ref.fallback.is_empty()
     }));
+
+    let limit =
+        process_expression_with_engine(request("Limit(x,0)(Sin(x)/x)", true), &mut engine).unwrap();
+    assert!(limit.steps.iter().all(|step| {
+        step.message_ref.args.get("variable").map(String::as_str) == Some("x")
+            && step.message_ref.args.get("at").map(String::as_str) == Some("0")
+    }));
     assert_eq!(derivative.semantic.symbols, ["x"]);
     assert!(derivative.semantic.bound_symbols.is_empty());
 
