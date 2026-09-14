@@ -208,6 +208,10 @@ impl<'a> ExpressionView<'a> {
         Self { env, node }
     }
 
+    pub(crate) fn raw_expression(&self) -> Rc<LispObject> {
+        self.node.clone()
+    }
+
     pub fn kind(&self) -> NodeKind {
         match &self.node.kind {
             ObjectKind::Atom(_) => NodeKind::Atom,

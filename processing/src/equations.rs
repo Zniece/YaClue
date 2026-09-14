@@ -2,8 +2,8 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{
-    analyze_expression, direct_function_equation, fresh_internal_symbols, root_call,
-    strip_tex_delimiters, validate_expression, validate_symbol,
+    analyze_expression, direct_function_equation, fresh_internal_symbols, strip_tex_delimiters,
+    validate_expression, validate_symbol,
 };
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
@@ -15,6 +15,7 @@ use crate::semantic_core::{
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
+use yacas_rs::value::{spine_refs, ObjectKind};
 
 struct EquationRuleEmission {
     rule: String,
@@ -571,26 +572,45 @@ fn direct_radical_event(
     equation: &str,
     variable: &str,
 ) -> Result<Option<EquationRuleEmission>, EngineError> {
-    let Some((left, right)) = equation.split_once("==") else {
+    let parsed = crate::semantic_core::parse_engine_expression(equation)?.raw_expression();
+    let ObjectKind::Sublist(first) = &parsed.kind else {
         return Ok(None);
     };
-    for (radical, other) in [(left.trim(), right.trim()), (right.trim(), left.trim())] {
-        let Some(call) = root_call(radical, "根式方程")? else {
+    let relation = spine_refs(first).collect::<Vec<_>>();
+    if relation.len() != 3
+        || relation[0]
+            .atom_string()
+            .is_none_or(|head| head.as_ref() != "==")
+    {
+        return Ok(None);
+    }
+    for (radical, other) in [(relation[1], relation[2]), (relation[2], relation[1])] {
+        let ObjectKind::Sublist(first) = &radical.kind else {
             continue;
         };
-        if call.head != "Sqrt" || call.arguments.len() != 1 {
-            continue;
-        }
-        if analyze_expression(other, "根式方程另一侧")?
-            .symbols
-            .iter()
-            .any(|symbol| symbol == variable)
+        let call = spine_refs(first).collect::<Vec<_>>();
+        if call.len() != 2
+            || call[0]
+                .atom_string()
+                .is_none_or(|head| head.as_ref() != "Sqrt")
         {
             continue;
         }
+        if crate::binding::analyze_tree(other)
+            .free_symbols
+            .contains(variable)
+        {
+            continue;
+        }
+        let (radicand, other) = crate::input::with_parse_env(|env| {
+            (
+                yacas_rs::printer::infix_print(env, call[1]),
+                yacas_rs::printer::infix_print(env, other),
+            )
+        });
         return Ok(Some(EquationRuleEmission::new(
             "equation-radical-square",
-            format!("{}==({other})^2", call.arguments[0]),
+            format!("{radicand}==({other})^2"),
             "孤立平方根后两边平方；这一步可能产生增根，最终必须代回原方程。",
             RuleImportance::Key,
         )));

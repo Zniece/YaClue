@@ -1,11 +1,13 @@
 //! Bounded lowering from defined objects to native symbolic intrinsics.
 
 use serde::Serialize;
+use std::rc::Rc;
+use yacas_rs::value::{spine_refs, LispObject, ObjectKind};
 
 use crate::binding;
 use crate::engine::{Engine, EngineError};
 use crate::improper_integrals::ImproperIntegralRequest;
-use crate::input::{root_call, strip_tex_delimiters};
+use crate::input::strip_tex_delimiters;
 use crate::objects::DefinedObjectKind;
 use crate::protocol::{Condition, ConditionSet};
 use crate::steps::{Step, StepImportance, StepVerbosity};
@@ -88,19 +90,29 @@ pub fn try_lower_improper_integral(
     request: &ImproperIntegralRequest,
     verbosity: Option<StepVerbosity>,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
-    try_lower_improper_integral_configured(engine, request, verbosity.is_some(), verbosity)
+    try_lower_improper_integral_configured(engine, request, None, verbosity.is_some(), verbosity)
 }
 
+#[cfg(test)]
 pub(crate) fn try_lower_improper_integral_with_certificate(
     engine: &mut dyn Engine,
     request: &ImproperIntegralRequest,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
-    try_lower_improper_integral_configured(engine, request, true, None)
+    try_lower_improper_integral_configured(engine, request, None, true, None)
+}
+
+pub(crate) fn try_lower_improper_integral_ast_with_certificate(
+    engine: &mut dyn Engine,
+    request: &ImproperIntegralRequest,
+    expression: &Rc<LispObject>,
+) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
+    try_lower_improper_integral_configured(engine, request, Some(expression), true, None)
 }
 
 fn try_lower_improper_integral_configured(
     engine: &mut dyn Engine,
     request: &ImproperIntegralRequest,
+    expression: Option<&Rc<LispObject>>,
     include_certificate: bool,
     verbosity: Option<StepVerbosity>,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
@@ -108,7 +120,16 @@ fn try_lower_improper_integral_configured(
         return Ok(None);
     };
     debug_assert_eq!(signature.intrinsic, IntrinsicKind::Gamma);
-    let Some(matched) = match_gamma_kernel(request)? else {
+    let parsed_expression;
+    let expression = match expression {
+        Some(expression) => expression,
+        None => {
+            parsed_expression = crate::semantic_core::parse_engine_expression(&request.expression)?
+                .raw_expression();
+            &parsed_expression
+        }
+    };
+    let Some(matched) = match_gamma_kernel_ast(request, expression)? else {
         return Ok(None);
     };
     if nonpositive_numeric(&matched.argument) || nonpositive_numeric(&matched.scale) {
@@ -205,11 +226,12 @@ fn select_signature(request: &ImproperIntegralRequest) -> Option<&'static Intrin
     cheap_gamma_feature(request).then_some(&INTRINSIC_SIGNATURES[0])
 }
 
-fn match_gamma_kernel(
+fn match_gamma_kernel_ast(
     request: &ImproperIntegralRequest,
+    expression: &Rc<LispObject>,
 ) -> Result<Option<GammaMatch>, EngineError> {
     let (mut factors, denominator_variables) =
-        multiplicative_factors(&request.expression, &request.variable)?;
+        multiplicative_factors(expression, &request.variable)?;
     if factors.len() > MAX_KERNEL_FACTORS || denominator_variables > 1 {
         return Ok(None);
     }
@@ -225,8 +247,8 @@ fn match_gamma_kernel(
             if power.replace(exponent).is_some() {
                 return Ok(None);
             }
-        } else if free_of(&factor, &request.variable)? {
-            constants.push(factor);
+        } else if free_of_ast(&factor, &request.variable) {
+            constants.push(ast_source(&factor));
         } else {
             return Ok(None);
         }
@@ -258,72 +280,80 @@ fn match_gamma_kernel(
 }
 
 fn multiplicative_factors(
-    expression: &str,
+    expression: &Rc<LispObject>,
     variable: &str,
-) -> Result<(Vec<String>, usize), EngineError> {
-    let Some(call) = root_call(expression, "intrinsic 候选积分核")? else {
-        return Ok((vec![expression.into()], 0));
+) -> Result<(Vec<Rc<LispObject>>, usize), EngineError> {
+    let Some((head, arguments)) = call_parts(expression) else {
+        return Ok((vec![expression.clone()], 0));
     };
-    match (call.head.as_str(), call.arguments.as_slice()) {
+    match (head.as_str(), arguments.as_slice()) {
         ("*", [left, right]) => {
             let (mut left_factors, left_divisors) = multiplicative_factors(left, variable)?;
             let (right_factors, right_divisors) = multiplicative_factors(right, variable)?;
             left_factors.extend(right_factors);
             Ok((left_factors, left_divisors + right_divisors))
         }
-        ("/", [numerator, denominator]) if denominator.trim() == variable => {
+        ("/", [numerator, denominator]) if is_symbol(denominator, variable) => {
             let (factors, divisors) = multiplicative_factors(numerator, variable)?;
             Ok((factors, divisors + 1))
         }
-        ("/", [numerator, denominator]) if free_of(denominator, variable)? => {
+        ("/", [numerator, denominator]) if free_of_ast(denominator, variable) => {
             let (mut factors, divisors) = multiplicative_factors(numerator, variable)?;
-            factors.push(format!("1/({denominator})"));
+            let reciprocal = crate::semantic_core::parse_engine_expression(&format!(
+                "1/({})",
+                ast_source(denominator)
+            ))?
+            .raw_expression();
+            factors.push(reciprocal);
             Ok((factors, divisors))
         }
-        _ => Ok((vec![expression.into()], 0)),
+        _ => Ok((vec![expression.clone()], 0)),
     }
 }
 
-fn exponential_scale(factor: &str, variable: &str) -> Result<Option<String>, EngineError> {
-    let Some(call) = root_call(factor, "指数核")? else {
+fn exponential_scale(
+    factor: &Rc<LispObject>,
+    variable: &str,
+) -> Result<Option<String>, EngineError> {
+    let Some((head, arguments)) = call_parts(factor) else {
         return Ok(None);
     };
-    let ("Exp", [argument]) = (call.head.as_str(), call.arguments.as_slice()) else {
+    let ("Exp", [argument]) = (head.as_str(), arguments.as_slice()) else {
         return Ok(None);
     };
-    let Some(negative) = root_call(argument, "指数核")? else {
+    let Some((negative_head, negative_arguments)) = call_parts(argument) else {
         return Ok(None);
     };
-    let ("-", [kernel]) = (negative.head.as_str(), negative.arguments.as_slice()) else {
+    let ("-", [kernel]) = (negative_head.as_str(), negative_arguments.as_slice()) else {
         return Ok(None);
     };
-    if kernel.trim() == variable {
+    if is_symbol(kernel, variable) {
         return Ok(Some("1".into()));
     }
-    let Some(product) = root_call(kernel, "指数核")? else {
+    let Some((product_head, product_arguments)) = call_parts(kernel) else {
         return Ok(None);
     };
-    let ("*", [left, right]) = (product.head.as_str(), product.arguments.as_slice()) else {
+    let ("*", [left, right]) = (product_head.as_str(), product_arguments.as_slice()) else {
         return Ok(None);
     };
-    if left.trim() == variable && free_of(right, variable)? {
-        Ok(Some(right.clone()))
-    } else if right.trim() == variable && free_of(left, variable)? {
-        Ok(Some(left.clone()))
+    if is_symbol(left, variable) && free_of_ast(right, variable) {
+        Ok(Some(ast_source(right)))
+    } else if is_symbol(right, variable) && free_of_ast(left, variable) {
+        Ok(Some(ast_source(left)))
     } else {
         Ok(None)
     }
 }
 
-fn variable_power(factor: &str, variable: &str) -> Result<Option<String>, EngineError> {
-    if factor.trim() == variable {
+fn variable_power(factor: &Rc<LispObject>, variable: &str) -> Result<Option<String>, EngineError> {
+    if is_symbol(factor, variable) {
         return Ok(Some("1".into()));
     }
-    let Some(call) = root_call(factor, "intrinsic 幂核")? else {
+    let Some((head, arguments)) = call_parts(factor) else {
         return Ok(None);
     };
-    match (call.head.as_str(), call.arguments.as_slice()) {
-        ("^", [base, exponent]) if base.trim() == variable => Ok(Some(exponent.clone())),
+    match (head.as_str(), arguments.as_slice()) {
+        ("^", [base, exponent]) if is_symbol(base, variable) => Ok(Some(ast_source(exponent))),
         _ => Ok(None),
     }
 }
@@ -334,14 +364,40 @@ fn gamma_argument(exponent: &str) -> Result<String, EngineError> {
             return Ok((value + 1.0).to_string());
         }
     }
-    if let Some(call) = root_call(exponent, "Gamma 幂指数")? {
-        if let ("-", [argument, one]) = (call.head.as_str(), call.arguments.as_slice()) {
-            if one.trim() == "1" {
-                return Ok(argument.clone());
+    let parsed = crate::semantic_core::parse_engine_expression(exponent)?.raw_expression();
+    if let Some((head, arguments)) = call_parts(&parsed) {
+        if let ("-", [argument, one]) = (head.as_str(), arguments.as_slice()) {
+            if is_symbol(one, "1") || one.number_string().as_deref() == Some("1") {
+                return Ok(ast_source(argument));
             }
         }
     }
     Ok(format!("({exponent})+1"))
+}
+
+fn call_parts(expression: &Rc<LispObject>) -> Option<(String, Vec<&Rc<LispObject>>)> {
+    let ObjectKind::Sublist(first) = &expression.kind else {
+        return None;
+    };
+    let nodes = spine_refs(first).collect::<Vec<_>>();
+    let head = nodes.first()?.atom_string()?.to_string();
+    Some((head, nodes.into_iter().skip(1).collect()))
+}
+
+fn is_symbol(expression: &Rc<LispObject>, symbol: &str) -> bool {
+    expression
+        .atom_string()
+        .is_some_and(|value| value.as_ref() == symbol)
+}
+
+fn ast_source(expression: &Rc<LispObject>) -> String {
+    crate::input::with_parse_env(|env| yacas_rs::printer::infix_print(env, expression))
+}
+
+fn free_of_ast(expression: &Rc<LispObject>, variable: &str) -> bool {
+    !binding::analyze_tree(expression)
+        .free_symbols
+        .contains(variable)
 }
 
 fn free_of(expression: &str, variable: &str) -> Result<bool, EngineError> {

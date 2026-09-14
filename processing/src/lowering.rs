@@ -84,29 +84,36 @@ fn lower_euler_gamma(
         | SemanticInterpretation::HeldTypedApplication(application) => application,
         _ => return Ok(None),
     };
-    let source_for = |requirement: Requirement| -> Result<Option<String>, EngineError> {
-        let Some(argument) = application
-            .arguments
-            .iter()
-            .find(|argument| argument.requirement == requirement)
-        else {
-            return Ok(None);
+    let argument_for =
+        |requirement: Requirement| -> Result<Option<(String, Rc<LispObject>)>, EngineError> {
+            let Some(argument) = application
+                .arguments
+                .iter()
+                .find(|argument| argument.requirement == requirement)
+            else {
+                return Ok(None);
+            };
+            crate::input::with_parse_env(|env| {
+                input
+                    .view(env)
+                    .at_path(&argument.path)
+                    .map(|view| (view.print_source(), view.raw_expression()))
+                    .ok_or_else(|| EngineError::Parse("typed application 参数路径失效".into()))
+                    .map(Some)
+            })
         };
-        crate::input::with_parse_env(|env| {
-            input
-                .view(env)
-                .at_path(&argument.path)
-                .map(|view| view.print_source())
-                .ok_or_else(|| EngineError::Parse("typed application 参数路径失效".into()))
-                .map(Some)
-        })
-    };
-    let (Some(variable), Some(lower), Some(upper), Some(expression)) = (
-        source_for(Requirement::Variable)?,
-        source_for(Requirement::LowerBound)?,
-        source_for(Requirement::UpperBound)?,
-        source_for(Requirement::Operand)?,
-    ) else {
+    let (
+        Some((variable, _)),
+        Some((lower, _)),
+        Some((upper, _)),
+        Some((expression, expression_ast)),
+    ) = (
+        argument_for(Requirement::Variable)?,
+        argument_for(Requirement::LowerBound)?,
+        argument_for(Requirement::UpperBound)?,
+        argument_for(Requirement::Operand)?,
+    )
+    else {
         return Ok(None);
     };
     let request = ImproperIntegralRequest {
@@ -119,8 +126,11 @@ fn lower_euler_gamma(
     // The legacy result is now only an engine adapter around the shared
     // structural matcher. Semantic state is constructed here from the typed
     // source object, never inferred from its display string.
-    let Some(lowered) =
-        crate::intrinsics::try_lower_improper_integral_with_certificate(engine, &request)?
+    let Some(lowered) = crate::intrinsics::try_lower_improper_integral_ast_with_certificate(
+        engine,
+        &request,
+        &expression_ast,
+    )?
     else {
         return Ok(None);
     };

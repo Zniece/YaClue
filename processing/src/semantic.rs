@@ -6,7 +6,7 @@ use serde::Serialize;
 use yacas_rs::value::{spine_refs, LispObject, ObjectKind};
 
 use crate::engine::EngineError;
-use crate::input::{root_call_from_tree, validate_safe_text, RootCall};
+use crate::input::validate_safe_text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,7 +58,6 @@ pub struct SemanticSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnalyzedInput {
     pub semantic: SemanticSummary,
-    pub root_call: Option<RootCall>,
     pub function_heads: Vec<String>,
 }
 
@@ -75,10 +74,9 @@ pub fn analyze_input(input: &str, label: &str) -> Result<AnalyzedInput, EngineEr
 /// Build the legacy product summary from an already parsed AST. This lets the
 /// elaboration boundary remain the only parser on the request path.
 pub(crate) fn analyze_tree(
-    env: &yacas_rs::env::Environment,
+    _env: &yacas_rs::env::Environment,
     tree: &std::rc::Rc<LispObject>,
 ) -> AnalyzedInput {
-    let root_call = root_call_from_tree(env, tree);
     let binding = crate::binding::analyze_tree(tree);
     let no_symbols = binding.free_symbols.is_empty() && binding.bound_symbols.is_empty();
     let symbols = binding.free_symbols;
@@ -98,7 +96,6 @@ pub(crate) fn analyze_tree(
             exactness,
             completeness: (kind == ValueKind::SolutionSet).then_some(Completeness::Unknown),
         },
-        root_call,
         function_heads: function_heads.into_iter().collect(),
     }
 }
