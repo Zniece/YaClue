@@ -88,6 +88,22 @@ pub fn try_lower_improper_integral(
     request: &ImproperIntegralRequest,
     verbosity: Option<StepVerbosity>,
 ) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
+    try_lower_improper_integral_configured(engine, request, verbosity.is_some(), verbosity)
+}
+
+pub(crate) fn try_lower_improper_integral_with_certificate(
+    engine: &mut dyn Engine,
+    request: &ImproperIntegralRequest,
+) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
+    try_lower_improper_integral_configured(engine, request, true, None)
+}
+
+fn try_lower_improper_integral_configured(
+    engine: &mut dyn Engine,
+    request: &ImproperIntegralRequest,
+    include_certificate: bool,
+    verbosity: Option<StepVerbosity>,
+) -> Result<Option<IntrinsicLoweringResult>, EngineError> {
     let Some(signature) = select_signature(request) else {
         return Ok(None);
     };
@@ -125,7 +141,7 @@ pub fn try_lower_improper_integral(
     let evaluated = engine.eval(&target)?;
     let value = evaluated.expr.to_string();
     let tex = strip_tex_delimiters(&evaluated.tex);
-    let certificate = verbosity.map(|_| LoweringCertificate {
+    let certificate = include_certificate.then(|| LoweringCertificate {
         rule: "gamma-euler-kernel".into(),
         source_kind: signature.source,
         intrinsic: signature.intrinsic,
@@ -487,6 +503,14 @@ mod tests {
         assert!(lowered.steps.is_empty());
         assert!(lowered.certificate.is_none());
 
+        let evidenced =
+            try_lower_improper_integral_with_certificate(&mut engine, &request("t^(a-1)*Exp(-t)"))
+                .unwrap()
+                .unwrap();
+        assert!(evidenced.steps.is_empty());
+        assert!(evidenced.certificate.is_some());
+        assert_eq!((engine.evals, engine.expression_evals), (2, 0));
+
         let stepped = try_lower_improper_integral(
             &mut engine,
             &request("t^(a-1)*Exp(-t)"),
@@ -494,7 +518,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!((engine.evals, engine.expression_evals), (2, 0));
+        assert_eq!((engine.evals, engine.expression_evals), (3, 0));
         assert_eq!(stepped.steps.len(), 1);
         assert_eq!(stepped.certificate.unwrap().bindings.len(), 4);
     }

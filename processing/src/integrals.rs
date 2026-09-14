@@ -45,79 +45,45 @@ struct IntegralEvaluation {
     emissions: Vec<IntegralRuleEmission>,
 }
 
-fn parse_compatibility_step_events(
-    expr: &Expr,
-    command: &str,
-) -> Result<Vec<StepEvent>, EngineError> {
-    let Expr::Call { head, args } = expr else {
-        return Err(EngineError::Parse("步骤结果不是列表".into()));
-    };
-    if head != "List" {
-        return Err(EngineError::Parse(format!(
-            "步骤结果 head 应为 List，实际为 {head}"
-        )));
-    }
-    if args.is_empty() {
-        return Err(EngineError::Eval(format!(
-            "未能生成步骤(表达式可能不受支持): {command}"
-        )));
-    }
-    args.iter()
-        .enumerate()
-        .map(|(index, step)| {
-            let Expr::Call { head, args: fields } = step else {
-                return Err(EngineError::Parse(format!("步骤事件 {index} 不是列表")));
-            };
-            if head != "List" || fields.len() != 4 {
-                return Err(EngineError::Parse(format!(
-                    "步骤事件 {index} 必须是四字段 List"
-                )));
-            }
-            let string_field = |field: &Expr, name: &str| match field {
-                Expr::Symbol(value)
-                    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') =>
-                {
-                    Ok(value[1..value.len() - 1].to_string())
-                }
-                _ => Err(EngineError::Parse(format!(
-                    "步骤事件 {index} 的 {name} 必须是字符串"
-                ))),
-            };
-            let importance = match &fields[3] {
-                Expr::Number(value) if value == "0" => StepImportance::Routine,
-                Expr::Number(value) if value == "1" => StepImportance::Normal,
-                Expr::Number(value) if value == "2" => StepImportance::Key,
-                _ => {
-                    return Err(EngineError::Parse(format!(
-                        "步骤事件 {index} 的 importance 必须是 0、1 或 2"
-                    )))
-                }
-            };
-            Ok(StepEvent {
-                rule: string_field(&fields[0], "rule")?,
-                expr: fields[1].to_string(),
-                why: string_field(&fields[2], "why")?,
-                importance,
-            })
-        })
-        .collect()
-}
-
 pub fn derive_integrals_with_verbosity(
     engine: &mut dyn Engine,
     expression: &str,
     variable: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
+    Ok(integral_compatibility_evaluation(engine, expression, variable, verbosity)?.1)
+}
+
+fn integral_compatibility_evaluation(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    verbosity: StepVerbosity,
+) -> Result<(IntegralEvaluation, Vec<Step>), EngineError> {
     validate_expression(expression, "表达式")?;
     validate_symbol(variable, "积分变量")?;
-    let command = format!("StepsI'Full({expression}, {variable})");
-    let expression = engine.eval_expr(&command)?;
-    render_events(
+    let evaluation = evaluate_integral_rules(
         engine,
-        parse_compatibility_step_events(&expression, &command)?,
-        verbosity,
-    )
+        &format!("StepsI'Computation({expression},{variable})"),
+    )?;
+    let events = evaluation
+        .emissions
+        .iter()
+        .map(|emission| {
+            StepEvent::new(
+                &emission.rule,
+                &emission.expression,
+                &emission.explanation,
+                match emission.importance {
+                    RuleImportance::Routine => StepImportance::Routine,
+                    RuleImportance::Normal => StepImportance::Normal,
+                    RuleImportance::Key => StepImportance::Key,
+                },
+            )
+        })
+        .collect();
+    let steps = render_events(engine, events, verbosity)?;
+    Ok((evaluation, steps))
 }
 
 pub fn derive_integrals(
@@ -158,13 +124,17 @@ pub fn derive_antiderivative_family_with_verbosity(
     arbitrary_constant: String,
     verbosity: StepVerbosity,
 ) -> Result<AntiderivativeStepResult, EngineError> {
-    let mut steps = derive_integrals_with_verbosity(engine, expression, variable, verbosity)?;
-    let representative = steps
-        .last()
-        .ok_or_else(|| EngineError::Parse("不定积分步骤缺少最终结果".into()))?;
+    let (evaluation, mut steps) =
+        integral_compatibility_evaluation(engine, expression, variable, verbosity)?;
+    let representative = evaluation.result;
+    let representative_tex = engine
+        .render_syntax_tex_batch(std::slice::from_ref(&representative))?
+        .pop()
+        .map(|tex| crate::input::strip_tex_delimiters(&tex))
+        .ok_or_else(|| EngineError::Parse("不定积分代表元缺少 TeX 投影".into()))?;
     let result = antiderivative_family(
-        representative.expr.clone(),
-        representative.tex.clone(),
+        representative,
+        representative_tex,
         variable,
         arbitrary_constant,
     );
@@ -1001,20 +971,5 @@ mod tests {
             .unwrap()
             .print_source()
             .starts_with("Integrate("));
-    }
-
-    #[test]
-    fn malformed_integral_rule_events_fail_the_protocol() {
-        for fullform in [
-            "(List (List \"ok\" x \"why\" 1) (Pair \"bad\" y \"why\" 1))",
-            "(List (List \"missing\" x))",
-            "(List (List \"bad-importance\" x \"why\" 9))",
-        ] {
-            let expr = Expr::parse_fullform(fullform).unwrap();
-            assert!(matches!(
-                parse_compatibility_step_events(&expr, "test"),
-                Err(EngineError::Parse(_))
-            ));
-        }
     }
 }

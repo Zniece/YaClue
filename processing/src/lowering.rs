@@ -119,11 +119,8 @@ fn lower_euler_gamma(
     // The legacy result is now only an engine adapter around the shared
     // structural matcher. Semantic state is constructed here from the typed
     // source object, never inferred from its display string.
-    let Some(lowered) = crate::intrinsics::try_lower_improper_integral(
-        engine,
-        &request,
-        Some(crate::steps::StepVerbosity::Detailed),
-    )?
+    let Some(lowered) =
+        crate::intrinsics::try_lower_improper_integral_with_certificate(engine, &request)?
     else {
         return Ok(None);
     };
