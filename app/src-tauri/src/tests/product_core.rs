@@ -77,6 +77,10 @@ fn unified_expression_dispatches_core_calculator_paths() {
         process_expression_with_engine(request("D(x)Sin(x)^2", true), &mut engine).unwrap();
     assert_eq!(derivative.kind, "derivative");
     assert!(!derivative.steps.is_empty());
+    assert!(derivative.steps.iter().all(|step| {
+        step.message_ref.key == format!("steps.{}", step.rule)
+            && !step.message_ref.fallback.is_empty()
+    }));
     assert_eq!(derivative.semantic.symbols, ["x"]);
     assert!(derivative.semantic.bound_symbols.is_empty());
 

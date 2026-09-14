@@ -12,6 +12,17 @@ use std::collections::BTreeMap;
 use crate::messages::MessageRef;
 use crate::semantic_core::{ExpressionPath, ObjectId};
 
+fn event_message_ref(
+    namespace: &str,
+    event: &crate::semantic_core::RuleEvent,
+    fallback: &str,
+) -> MessageRef {
+    event.bindings.iter().fold(
+        MessageRef::new(format!("{namespace}.{}", event.rule), fallback),
+        |message, (name, value)| message.arg(name, value),
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepImportance {
@@ -219,10 +230,7 @@ pub fn render_rule_trace(
             rule: event.rule.clone(),
             expr: presentation.expression.clone(),
             why: presentation.explanation.clone(),
-            message_ref: MessageRef::new(
-                format!("steps.{}", event.rule),
-                presentation.explanation.clone(),
-            ),
+            message_ref: event_message_ref("steps", event, &presentation.explanation),
             tex: presentation.tex_override.clone().unwrap_or_else(|| {
                 strip_tex_delimiters(&rendered.next().expect("one TeX result per expression"))
             }),
@@ -258,10 +266,7 @@ pub fn render_rule_analyses(
                 expression: presentation.expression.clone(),
                 tex: render_product_tex(engine, &presentation.expression),
                 message: presentation.explanation.clone(),
-                message_ref: MessageRef::new(
-                    format!("analyses.{}", event.rule),
-                    presentation.explanation.clone(),
-                ),
+                message_ref: event_message_ref("analyses", event, &presentation.explanation),
                 importance: match event.importance {
                     RuleImportance::Routine => StepImportance::Routine,
                     RuleImportance::Normal => StepImportance::Normal,
@@ -326,10 +331,7 @@ pub fn render_rule_trace_in_root(
             rule: event.rule.clone(),
             expr: after.clone(),
             why: presentation.explanation.clone(),
-            message_ref: MessageRef::new(
-                format!("steps.{}", event.rule),
-                presentation.explanation.clone(),
-            ),
+            message_ref: event_message_ref("steps", event, &presentation.explanation),
             tex: after_tex,
             importance: match event.importance {
                 RuleImportance::Routine => StepImportance::Routine,
