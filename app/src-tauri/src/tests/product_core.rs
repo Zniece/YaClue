@@ -432,6 +432,39 @@ fn remaining_operator_families_emit_translated_product_messages() {
 }
 
 #[test]
+fn every_emitted_ode_explanation_has_both_localizations() {
+    let mut engine = RustEngineProxy::spawn().unwrap();
+    let catalogue = include_str!("../../../src/i18n.js");
+    let cases = [
+        "OdeSolve(y'==x*y)",
+        "OdeSolve(y'+y==x)",
+        "OdeSolve(y'+y==x*y^2)",
+        "OdeSolve(2*x*y+3+(x^2+4*y)*y'==0)",
+        "OdeSolve(y'==(x+y)/x)",
+        "OdeSolve(y''-3*y'+2*y==x^2)",
+        "OdeSolve(y''==1/x)",
+        "OdeSolve(x^2*y''+x*y'+y==0)",
+    ];
+    let mut missing = BTreeSet::new();
+    for source in cases {
+        let result = process_expression_with_engine(request(source, true), &mut engine)
+            .unwrap_or_else(|error| panic!("{source}: {}", error.message));
+        for key in result
+            .steps
+            .iter()
+            .map(|item| &item.message_ref.key)
+            .chain(result.analyses.iter().map(|item| &item.message_ref.key))
+            .chain(result.conclusions.iter().map(|item| &item.message_ref.key))
+        {
+            if catalogue.matches(&format!("\"{key}\"")).count() != 2 {
+                missing.insert(key.clone());
+            }
+        }
+    }
+    assert!(missing.is_empty(), "missing ODE locale keys: {missing:#?}");
+}
+
+#[test]
 fn mathematical_message_wire_format_contains_only_keys_and_arguments() {
     let mut engine = RustEngineProxy::spawn().unwrap();
     for source in ["D(x)Sin(x)^2", "Limit(Sin(x)/x,0)", "Plot(x^2,x,0,1)"] {
