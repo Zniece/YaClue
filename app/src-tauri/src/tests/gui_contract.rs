@@ -46,6 +46,31 @@ fn gui_uses_stable_locale_keys() {
 }
 
 #[test]
+fn changing_locale_renders_the_complete_existing_result_again() {
+    let javascript = include_str!("../../../src/main.js");
+    let locale_handler = javascript
+        .split("document.addEventListener(\"localechange\"")
+        .nth(1)
+        .unwrap()
+        .split("exprEl.addEventListener")
+        .next()
+        .unwrap();
+    let result_renderer = javascript
+        .split("function renderResult(result)")
+        .nth(1)
+        .unwrap()
+        .split("async function calculate")
+        .next()
+        .unwrap();
+
+    assert!(locale_handler.contains("renderResult(lastResult)"));
+    assert!(locale_handler.contains("showError(lastError)"));
+    assert!(result_renderer.contains("renderAnalyses(result.analyses || [])"));
+    assert!(result_renderer.contains("renderSteps(result.steps || [])"));
+    assert!(result_renderer.contains("renderConclusions(result.conclusions || [])"));
+}
+
+#[test]
 fn core_branch_step_keys_exist_in_every_locale() {
     let i18n = include_str!("../../../src/i18n.js");
     for key in [

@@ -17,6 +17,7 @@ const assumptions = new Map();
 let calculating = false;
 let inputHelpTimer;
 let lastResult;
+let lastError;
 
 const TEMPLATES = [
   ["derivative", "D(x)x^3*Sin(x)"], ["indefiniteIntegral", "Integrate(x)x*Exp(x)"],
@@ -107,6 +108,7 @@ function localizedMessage(messageRef, fallback = "") {
 }
 
 function showError(error) {
+  lastError = error;
   const message = error && typeof error === "object" && (error.message_ref || error.message)
     ? localizedMessage(error.message_ref, error.message)
     : typeof error === "string" ? error : JSON.stringify(error);
@@ -263,12 +265,31 @@ function renderPlot(data) {
   ctx.stroke();
 }
 
+function renderResult(result) {
+  resetOutput();
+  $("#result-title").textContent = localizedResultLabel(result);
+  $("#result-kind").textContent = localizedResultLabel(result);
+  renderSemantic(result.semantic, result.outcome);
+  if (result.kind === "plot") {
+    renderSummary(result);
+    renderPlot(result);
+  } else if (result.kind === "numeric_ode") renderPlot(result);
+  else renderSummary(result);
+  renderAnalyses(result.analyses || []);
+  renderSteps(result.steps || []);
+  renderConclusions(result.conclusions || []);
+  rawEl.textContent = JSON.stringify(result, null, 2);
+  rawBoxEl.hidden = false;
+}
+
 async function calculate() {
   hideInputHelp();
   if (calculating) return;
   const expression = exprEl.value.trim();
   if (!expression) return;
   calculating = true;
+  lastResult = undefined;
+  lastError = undefined;
   resetOutput();
   setBusy(true);
   const started = performance.now();
@@ -281,19 +302,7 @@ async function calculate() {
       },
     });
     lastResult = result;
-    $("#result-title").textContent = localizedResultLabel(result);
-    $("#result-kind").textContent = localizedResultLabel(result);
-    renderSemantic(result.semantic, result.outcome);
-    if (result.kind === "plot") {
-      renderSummary(result);
-      renderPlot(result);
-    } else if (result.kind === "numeric_ode") renderPlot(result);
-    else renderSummary(result);
-    renderAnalyses(result.analyses || []);
-    renderSteps(result.steps || []);
-    renderConclusions(result.conclusions || []);
-    rawEl.textContent = JSON.stringify(result, null, 2);
-    rawBoxEl.hidden = false;
+    renderResult(result);
   } catch (error) {
     showError(error);
   } finally {
@@ -373,12 +382,8 @@ document.addEventListener("localechange", () => {
   renderTemplates();
   renderAssumptions();
   setBusy(calculating);
-  if (lastResult) {
-    $("#result-title").textContent = localizedResultLabel(lastResult);
-    $("#result-kind").textContent = localizedResultLabel(lastResult);
-    semanticEl.innerHTML = "";
-    renderSemantic(lastResult.semantic, lastResult.outcome);
-  }
+  if (lastResult) renderResult(lastResult);
+  else if (lastError) showError(lastError);
 });
 exprEl.addEventListener("keydown", (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate(); });
 exprEl.addEventListener("input", hideInputHelp);
