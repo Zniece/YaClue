@@ -101,9 +101,14 @@ function resetOutput() {
   $("#result-kind").textContent = "";
 }
 
+function localizedMessage(messageRef, fallback = "") {
+  if (!messageRef || !hasTranslation(messageRef.key)) return messageRef?.fallback || fallback;
+  return t(messageRef.key, messageRef.args || {});
+}
+
 function showError(error) {
-  const message = error && typeof error === "object" && error.message
-    ? error.message
+  const message = error && typeof error === "object" && (error.message_ref || error.message)
+    ? localizedMessage(error.message_ref, error.message)
     : typeof error === "string" ? error : JSON.stringify(error);
   const retry = error?.code === "timeout" || error?.retryable ? t("retry") : "";
   errorEl.textContent = `${message}${retry}`;
@@ -168,7 +173,7 @@ function renderSteps(steps) {
     const heading = document.createElement("div");
     heading.className = "step-heading";
     heading.innerHTML = `<span>${index + 1}</span><div><strong></strong><small></small></div>`;
-    heading.querySelector("strong").textContent = step.why || t("computation");
+    heading.querySelector("strong").textContent = localizedMessage(step.message_ref, step.why) || t("computation");
     heading.querySelector("small").textContent = step.rule;
     const math = document.createElement("div");
     math.className = "math";
@@ -188,7 +193,7 @@ function renderConclusions(conclusions) {
     const heading = document.createElement("div");
     heading.className = "step-heading";
     const label = document.createElement("strong");
-    label.textContent = conclusion.message;
+    label.textContent = localizedMessage(conclusion.message_ref, conclusion.message);
     const math = document.createElement("div");
     math.className = "math";
     heading.appendChild(label);
@@ -205,7 +210,7 @@ function renderAnalyses(analyses) {
     const heading = document.createElement("div");
     heading.className = "step-heading";
     const label = document.createElement("strong");
-    label.textContent = analysis.message || t("analysisBasis");
+    label.textContent = localizedMessage(analysis.message_ref, analysis.message) || t("analysisBasis");
     const detail = document.createElement("small");
     detail.textContent = analysis.rule;
     const math = document.createElement("div");

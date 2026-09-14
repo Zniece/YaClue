@@ -310,6 +310,8 @@ fn errors_have_stable_codes_and_retry_policy() {
         let response = error.response();
         assert_eq!(response.code, code);
         assert_eq!(response.retryable, retryable);
+        assert!(response.message_ref.key.starts_with("errors."));
+        assert_eq!(response.message_ref.fallback, response.message);
         assert!(!response.message.is_empty());
     }
 }

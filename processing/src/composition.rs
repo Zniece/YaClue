@@ -294,6 +294,10 @@ pub fn execute_elaborated(
                 expression: value.clone(),
                 tex: tex.clone(),
                 message: "在标准数学结果之外附加函数图像。".into(),
+                message_ref: crate::messages::MessageRef::new(
+                    "conclusions.plot-attached",
+                    "在标准数学结果之外附加函数图像。",
+                ),
             }],
             operators: vec![CompositionOperator::Plot],
             reason: None,
@@ -384,6 +388,12 @@ pub fn execute_elaborated(
             message: reason
                 .clone()
                 .unwrap_or_else(|| "该数学对象没有值。".into()),
+            message_ref: crate::messages::MessageRef::new(
+                "conclusions.no-value",
+                reason
+                    .clone()
+                    .unwrap_or_else(|| "该数学对象没有值。".into()),
+            ),
         }],
         CompositionStatus::Unresolved => vec![MathematicalConclusion {
             kind: if subject.semantics.metadata.conditions.is_empty() {
@@ -396,6 +406,12 @@ pub fn execute_elaborated(
             message: reason
                 .clone()
                 .unwrap_or_else(|| "数学对象保持未解析。".into()),
+            message_ref: crate::messages::MessageRef::new(
+                "conclusions.unresolved",
+                reason
+                    .clone()
+                    .unwrap_or_else(|| "数学对象保持未解析。".into()),
+            ),
         }],
         CompositionStatus::Completed | CompositionStatus::Unsupported => Vec::new(),
     };

@@ -229,7 +229,27 @@ pub enum ErrorCode {
 pub struct ErrorResponse {
     pub code: ErrorCode,
     pub message: String,
+    pub message_ref: crate::messages::MessageRef,
     pub retryable: bool,
+}
+
+impl ErrorResponse {
+    pub fn new(code: ErrorCode, message: impl Into<String>, retryable: bool) -> Self {
+        let message = message.into();
+        let key = match code {
+            ErrorCode::InvalidInput => "errors.invalid_input",
+            ErrorCode::EvaluationFailed => "errors.evaluation_failed",
+            ErrorCode::Timeout => "errors.timeout",
+            ErrorCode::EngineUnavailable => "errors.engine_unavailable",
+            ErrorCode::Internal => "errors.internal",
+        };
+        Self {
+            code,
+            message_ref: crate::messages::MessageRef::new(key, message.clone()),
+            message,
+            retryable,
+        }
+    }
 }
 
 impl EngineError {
@@ -248,11 +268,7 @@ impl EngineError {
     }
 
     pub fn response(&self) -> ErrorResponse {
-        ErrorResponse {
-            code: self.code(),
-            message: self.to_string(),
-            retryable: self.retryable(),
-        }
+        ErrorResponse::new(self.code(), self.to_string(), self.retryable())
     }
 }
 

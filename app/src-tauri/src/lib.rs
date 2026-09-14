@@ -18,10 +18,12 @@ pub use expression_protocol::{ProcessExpressionRequest, ProcessExpressionResult}
 fn lock_engine<'a>(
     state: &'a tauri::State<'_, Mutex<RustEngineProxy>>,
 ) -> Result<MutexGuard<'a, RustEngineProxy>, ErrorResponse> {
-    state.lock().map_err(|error| ErrorResponse {
-        code: ErrorCode::Internal,
-        message: format!("引擎状态锁不可用: {error}"),
-        retryable: true,
+    state.lock().map_err(|error| {
+        ErrorResponse::new(
+            ErrorCode::Internal,
+            format!("引擎状态锁不可用: {error}"),
+            true,
+        )
     })
 }
 
@@ -30,11 +32,7 @@ fn message(error: EngineError) -> ErrorResponse {
 }
 
 fn invalid_input(message: impl Into<String>) -> ErrorResponse {
-    ErrorResponse {
-        code: ErrorCode::InvalidInput,
-        message: message.into(),
-        retryable: false,
-    }
+    ErrorResponse::new(ErrorCode::InvalidInput, message, false)
 }
 
 fn parse_assumption_fact(value: &str) -> Result<AssumptionFact, ErrorResponse> {

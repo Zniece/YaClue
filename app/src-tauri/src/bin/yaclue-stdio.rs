@@ -79,11 +79,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match serde_json::from_str(input) {
                 Ok(request) => request,
                 Err(error) => {
-                    let error = ErrorResponse {
-                        code: ErrorCode::InvalidInput,
-                        message: format!("无效的 JSON 请求: {error}"),
-                        retryable: false,
-                    };
+                    let error = ErrorResponse::new(
+                        ErrorCode::InvalidInput,
+                        format!("无效的 JSON 请求: {error}"),
+                        false,
+                    );
                     write_json(&mut stdout, &StdioError { error: &error })?;
                     continue;
                 }

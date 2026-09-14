@@ -11,6 +11,9 @@ fn gui_renders_analysis_without_an_equivalence_arrow() {
     assert!(!analysis_renderer.contains("Longrightarrow"));
     assert!(source.contains("renderAnalyses(result.analyses || [])"));
     assert!(source.contains("renderSteps(result.steps || [])"));
+    assert!(source.contains("localizedMessage(step.message_ref, step.why)"));
+    assert!(source.contains("localizedMessage(analysis.message_ref, analysis.message)"));
+    assert!(source.contains("localizedMessage(conclusion.message_ref, conclusion.message)"));
 }
 
 #[test]
@@ -37,5 +40,7 @@ fn gui_uses_stable_locale_keys_with_compatibility_fallbacks() {
     assert!(html.contains("id=\"locale\""));
     assert!(html.contains("data-i18n=\"tagline\""));
     assert!(i18n.contains("inconsistent keys"));
-    assert!(!javascript.chars().any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)));
+    assert!(!javascript
+        .chars()
+        .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)));
 }

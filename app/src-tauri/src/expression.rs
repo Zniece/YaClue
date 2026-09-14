@@ -73,11 +73,11 @@ fn dispatch_expression_with_engine(
     )
     .map_err(message)?
     else {
-        return Err(ErrorResponse {
-            code: ErrorCode::Internal,
-            message: "完整数学输入未产生结构化计算结果".into(),
-            retryable: false,
-        });
+        return Err(ErrorResponse::new(
+            ErrorCode::Internal,
+            "完整数学输入未产生结构化计算结果",
+            false,
+        ));
     };
     if !request.steps {
         result.steps.clear();
