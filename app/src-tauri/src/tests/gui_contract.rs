@@ -12,3 +12,13 @@ fn gui_renders_analysis_without_an_equivalence_arrow() {
     assert!(source.contains("renderAnalyses(result.analyses || [])"));
     assert!(source.contains("renderSteps(result.steps || [])"));
 }
+
+#[test]
+fn gui_examples_distinguish_equations_from_solving_them() {
+    let javascript = include_str!("../../../src/main.js");
+    let html = include_str!("../../../src/index.html");
+    assert!(javascript.contains("Solve(x^2-5*x+6==0,x)"));
+    assert!(!javascript.contains("[\"代数方程\", \"x^2-5*x+6==0\""));
+    assert!(html.contains("==</code> 构造方程"));
+    assert!(html.contains("显式使用 Solve 或 OdeSolve"));
+}
