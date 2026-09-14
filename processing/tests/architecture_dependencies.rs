@@ -23,6 +23,9 @@ const IMPROPER_INTEGRALS: &str = include_str!("../src/improper_integrals.rs");
 const OBJECTS: &str = include_str!("../src/objects.rs");
 const INTRINSICS: &str = include_str!("../src/intrinsics.rs");
 const EQUIVALENCE: &str = include_str!("../src/equivalence.rs");
+const PROCESSING_LIB: &str = include_str!("../src/lib.rs");
+const INPUT: &str = include_str!("../src/input.rs");
+const APP_EXPRESSION: &str = include_str!("../../app/src-tauri/src/expression.rs");
 
 fn production(source: &str) -> &str {
     source.split("#[cfg(test)]").next().unwrap_or(source)
@@ -97,5 +100,51 @@ fn composition_execution_has_one_semantic_consumer_and_no_product_types() {
         COMPOSITION_EXECUTION,
         "composition execution",
         &["Step", "CompositionResult", "MathematicalConclusion"],
+    );
+}
+
+#[test]
+fn product_client_does_not_reconstruct_processing_authority() {
+    assert!(APP_EXPRESSION.contains("composition::classify_product"));
+    assert!(APP_EXPRESSION.contains("composition::project_partial"));
+    assert_excludes(
+        APP_EXPRESSION,
+        "app expression adapter",
+        &[
+            "MathematicalForm",
+            "operator_descriptor",
+            "has_object_native_descendant",
+            "binder_scopes",
+            "symbol_identities.iter_mut",
+        ],
+    );
+}
+
+#[test]
+fn removed_and_legacy_facades_cannot_reenter_the_default_product() {
+    assert_excludes(
+        INPUT,
+        "input boundary",
+        &["RootCall", "root_call(", "root_call_from_tree"],
+    );
+    assert!(PROCESSING_LIB.contains(
+        "#[cfg(any(test, feature = \"legacy-step-api\"))]\n#[doc(hidden)]\npub mod step_compatibility;"
+    ));
+}
+
+#[test]
+fn derivative_rule_revisions_consume_structured_ast_snapshots() {
+    let start = DERIVATIVES.find("struct DerivativeRuleEmission").unwrap();
+    let end = DERIVATIVES
+        .find("struct FunctionPartialDerivative")
+        .unwrap();
+    let rule_pipeline = &DERIVATIVES[start..end];
+    assert!(rule_pipeline.contains("expression_ast:"));
+    assert!(rule_pipeline.contains("to_canonical_ast"));
+    assert!(rule_pipeline.contains("materialize_rule_transitions_from_ast"));
+    assert_excludes(
+        rule_pipeline,
+        "derivative rule transition pipeline",
+        &["parse_engine_expression"],
     );
 }
