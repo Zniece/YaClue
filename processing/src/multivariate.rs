@@ -86,6 +86,7 @@ impl SemanticOperation<MultivariateObjectRequest> for MultivariateDifferentialOp
         let result = compute(engine, &legacy)?;
         let source = result.output.clone();
         let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let output_ast = parsed.raw_expression();
         let metadata = if result.unresolved {
             ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
         } else {
@@ -93,14 +94,16 @@ impl SemanticOperation<MultivariateObjectRequest> for MultivariateDifferentialOp
         };
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast.clone()),
             semantics: Some(SemanticState {
                 kind: if result.unresolved {
                     ValueKind::Unevaluated
                 } else {
-                    crate::semantic::analyze_input(&source, "多元微分结果")?
-                        .semantic
-                        .kind
+                    crate::input::with_parse_env(|env| {
+                        crate::semantic::analyze_tree(env, &output_ast)
+                            .semantic
+                            .kind
+                    })
                 },
                 interpretation: if result.unresolved {
                     SemanticInterpretation::HeldApplication {

@@ -182,15 +182,16 @@ impl SemanticOperation<SumRequest> for SumOperation {
             )
         };
 
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let output_ast = parsed.raw_expression();
         let mut semantics = SemanticState {
             kind: if held || no_value {
                 ValueKind::Unevaluated
             } else {
                 crate::input::with_parse_env(|env| {
-                    let parsed = yacas_rs::parser::parse_expression(env, &format!("{source};"))
-                        .expect("sum output parses")
-                        .expect("sum output exists");
-                    crate::semantic::analyze_tree(env, &parsed).semantic.kind
+                    crate::semantic::analyze_tree(env, &output_ast)
+                        .semantic
+                        .kind
                 })
             },
             interpretation: if held {
@@ -208,17 +209,12 @@ impl SemanticOperation<SumRequest> for SumOperation {
             },
             requirements: Vec::new(),
         };
-        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
         if held {
-            crate::semantic_core::promote_held_application(
-                "Sum",
-                &parsed.raw_expression(),
-                &mut semantics,
-            )?;
+            crate::semantic_core::promote_held_application("Sum", &output_ast, &mut semantics)?;
         }
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast),
             semantics: Some(semantics),
             overlay: None,
             normalization: (!held && !no_value).then_some(NormalizationMetadata {

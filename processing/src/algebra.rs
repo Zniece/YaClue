@@ -4,12 +4,14 @@ use crate::engine::{Engine, EngineError, Expr};
 use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
+#[cfg(test)]
+use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    object_from_source, CachedOperationResult, CapabilitySet, Computation, ComputationOutput,
-    MathematicalObject, NormalizationLevel, NormalizationMetadata, NormalizationMode,
-    ObjectCapability, ObjectDelta, OperationCacheBudget, OperatorId, RepresentationPreference,
-    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    CachedOperationResult, CapabilitySet, Computation, ComputationOutput, MathematicalObject,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
+    OperationCacheBudget, OperatorId, RepresentationPreference, RuleEvent, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState,
 };
 use serde::Serialize;
 
@@ -103,13 +105,19 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
         } else {
             ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
         };
+        let output_ast = match &cached {
+            Some(cached) => cached.expression.clone(),
+            None => crate::semantic_core::parse_engine_expression(&result.output)?.raw_expression(),
+        };
         let mut semantics = SemanticState {
             kind: if result.unresolved {
                 ValueKind::Unevaluated
             } else {
-                crate::semantic::analyze_input(&result.output, "代数变换结果")?
-                    .semantic
-                    .kind
+                crate::input::with_parse_env(|env| {
+                    crate::semantic::analyze_tree(env, &output_ast)
+                        .semantic
+                        .kind
+                })
             },
             interpretation: if result.unresolved {
                 SemanticInterpretation::HeldApplication {
@@ -122,10 +130,7 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = match cached {
-            Some(cached) => MathematicalObject::new(input.id, cached.expression, semantics.clone()),
-            None => object_from_source(input.id, &result.output, semantics.clone())?,
-        };
+        let parsed = MathematicalObject::new(input.id, output_ast, semantics.clone());
         if result.unresolved {
             crate::semantic_core::promote_held_application(
                 request.kind.name(),

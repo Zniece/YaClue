@@ -131,7 +131,10 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
         } else {
             result.output.clone()
         };
-        let analyzed = crate::semantic::analyze_input(&output_source, "矩阵运算结果")?;
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
+        let output_ast = parsed.raw_expression();
+        let analyzed =
+            crate::input::with_parse_env(|env| crate::semantic::analyze_tree(env, &output_ast));
         let mut semantics = SemanticState {
             kind: if held {
                 ValueKind::Unevaluated
@@ -162,7 +165,6 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
             },
             requirements: Vec::new(),
         };
-        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if held {
             let spelling = match request.operation {
                 MatrixOperation::Transpose => "Transpose",
@@ -170,15 +172,11 @@ impl SemanticOperation<UnaryMatrixRequest> for UnaryMatrixOperation {
                 MatrixOperation::Inverse => "Inverse",
                 _ => unreachable!(),
             };
-            crate::semantic_core::promote_held_application(
-                spelling,
-                &parsed.raw_expression(),
-                &mut semantics,
-            )?;
+            crate::semantic_core::promote_held_application(spelling, &output_ast, &mut semantics)?;
         }
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast),
             semantics: Some(semantics),
             overlay: None,
             normalization: (!held).then_some(NormalizationMetadata {

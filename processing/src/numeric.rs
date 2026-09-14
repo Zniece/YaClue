@@ -70,13 +70,17 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
         } else {
             result.output.clone()
         };
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
+        let output_ast = parsed.raw_expression();
         let mut semantics = SemanticState {
             kind: if unresolved || no_value {
                 ValueKind::Unevaluated
             } else {
-                crate::semantic::analyze_input(&output_source, "数值计算结果")?
-                    .semantic
-                    .kind
+                crate::input::with_parse_env(|env| {
+                    crate::semantic::analyze_tree(env, &output_ast)
+                        .semantic
+                        .kind
+                })
             },
             interpretation: if unresolved {
                 SemanticInterpretation::HeldApplication {
@@ -116,17 +120,12 @@ impl SemanticOperation<NumericEvaluationRequest> for NumericEvaluationOperation 
             },
             requirements: Vec::new(),
         };
-        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if unresolved {
-            crate::semantic_core::promote_held_application(
-                "N",
-                &parsed.raw_expression(),
-                &mut semantics,
-            )?;
+            crate::semantic_core::promote_held_application("N", &output_ast, &mut semantics)?;
         }
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast),
             semantics: Some(semantics),
             overlay: None,
             normalization: (!unresolved && !no_value).then_some(NormalizationMetadata {
@@ -248,11 +247,15 @@ impl SemanticOperation<FindRootRequest> for FindRootOperation {
                 request.initial
             )
         };
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
+        let output_ast = parsed.raw_expression();
         let mut semantics = if converged {
             SemanticState {
-                kind: crate::semantic::analyze_input(&output_source, "数值根")?
-                    .semantic
-                    .kind,
+                kind: crate::input::with_parse_env(|env| {
+                    crate::semantic::analyze_tree(env, &output_ast)
+                        .semantic
+                        .kind
+                }),
                 interpretation: SemanticInterpretation::PlainExpression,
                 metadata: ResultMetadata::solved(Exactness::Approximate, ConditionSet::empty()),
                 capabilities: CapabilitySet::symbolic_expression(),
@@ -272,17 +275,16 @@ impl SemanticOperation<FindRootRequest> for FindRootOperation {
                 requirements: Vec::new(),
             }
         };
-        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if !converged {
             crate::semantic_core::promote_held_application(
                 "FindRoot",
-                &parsed.raw_expression(),
+                &output_ast,
                 &mut semantics,
             )?;
         }
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast),
             semantics: Some(semantics),
             overlay: None,
             normalization: converged.then_some(NormalizationMetadata {
@@ -391,13 +393,17 @@ impl SemanticOperation<TaylorRequest> for TaylorOperation {
         } else {
             result.output.clone()
         };
+        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
+        let output_ast = parsed.raw_expression();
         let mut semantics = SemanticState {
             kind: if result.unresolved {
                 ValueKind::Unevaluated
             } else {
-                crate::semantic::analyze_input(&output_source, "Taylor 展开结果")?
-                    .semantic
-                    .kind
+                crate::input::with_parse_env(|env| {
+                    crate::semantic::analyze_tree(env, &output_ast)
+                        .semantic
+                        .kind
+                })
             },
             interpretation: if result.unresolved {
                 SemanticInterpretation::HeldApplication {
@@ -414,17 +420,12 @@ impl SemanticOperation<TaylorRequest> for TaylorOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = crate::semantic_core::parse_engine_expression(&output_source)?;
         if result.unresolved {
-            crate::semantic_core::promote_held_application(
-                "Taylor",
-                &parsed.raw_expression(),
-                &mut semantics,
-            )?;
+            crate::semantic_core::promote_held_application("Taylor", &output_ast, &mut semantics)?;
         }
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast),
             semantics: Some(semantics),
             overlay: None,
             normalization: (!result.unresolved).then_some(NormalizationMetadata {

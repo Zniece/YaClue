@@ -323,15 +323,14 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
             &format!("StepsI'Computation({source},{})", request.variable),
         )?;
         let representative = evaluation.result;
+        let representative_ast =
+            crate::semantic_core::parse_engine_expression(&representative)?.raw_expression();
         let unresolved = crate::input::with_parse_env(|env| {
-            let parsed = yacas_rs::parser::parse_expression(env, &format!("{representative};"))
-                .map_err(|error| EngineError::Parse(format!("积分结果语法异常: {error:?}")))?
-                .ok_or_else(|| EngineError::Parse("积分结果为空".into()))?;
-            Ok(matches!(
-                crate::semantic_core::ExpressionView::new(env, &parsed).head(),
+            matches!(
+                crate::semantic_core::ExpressionView::new(env, &representative_ast).head(),
                 Some("Integrate" | "Int")
-            ))
-        })?;
+            )
+        });
         let output_source = if unresolved {
             format!("Integrate({})({source})", request.variable)
         } else {
@@ -504,12 +503,11 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
             ),
         )?;
         let representative = evaluation.result;
+        let parsed = crate::semantic_core::parse_engine_expression(&representative)?;
+        let output_ast = parsed.raw_expression();
         let unresolved = crate::input::with_parse_env(|env| {
-            let parsed = yacas_rs::parser::parse_expression(env, &format!("{representative};"))
-                .map_err(|error| EngineError::Parse(format!("定积分结果语法异常: {error:?}")))?
-                .ok_or_else(|| EngineError::Parse("定积分结果为空".into()))?;
-            Ok(crate::semantic_core::ExpressionView::new(env, &parsed).head() == Some("Integrate"))
-        })?;
+            crate::semantic_core::ExpressionView::new(env, &output_ast).head() == Some("Integrate")
+        });
         let metadata = if unresolved {
             ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
         } else {
@@ -520,11 +518,9 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
                 ValueKind::Unevaluated
             } else {
                 crate::input::with_parse_env(|env| {
-                    let parsed =
-                        yacas_rs::parser::parse_expression(env, &format!("{representative};"))
-                            .expect("engine result parses")
-                            .expect("engine result exists");
-                    crate::semantic::analyze_tree(env, &parsed).semantic.kind
+                    crate::semantic::analyze_tree(env, &output_ast)
+                        .semantic
+                        .kind
                 })
             },
             interpretation: if unresolved {
@@ -538,17 +534,16 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = crate::semantic_core::parse_engine_expression(&representative)?;
         if unresolved {
             crate::semantic_core::promote_held_application(
                 "Integrate",
-                &parsed.raw_expression(),
+                &output_ast,
                 &mut semantics,
             )?;
         }
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast),
             semantics: Some(semantics),
             overlay: None,
             normalization: (!unresolved).then_some(NormalizationMetadata {

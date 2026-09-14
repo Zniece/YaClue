@@ -623,7 +623,7 @@ fn migrated_object_pipeline_release_contract() {
     assert!(matches!(plot.output, ComputationOutput::EffectsOnly));
     assert!(plot.subject().is_none());
     assert!(
-        matches!(plot.effects.as_slice(), [Effect::Plot(effect)] if effect.expression == "2*x")
+        matches!(plot.effects.as_slice(), [Effect::Plot { effect, .. }] if effect.expression == "2*x")
     );
 
     let extrema = execute(&mut engine, "Extrema(Expand((x-1)^2+(y+2)^2),x,y)");

@@ -95,6 +95,7 @@ impl SemanticOperation<LineIntegralObjectRequest> for LineIntegralOperation {
             )
         };
         let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let output_ast = parsed.raw_expression();
         let metadata = if result.completed {
             ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
         } else {
@@ -102,12 +103,14 @@ impl SemanticOperation<LineIntegralObjectRequest> for LineIntegralOperation {
         };
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast.clone()),
             semantics: Some(SemanticState {
                 kind: if result.completed {
-                    crate::semantic::analyze_input(&source, "线积分结果")?
-                        .semantic
-                        .kind
+                    crate::input::with_parse_env(|env| {
+                        crate::semantic::analyze_tree(env, &output_ast)
+                            .semantic
+                            .kind
+                    })
                 } else {
                     ValueKind::Unevaluated
                 },

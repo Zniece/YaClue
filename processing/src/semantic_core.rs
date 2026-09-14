@@ -2814,7 +2814,10 @@ impl ExtensionCertificateEnvelope {
 #[derive(Debug, Clone)]
 pub enum Effect {
     Ui(String),
-    Plot(crate::plot::PlotEffect),
+    Plot {
+        effect: Box<crate::plot::PlotEffect>,
+        semantic: crate::semantic::SemanticSummary,
+    },
 }
 
 #[derive(Debug, Clone, Default)]

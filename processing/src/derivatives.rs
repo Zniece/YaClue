@@ -266,14 +266,13 @@ pub fn derivative_computation_for_object(
     let source = operand.print_source();
     let evaluation = evaluate_derivative_rules(engine, &source, request)?;
     let final_expression = evaluation.result;
+    let final_ast =
+        crate::semantic_core::parse_engine_expression(&final_expression)?.raw_expression();
     let unresolved = crate::input::with_parse_env(|env| {
-        let tree = yacas_rs::parser::parse_expression(env, &format!("{final_expression};"))
-            .map_err(|error| EngineError::Parse(format!("求导结果语法异常: {error:?}")))?
-            .ok_or_else(|| EngineError::Parse("求导结果为空".into()))?;
-        Ok(ExpressionView::new(env, &tree)
+        ExpressionView::new(env, &final_ast)
             .head()
-            .is_some_and(|head| matches!(head, "D" | "Deriv")))
-    })?;
+            .is_some_and(|head| matches!(head, "D" | "Deriv"))
+    });
     let mut metadata = if unresolved {
         ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
     } else {
@@ -304,8 +303,11 @@ pub fn derivative_computation_for_object(
         capabilities: CapabilitySet::symbolic_expression(),
         requirements: Vec::new(),
     };
-    let output_ast =
-        crate::semantic_core::parse_engine_expression(&output_source)?.raw_expression();
+    let output_ast = if unresolved {
+        crate::semantic_core::parse_engine_expression(&output_source)?.raw_expression()
+    } else {
+        final_ast
+    };
     if unresolved {
         crate::semantic_core::promote_held_application("D", &output_ast, &mut semantics)?;
     } else {

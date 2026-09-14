@@ -101,15 +101,18 @@ pub fn execute_elaborated(
             .effects
             .into_iter()
             .find_map(|effect| match effect {
-                crate::semantic_core::Effect::Plot(plot) => Some(plot),
+                crate::semantic_core::Effect::Plot { effect, semantic } => Some((effect, semantic)),
                 crate::semantic_core::Effect::Ui(_) => None,
             });
         let value = plot
             .as_ref()
-            .map(|effect| effect.expression.clone())
+            .map(|(effect, _)| effect.expression.clone())
             .unwrap_or_else(|| input.root.object.print_source());
         let tex = strip_tex_delimiters(&engine.eval(&value)?.tex);
-        let semantic = crate::semantic::analyze_input(&value, "绘图表达式")?.semantic;
+        let semantic = plot
+            .as_ref()
+            .map(|(_, semantic)| semantic.clone())
+            .unwrap_or_else(|| input.analyzed.semantic.clone());
         let outcome = ResultMetadata::solved(semantic.exactness, ConditionSet::empty());
         return Ok(Some(CompositionResult {
             status: CompositionStatus::Completed,
@@ -131,7 +134,7 @@ pub fn execute_elaborated(
             semantic,
             outcome,
             sampled_data: None,
-            plot,
+            plot: plot.map(|(effect, _)| *effect),
             effect_only: true,
             analysis: None,
         }));
@@ -276,13 +279,17 @@ pub fn execute_elaborated(
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    let mut semantic = crate::semantic::project_result(
-        &input.analyzed.semantic,
-        &value,
-        &arbitrary_constants,
-        &binder_refs,
-        Some(subject.semantics.kind),
-    )?;
+    let result_ast = subject.raw_expression();
+    let mut semantic = crate::input::with_parse_env(|env| {
+        crate::semantic::project_result_from_tree(
+            env,
+            &input.analyzed.semantic,
+            &result_ast,
+            &arbitrary_constants,
+            &binder_refs,
+            Some(subject.semantics.kind),
+        )
+    });
     semantic.exactness = subject.semantics.metadata.exactness;
     if subject.semantics.kind == crate::semantic::ValueKind::Unevaluated {
         semantic.completeness = None;

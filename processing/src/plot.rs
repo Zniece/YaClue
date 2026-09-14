@@ -130,12 +130,17 @@ impl SemanticOperation<PlotRequest> for PlotOperation {
             output: ComputationOutput::EffectsOnly,
             trace: None,
             certificates: Vec::new(),
-            effects: vec![Effect::Plot(PlotEffect {
-                expression,
-                variable: request.variable.clone(),
-                range: request.range,
-                sampled,
-            })],
+            effects: vec![Effect::Plot {
+                effect: Box::new(PlotEffect {
+                    expression,
+                    variable: request.variable.clone(),
+                    range: request.range,
+                    sampled,
+                }),
+                semantic: crate::input::with_parse_env(|env| {
+                    crate::semantic::analyze_tree(env, &input.raw_expression()).semantic
+                }),
+            }],
         })
     }
 }
@@ -484,7 +489,7 @@ mod tests {
             .unwrap();
         assert!(matches!(result.output, ComputationOutput::EffectsOnly));
         assert!(result.subject().is_none());
-        let Effect::Plot(effect) = &result.effects[0] else {
+        let Effect::Plot { effect, .. } = &result.effects[0] else {
             panic!("expected a plot effect")
         };
         assert_eq!(effect.expression, "Sin(x)");

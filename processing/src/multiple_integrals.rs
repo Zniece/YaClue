@@ -170,15 +170,16 @@ impl SemanticOperation<MultipleIntegralRequest> for MultipleIntegralOperation {
         } else {
             ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty())
         };
+        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
+        let output_ast = parsed.raw_expression();
         let mut semantics = SemanticState {
             kind: if unresolved {
                 ValueKind::Unevaluated
             } else {
                 crate::input::with_parse_env(|env| {
-                    let parsed = yacas_rs::parser::parse_expression(env, &format!("{source};"))
-                        .expect("multiple integral output parses")
-                        .expect("multiple integral output exists");
-                    crate::semantic::analyze_tree(env, &parsed).semantic.kind
+                    crate::semantic::analyze_tree(env, &output_ast)
+                        .semantic
+                        .kind
                 })
             },
             interpretation: if unresolved {
@@ -192,17 +193,12 @@ impl SemanticOperation<MultipleIntegralRequest> for MultipleIntegralOperation {
             capabilities: CapabilitySet::symbolic_expression(),
             requirements: Vec::new(),
         };
-        let parsed = crate::semantic_core::parse_engine_expression(&source)?;
         if unresolved {
-            crate::semantic_core::promote_held_application(
-                operator,
-                &parsed.raw_expression(),
-                &mut semantics,
-            )?;
+            crate::semantic_core::promote_held_application(operator, &output_ast, &mut semantics)?;
         }
         let mut output = input.clone();
         output.apply(ObjectDelta {
-            expression: Some(parsed.raw_expression()),
+            expression: Some(output_ast),
             semantics: Some(semantics),
             overlay: None,
             normalization: (!unresolved).then_some(NormalizationMetadata {

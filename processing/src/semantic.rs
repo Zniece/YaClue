@@ -113,8 +113,29 @@ pub fn project_result(
     additional_bound_symbols: &[&str],
     kind: Option<ValueKind>,
 ) -> Result<SemanticSummary, EngineError> {
+    let parsed = crate::semantic_core::parse_engine_expression(expression)?;
+    Ok(crate::input::with_parse_env(|env| {
+        project_result_from_tree(
+            env,
+            input,
+            &parsed.raw_expression(),
+            arbitrary_constants,
+            additional_bound_symbols,
+            kind,
+        )
+    }))
+}
+
+pub(crate) fn project_result_from_tree(
+    env: &yacas_rs::env::Environment,
+    input: &SemanticSummary,
+    expression: &std::rc::Rc<LispObject>,
+    arbitrary_constants: &[String],
+    additional_bound_symbols: &[&str],
+    kind: Option<ValueKind>,
+) -> SemanticSummary {
     let generated: BTreeSet<_> = arbitrary_constants.iter().cloned().collect();
-    let mut output = analyze_input(expression, "结果表达式")?.semantic;
+    let mut output = analyze_tree(env, expression).semantic;
     let mut bound: BTreeSet<_> = output.bound_symbols.iter().cloned().collect();
     if kind == Some(ValueKind::FunctionFamily) {
         bound.extend(input.bound_symbols.iter().cloned());
@@ -181,7 +202,7 @@ pub fn project_result(
             _ => None,
         };
     }
-    Ok(output)
+    output
 }
 
 /// Choose stable public names for generated arbitrary constants without
