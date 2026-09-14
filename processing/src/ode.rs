@@ -223,34 +223,53 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
         let input_ref = input.reference(None);
         let output_ref = output.reference(None);
         let mut sink = VecEventSink::default();
+        let mut analysis_sink = VecEventSink::default();
         let mut transition_expressions = emissions
             .iter()
-            .filter(|emission| emission.rule != "ode-result")
+            .filter(|emission| {
+                emission.rule != "ode-result"
+                    && emission.class
+                        == crate::semantic_core::RuleEventClass::EquivalentTransformation
+            })
             .map(|emission| emission.expr.clone())
             .collect::<Vec<_>>();
         emissions
             .into_iter()
             .filter(|emission| emission.rule != "ode-result")
             .for_each(|emission| {
+                let is_analysis =
+                    emission.class == crate::semantic_core::RuleEventClass::MathematicalAnalysis;
                 let fact = RuleFact {
-                    class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+                    class: emission.class,
                     rule: emission.rule,
                     input: input_ref.clone(),
                     additional_inputs: Vec::new(),
-                    output: output_ref.clone(),
+                    output: if is_analysis {
+                        input_ref.clone()
+                    } else {
+                        output_ref.clone()
+                    },
                     bindings: bindings.clone(),
                     conditions: Vec::new(),
-                    payload: RulePayload::Rewrite,
+                    payload: if is_analysis {
+                        RulePayload::Inference
+                    } else {
+                        RulePayload::Rewrite
+                    },
                     importance: emission.importance,
                     transformation: None,
                 };
-                sink.record_fact(fact, || {
-                    Some(RulePresentation {
-                        expression: emission.expr,
-                        explanation: emission.explanation,
-                        tex_override: None,
-                    })
-                });
+                let presentation = RulePresentation {
+                    expression: emission.expr,
+                    explanation: emission.explanation,
+                    tex_override: None,
+                };
+                let target = if is_analysis {
+                    &mut analysis_sink
+                } else {
+                    &mut sink
+                };
+                target.record_fact(fact, || Some(presentation));
             });
         let conclusion = RuleFact {
             class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
@@ -281,13 +300,14 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
             })
         });
         transition_expressions.push(output.print_source());
-        let (output, events) =
+        let (output, mut events) =
             crate::semantic_core::materialize_rule_transitions_from_engine_source(
                 input,
                 output,
                 sink.events,
                 &transition_expressions,
             )?;
+        events.extend(analysis_sink.events);
         Ok(Computation {
             output: if solved {
                 ComputationOutput::Value(output)
@@ -315,13 +335,16 @@ pub(crate) fn ode_rule_emissions(
         "读取微分方程并确定其阶数。",
         RuleImportance::Routine,
     )];
+    let solver_has_final_solution = solver_events
+        .iter()
+        .any(|event| event.rule == "ode-general-linear-solution");
     let mut method = method_events(result.method, equation, independent, dependent);
     if !solver_events.is_empty() {
         method.truncate(1);
     }
     events.extend(method);
     events.extend(solver_events);
-    if !result.constants.is_empty() {
+    if !result.constants.is_empty() && !solver_has_final_solution {
         events.push(OdeEvent::new(
             "ode-solve-dependent",
             &result.solution,
@@ -364,7 +387,7 @@ pub(crate) fn ode_rule_emissions(
         ));
     }
     if result.status == OdeStatus::Solved {
-        events.push(OdeEvent::new(
+        events.push(OdeEvent::analysis(
             "ode-verify",
             equation,
             "将候选解代回原方程，残差为零。",
@@ -395,6 +418,7 @@ pub(crate) struct OdeEvent {
     pub(crate) expr: String,
     pub(crate) explanation: String,
     pub(crate) importance: RuleImportance,
+    pub(crate) class: crate::semantic_core::RuleEventClass,
 }
 
 impl OdeEvent {
@@ -409,6 +433,22 @@ impl OdeEvent {
             expr: expression.into(),
             explanation: explanation.into(),
             importance,
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+        }
+    }
+
+    fn analysis(
+        rule: impl Into<String>,
+        expression: impl Into<String>,
+        explanation: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expr: expression.into(),
+            explanation: explanation.into(),
+            importance,
+            class: crate::semantic_core::RuleEventClass::MathematicalAnalysis,
         }
     }
 }
@@ -460,7 +500,7 @@ fn method_events(
             "识别为 Euler–Cauchy 方程，使用幂函数试探解建立指标方程。",
         ),
     };
-    let mut events = vec![OdeEvent::new(rule, equation, why, RuleImportance::Key)];
+    let mut events = vec![OdeEvent::analysis(rule, equation, why, RuleImportance::Key)];
     match method {
         OdeMethod::Bernoulli => events.push(OdeEvent::new(
             "ode-substitute-reciprocal",
@@ -1091,12 +1131,24 @@ fn parse_solver_events(
                     solver_event_explanation(&rule).into(),
                 )
             };
-            Ok(OdeEvent::new(
-                solver_event_rule(&rule),
-                expression,
-                explanation,
-                importance,
-            ))
+            let rule_key = solver_event_rule(&rule);
+            if matches!(
+                rule.as_str(),
+                "OdeCharacteristicEquation"
+                    | "OdeComplementarySolution"
+                    | "OdeTrialParticular"
+                    | "OdeCoefficientSystem"
+                    | "OdeParticularSolution"
+            ) {
+                Ok(OdeEvent::analysis(
+                    rule_key,
+                    expression,
+                    explanation,
+                    importance,
+                ))
+            } else {
+                Ok(OdeEvent::new(rule_key, expression, explanation, importance))
+            }
         })
         .collect()
 }
@@ -1137,6 +1189,7 @@ fn solver_event_explanation(rule: &str) -> &'static str {
         "OdeTrialParticular" => "根据右端函数族和共振次数选择特解试探式。",
         "OdeCoefficientSystem" => "代回方程并比较同类项，建立待定系数方程组。",
         "OdeParticularSolution" => "解出待定系数，得到一个特解。",
+        "OdeGeneralLinearSolution" => "将齐次通解与一个特解相加，得到原方程的完整通解。",
         "OdeVariationStandardForm" => "整理为二阶线性非齐次方程的标准形式。",
         "OdeVariationFundamentalSolutions" => "求出对应齐次方程的两组线性无关基础解。",
         "OdeVariationWronskian" => "计算基础解的 Wronskian，确认它们线性无关。",
@@ -2311,7 +2364,8 @@ mod tests {
         assert!(rules.contains(&"ode-method-separable".into()));
         assert!(rules.contains(&"ode-separable-form".into()));
         assert!(rules.contains(&"ode-verify".into()));
-        assert_eq!(rules.last().map(String::as_str), Some("solve-ode"));
+        assert!(rules.contains(&"solve-ode".into()));
+        assert_eq!(rules.last().map(String::as_str), Some("ode-verify"));
     }
 
     #[test]

@@ -1000,6 +1000,43 @@ mod tests {
     }
 
     #[test]
+    fn second_order_ode_separates_auxiliary_analysis_from_whole_equation_steps() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let result = execute_steps(
+            &mut engine,
+            "OdeSolve(y''+4*y==Sin(x))",
+            StepVerbosity::Detailed,
+        )
+        .unwrap()
+        .unwrap();
+        for rule in [
+            "ode-characteristic-equation",
+            "ode-complementary-solution",
+            "ode-trial-particular",
+            "ode-coefficient-system",
+            "ode-particular-solution",
+            "ode-verify",
+        ] {
+            assert!(
+                result.analyses.iter().any(|analysis| analysis.rule == rule),
+                "missing analysis {rule}: {result:#?}"
+            );
+            assert!(result.steps.iter().all(|step| step.rule != rule));
+        }
+        let general = result
+            .steps
+            .iter()
+            .find(|step| step.rule == "ode-general-linear-solution")
+            .expect("whole solution must rejoin the homogeneous and particular branches");
+        assert!(general.expr.starts_with("y=="), "{general:#?}");
+        assert!(general.expr.contains("C1"), "{general:#?}");
+        assert!(general.expr.contains("Cos(2*x)"), "{general:#?}");
+        assert!(general.expr.contains("Sin(x)"), "{general:#?}");
+        assert!(!general.expr.contains("Complex"), "{general:#?}");
+        assert!(result.steps.iter().all(|step| step.before_expr.is_some()));
+    }
+
+    #[test]
     fn pending_outer_operations_remain_visible_during_inner_steps() {
         let mut engine = RustEngine::spawn().unwrap();
         let result = execute_steps(

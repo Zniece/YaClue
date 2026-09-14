@@ -395,7 +395,7 @@ RuleBase("OdeExtSolveUndeterminedCoefficientsPartsData", {equation, collect});
 10 # OdeExtSolveUndeterminedCoefficientsPartsData(_left == _right, _collect) <--
 [
     Local(normal, a, b, c, forcing, remainder, particularData,
-          homogeneous, candidate, eventData);
+          basis, constants, homogeneous, candidate, eventData);
     normal := Expand(left - right);
     a := Simplify(Coef(normal, y'', 1));
     b := Simplify(Coef(normal, y', 1));
@@ -411,7 +411,9 @@ RuleBase("OdeExtSolveUndeterminedCoefficientsPartsData", {equation, collect});
         if (Length(particularData) != 4) [
             {};
         ] else [
-            homogeneous := OdeSolve(a*y'' + b*y' + c*y == 0);
+            basis := OdeExtConstantCoefficientBasis(a, b, c);
+            constants := OdeExtConstantList(2);
+            homogeneous := constants[1]*basis[1]+constants[2]*basis[2];
             candidate := Simplify(homogeneous + particularData[1]);
             eventData := If(collect,
               {{OdeLinearConstantForm, a*y'' + b*y' + c*y == forcing, 2},
@@ -419,7 +421,8 @@ RuleBase("OdeExtSolveUndeterminedCoefficientsPartsData", {equation, collect});
                {OdeComplementarySolution, homogeneous, 1},
                {OdeTrialParticular, particularData[2], 2},
                {OdeCoefficientSystem, particularData[3], 1},
-               {OdeParticularSolution, particularData[1], 2}}, {});
+               {OdeParticularSolution, particularData[1], 2},
+               {OdeGeneralLinearSolution, y == candidate, 2}}, {});
             {{candidate}, UndeterminedCoefficients, eventData};
         ];
     ];
