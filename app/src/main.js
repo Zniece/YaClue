@@ -1,3 +1,5 @@
+import { applyTranslations, getLocale, hasTranslation, setLocale, t } from "./i18n.js";
+
 const { invoke } = window.__TAURI__.core;
 const $ = (selector) => document.querySelector(selector);
 const exprEl = $("#expr");
@@ -90,7 +92,7 @@ function renderTemplates() {
 
 function setBusy(busy) {
   $("#go").disabled = busy;
-  stateEl.textContent = busy ? "正在计算" : "引擎就绪";
+  stateEl.textContent = t(busy ? "engineBusy" : "engineReady");
   stateEl.classList.toggle("busy", busy);
 }
 
@@ -113,7 +115,7 @@ function showError(error) {
   const message = error && typeof error === "object" && error.message
     ? error.message
     : typeof error === "string" ? error : JSON.stringify(error);
-  const retry = error?.code === "timeout" || error?.retryable ? "（可以重试）" : "";
+  const retry = error?.code === "timeout" || error?.retryable ? t("retry") : "";
   errorEl.textContent = `${message}${retry}`;
   errorEl.hidden = false;
 }
@@ -128,32 +130,25 @@ function renderSummary(result) {
   math.className = "summary-math";
   summaryEl.appendChild(math);
   if (result.tex) renderMath(result.tex, math);
-  else math.textContent = result.expression || "计算完成";
+  else math.textContent = result.expression || t("completed");
 }
 
 function renderSemantic(semantic, outcome) {
   if (!semantic) return;
   const kindNames = {
-    scalar: "标量",
-    expression: "符号表达式",
-    equation: "方程",
-    matrix: "矩阵",
-    solution_set: "解集",
-    function_family: "函数族",
-    unevaluated: "未求值对象",
+    scalar: t("kind_scalar"), expression: t("kind_expression"), equation: t("kind_equation"),
+    matrix: t("kind_matrix"), solution_set: t("kind_solution_set"),
+    function_family: t("kind_function_family"), unevaluated: t("kind_unevaluated"),
   };
   const exactnessNames = {
-    exact: "精确",
-    symbolic: "符号",
-    approximate: "近似",
-    unknown: "精确性未知",
+    exact: t("exact_exact"), symbolic: t("exact_symbolic"), approximate: t("exact_approximate"), unknown: t("exact_unknown"),
   };
   const items = [kindNames[semantic.kind] || semantic.kind];
   if (semantic.shape) items.push(`${semantic.shape.rows} × ${semantic.shape.columns}`);
   items.push(exactnessNames[semantic.exactness] || semantic.exactness);
-  if (semantic.symbols?.length) items.push(`符号：${semantic.symbols.join(", ")}`);
-  if (semantic.bound_symbols?.length) items.push(`绑定：${semantic.bound_symbols.join(", ")}`);
-  if (semantic.constants?.length) items.push(`常量：${semantic.constants.join(", ")}`);
+  if (semantic.symbols?.length) items.push(t("symbols", { value: semantic.symbols.join(", ") }));
+  if (semantic.bound_symbols?.length) items.push(t("boundSymbols", { value: semantic.bound_symbols.join(", ") }));
+  if (semantic.constants?.length) items.push(t("constants", { value: semantic.constants.join(", ") }));
   const reasonNames = {
     condition_insufficient: "条件不足",
     algorithm_uncovered: "算法未覆盖",
@@ -161,8 +156,8 @@ function renderSemantic(semantic, outcome) {
     divergent: "发散",
     unsupported_operation: "不支持的运算",
   };
-  if (outcome?.conditionality === "conditional") items.push("条件化结果");
-  if (outcome?.completeness === "representative") items.push("代表解");
+  if (outcome?.conditionality === "conditional") items.push(t("conditional"));
+  if (outcome?.completeness === "representative") items.push(t("representative"));
   if (outcome?.reason) items.push(reasonNames[outcome.reason] || outcome.reason);
   items.forEach((text) => {
     const chip = document.createElement("span");
@@ -179,7 +174,7 @@ function renderSteps(steps) {
     const heading = document.createElement("div");
     heading.className = "step-heading";
     heading.innerHTML = `<span>${index + 1}</span><div><strong></strong><small></small></div>`;
-    heading.querySelector("strong").textContent = step.why || "计算";
+    heading.querySelector("strong").textContent = step.why || t("computation");
     heading.querySelector("small").textContent = step.rule;
     const math = document.createElement("div");
     math.className = "math";
@@ -216,7 +211,7 @@ function renderAnalyses(analyses) {
     const heading = document.createElement("div");
     heading.className = "step-heading";
     const label = document.createElement("strong");
-    label.textContent = analysis.message || "分析依据";
+    label.textContent = analysis.message || t("analysisBasis");
     const detail = document.createElement("small");
     detail.textContent = analysis.rule;
     const math = document.createElement("div");
@@ -242,7 +237,7 @@ function renderPlot(data) {
   const ctx = plotEl.getContext("2d");
   ctx.scale(ratio, ratio);
   const finite = points.filter((point) => Number.isFinite(point.y));
-  if (!finite.length) throw new Error("采样结果中没有有限点");
+  if (!finite.length) throw new Error(t("finitePlotError"));
   const xs = points.map((point) => point.x);
   const ys = finite.map((point) => point.y).sort((a, b) => a - b);
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
@@ -286,7 +281,7 @@ async function calculate() {
         verbosity: $("#verbosity").value,
       },
     });
-    $("#result-title").textContent = result.title;
+    $("#result-title").textContent = hasTranslation(result.title_key) ? t(result.title_key) : result.title;
     $("#result-kind").textContent = result.kind.replaceAll("_", " ");
     renderSemantic(result.semantic, result.outcome);
     if (result.kind === "plot") {
@@ -336,14 +331,14 @@ async function runStdio() {
 function renderAssumptions() {
   const list = $("#assumption-list");
   list.innerHTML = "";
-  if (!assumptions.size) list.innerHTML = '<span class="empty">暂无假设</span>';
+  if (!assumptions.size) list.innerHTML = `<span class="empty">${t("noneYet")}</span>`;
   assumptions.forEach(({ fact, symbol }) => {
     const chip = document.createElement("span");
     chip.className = "chip";
     chip.textContent = `${symbol}: ${fact}`;
     list.appendChild(chip);
   });
-  $("#assumption-summary").textContent = assumptions.size ? `${assumptions.size} 项假设` : "无假设";
+  $("#assumption-summary").textContent = assumptions.size ? t("assumptionCount", { count: assumptions.size }) : t("noAssumptions");
 }
 
 async function refreshAssumptions() {
@@ -372,7 +367,11 @@ $("#add-assumption").addEventListener("click", addAssumption);
 $("#clear-assumptions").addEventListener("click", clearAssumptions);
 $("#stdio-run").addEventListener("click", runStdio);
 $("#stdio-clear").addEventListener("click", () => { $("#stdio-output").textContent = ""; });
+$("#locale").value = getLocale();
+$("#locale").addEventListener("change", (event) => setLocale(event.target.value));
+document.addEventListener("localechange", () => { renderTemplates(); renderAssumptions(); setBusy(calculating); });
 exprEl.addEventListener("keydown", (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate(); });
 exprEl.addEventListener("input", hideInputHelp);
+applyTranslations();
 renderTemplates();
 refreshAssumptions().catch(showError);

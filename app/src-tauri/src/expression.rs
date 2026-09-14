@@ -97,6 +97,7 @@ pub fn process_expression_with_engine(
     {
         return Ok(ProcessExpressionResult {
             kind: "partial_application".into(),
+            title_key: "result.partial_application".into(),
             title: "部分应用".into(),
             expression: partial.expression,
             tex: partial.tex,
@@ -117,6 +118,7 @@ pub fn process_expression_with_engine(
     }
     let result = dispatch_expression_with_engine(request, engine, &elaborated)?;
     Ok(ProcessExpressionResult {
+        title_key: format!("result.{}", result.kind),
         kind: result.kind,
         title: result.title,
         expression: result.expression,

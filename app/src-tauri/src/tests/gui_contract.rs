@@ -22,3 +22,16 @@ fn gui_examples_distinguish_equations_from_solving_them() {
     assert!(html.contains("==</code> 构造方程"));
     assert!(html.contains("显式使用 Solve 或 OdeSolve"));
 }
+
+#[test]
+fn gui_uses_stable_locale_keys_with_compatibility_fallbacks() {
+    let javascript = include_str!("../../../src/main.js");
+    let i18n = include_str!("../../../src/i18n.js");
+    let html = include_str!("../../../src/index.html");
+
+    assert!(javascript.contains("hasTranslation(result.title_key)"));
+    assert!(i18n.contains("\"zh-CN\""));
+    assert!(i18n.contains("\"en-US\""));
+    assert!(html.contains("id=\"locale\""));
+    assert!(html.contains("data-i18n=\"tagline\""));
+}

@@ -15,6 +15,9 @@ pub struct ProcessExpressionRequest {
 #[derive(Serialize)]
 pub struct ProcessExpressionResult {
     pub(crate) kind: String,
+    /// Stable presentation key. `title` remains a compatibility fallback for
+    /// clients that do not provide their own locale catalogue.
+    pub(crate) title_key: String,
     pub(crate) title: String,
     pub(crate) expression: String,
     pub(crate) tex: String,
