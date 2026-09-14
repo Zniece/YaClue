@@ -139,18 +139,28 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
                 "该对象不是可求解的微分方程".into(),
             ));
         }
-        let result = solve(
+        let equation = input.print_source();
+        let (result, solver_events) = solve_internal(
             engine,
-            &input.print_source(),
+            &equation,
             &request.independent,
             &request.dependent,
             &[],
+            true,
         )?;
+        let emissions = ode_rule_emissions(
+            &equation,
+            &request.independent,
+            &request.dependent,
+            &[],
+            &result,
+            solver_events,
+        );
         let solved = result.status == OdeStatus::Solved;
         let output_source = if solved {
             result.solution.clone()
         } else {
-            format!("OdeSolve({})", input.print_source())
+            format!("OdeSolve({equation})")
         };
         let mut semantics = SemanticState {
             kind: if solved {
@@ -211,24 +221,58 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
                 .cloned()
                 .map(|constant| ("constant".into(), constant)),
         );
-        let fact = RuleFact::transition(
-            if solved {
-                "solve-ode"
-            } else {
-                "hold-ode-solve"
-            },
-            crate::semantic_core::RuleEventClass::EquivalentTransformation,
-            input,
-            &output,
-            RulePayload::Rewrite,
-            RuleImportance::Key,
-        )
-        .with_bindings(bindings);
+        let input_ref = input.reference(None);
+        let output_ref = output.reference(None);
         let mut sink = VecEventSink::default();
-        sink.record_fact(fact, || {
-            solved.then(|| RulePresentation {
+        emissions
+            .into_iter()
+            .filter(|emission| emission.rule != "ode-result")
+            .for_each(|emission| {
+                let fact = RuleFact {
+                    class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+                    rule: emission.rule,
+                    input: input_ref.clone(),
+                    additional_inputs: Vec::new(),
+                    output: output_ref.clone(),
+                    bindings: bindings.clone(),
+                    conditions: Vec::new(),
+                    payload: RulePayload::Rewrite,
+                    importance: emission.importance,
+                    transformation: None,
+                };
+                sink.record_fact(fact, || {
+                    Some(RulePresentation {
+                        expression: emission.expr,
+                        explanation: emission.explanation,
+                        tex_override: None,
+                    })
+                });
+            });
+        let conclusion = RuleFact {
+            class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
+            rule: if solved {
+                "solve-ode".into()
+            } else {
+                "hold-ode-solve".into()
+            },
+            input: input_ref,
+            additional_inputs: Vec::new(),
+            output: output_ref,
+            bindings,
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+        };
+        sink.record_fact(conclusion, || {
+            Some(RulePresentation {
                 expression: output.print_source(),
-                explanation: "求得并验证常微分方程解集。".into(),
+                explanation: if solved {
+                    "求得并验证常微分方程解集。"
+                } else {
+                    "保留当前方法尚未求解的常微分方程。"
+                }
+                .into(),
                 tex_override: Some(result.tex),
             })
         });
@@ -286,32 +330,31 @@ pub fn solve_steps_with_verbosity(
         initial_conditions,
         true,
     )?;
-    let steps = ode_steps(
-        engine,
+    let events = ode_rule_emissions(
         equation,
         independent,
         dependent,
+        initial_conditions,
         &result,
         solver_events,
-        verbosity,
-    )?;
+    );
+    let steps = render_ode_emissions(engine, events, verbosity)?;
     Ok(OdeStepResult { result, steps })
 }
 
-fn ode_steps(
-    engine: &mut dyn Engine,
+fn ode_rule_emissions(
     equation: &str,
     independent: &str,
     dependent: &str,
+    initial_conditions: &[InitialCondition<'_>],
     result: &OdeResult,
     solver_events: Vec<OdeEvent>,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
+) -> Vec<OdeEvent> {
     let mut events = vec![OdeEvent::new(
         "ode-start",
         equation,
         "读取微分方程并确定其阶数。",
-        StepImportance::Routine,
+        RuleImportance::Routine,
     )];
     let mut method = method_events(result.method, equation, independent, dependent);
     if !solver_events.is_empty() {
@@ -324,7 +367,41 @@ fn ode_steps(
             "ode-constant",
             &result.solution,
             "引入任意常数，得到通解。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
+        ));
+    }
+    if !initial_conditions.is_empty() {
+        let conditions = initial_conditions
+            .iter()
+            .map(|condition| {
+                let derivative = format!(
+                    "{dependent}{}",
+                    "'".repeat(condition.derivative_order as usize)
+                );
+                format!("{derivative}({})=={}", condition.point, condition.value)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let (rule, explanation) = match result.initial_condition_status {
+            InitialConditionStatus::Applied => (
+                "ode-apply-initial-conditions",
+                "代入初值条件并解出通解中的任意常数。",
+            ),
+            InitialConditionStatus::NoSolution => (
+                "ode-initial-conditions-inconsistent",
+                "初值条件与候选解族不相容。",
+            ),
+            InitialConditionStatus::Unresolved => (
+                "ode-initial-conditions-unresolved",
+                "当前方法无法确定初值条件对应的解分支。",
+            ),
+            InitialConditionStatus::NotRequested => unreachable!("conditions are present"),
+        };
+        events.push(OdeEvent::new(
+            rule,
+            format!("{{{conditions}}}"),
+            explanation,
+            RuleImportance::Key,
         ));
     }
     if result.status == OdeStatus::Solved {
@@ -332,7 +409,7 @@ fn ode_steps(
             "ode-verify",
             equation,
             "将候选解代回原方程，残差为零。",
-            StepImportance::Routine,
+            RuleImportance::Routine,
         ));
     }
     let final_expression = if result.solutions.len() == 1 {
@@ -348,13 +425,55 @@ fn ode_steps(
         } else {
             "当前方法未能得到经过验证的解析解。"
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
 
+    events
+}
+
+fn render_ode_emissions(
+    engine: &mut dyn Engine,
+    emissions: Vec<OdeEvent>,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    let events = emissions
+        .into_iter()
+        .map(|event| StepEvent {
+            rule: event.rule,
+            expr: event.expr,
+            why: event.explanation,
+            importance: match event.importance {
+                RuleImportance::Routine => StepImportance::Routine,
+                RuleImportance::Normal => StepImportance::Normal,
+                RuleImportance::Key => StepImportance::Key,
+            },
+        })
+        .collect();
     render_events(engine, events, verbosity)
 }
 
-type OdeEvent = StepEvent;
+struct OdeEvent {
+    rule: String,
+    expr: String,
+    explanation: String,
+    importance: RuleImportance,
+}
+
+impl OdeEvent {
+    fn new(
+        rule: impl Into<String>,
+        expression: impl Into<String>,
+        explanation: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expr: expression.into(),
+            explanation: explanation.into(),
+            importance,
+        }
+    }
+}
 
 struct ExtensionResult {
     candidates: Vec<Expr>,
@@ -403,19 +522,19 @@ fn method_events(
             "识别为 Euler–Cauchy 方程，使用幂函数试探解建立指标方程。",
         ),
     };
-    let mut events = vec![OdeEvent::new(rule, equation, why, StepImportance::Key)];
+    let mut events = vec![OdeEvent::new(rule, equation, why, RuleImportance::Key)];
     match method {
         OdeMethod::Bernoulli => events.push(OdeEvent::new(
             "ode-substitute-reciprocal",
-            &format!("v==1/{dependent}"),
+            format!("v==1/{dependent}"),
             "令 v 为因变量的倒数。变换可能遗漏零解，因此在结果中单独补回。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         )),
         OdeMethod::Homogeneous => events.push(OdeEvent::new(
             "ode-substitute-ratio",
-            &format!("v=={dependent}/{independent}"),
+            format!("v=={dependent}/{independent}"),
             "令 v 为因变量与自变量之比，将方程化为可分离变量方程。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         )),
         _ => {}
     }
@@ -986,13 +1105,13 @@ fn parse_solver_events(
             }
             let rule = args[0].to_string();
             let importance = match args[2].to_string().as_str() {
-                "0" => StepImportance::Routine,
-                "2" => StepImportance::Key,
-                _ => StepImportance::Normal,
+                "0" => RuleImportance::Routine,
+                "2" => RuleImportance::Key,
+                _ => RuleImportance::Normal,
             };
             Ok(OdeEvent::new(
-                &solver_event_rule(&rule),
-                &translate_event_expression(&args[1].to_string(), independent, dependent),
+                solver_event_rule(&rule),
+                translate_event_expression(&args[1].to_string(), independent, dependent),
                 solver_event_explanation(&rule),
                 importance,
             ))
@@ -1201,21 +1320,21 @@ fn elementary_growth_events(
     Some(vec![
         OdeEvent::new(
             "ode-equilibrium-branches",
-            &format!("{dependent}==0"),
+            format!("{dependent}==0"),
             "先保留除以因变量时可能遗漏的零解。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ),
         OdeEvent::new(
             "ode-separable-form",
-            &format!("{derivative}/{dependent}==1"),
+            format!("{derivative}/{dependent}==1"),
             "将因变量和自变量分到等式两边。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ),
         OdeEvent::new(
             "ode-integrate-both",
-            &format!("Ln(Abs({dependent}))=={independent}+C"),
+            format!("Ln(Abs({dependent}))=={independent}+C"),
             "对等式两边积分。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ),
     ])
 }
@@ -2166,5 +2285,73 @@ mod tests {
             .semantics
             .capabilities
             .contains(ObjectCapability::Differentiate));
+    }
+
+    #[test]
+    fn ode_operation_emits_solver_facts_without_legacy_adaptation() {
+        let input = object_from_source(
+            crate::semantic_core::ObjectId(92),
+            "y'==y",
+            SemanticState {
+                kind: ValueKind::Equation,
+                interpretation: SemanticInterpretation::Equation,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::equation_input(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let measured = crate::metrics::measure(|| {
+            OdeSolveOperation
+                .compute(
+                    &mut engine,
+                    &input,
+                    &OdeSolveRequest {
+                        independent: "x".into(),
+                        dependent: "y".into(),
+                    },
+                )
+                .unwrap()
+        });
+        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
+        let rules = measured
+            .value
+            .trace
+            .unwrap()
+            .events
+            .into_iter()
+            .map(|event| event.rule)
+            .collect::<Vec<_>>();
+        assert!(rules.contains(&"ode-method-separable".into()));
+        assert!(rules.contains(&"ode-separable-form".into()));
+        assert!(rules.contains(&"ode-verify".into()));
+        assert_eq!(rules.last().map(String::as_str), Some("solve-ode"));
+    }
+
+    #[test]
+    fn initial_condition_fact_comes_from_the_solved_branch() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let conditions = [InitialCondition {
+            derivative_order: 0,
+            point: "0",
+            value: "2",
+        }];
+        let (result, solver_events) =
+            solve_internal(&mut engine, "y'==y", "x", "y", &conditions, true).unwrap();
+        assert_eq!(
+            result.initial_condition_status,
+            InitialConditionStatus::Applied
+        );
+        assert!(result.constants.is_empty());
+        let emissions = ode_rule_emissions("y'==y", "x", "y", &conditions, &result, solver_events);
+        assert!(emissions
+            .iter()
+            .any(|event| event.rule == "ode-apply-initial-conditions"));
+        assert!(emissions.iter().any(|event| event.rule == "ode-verify"));
+        assert_eq!(
+            emissions.last().map(|event| event.rule.as_str()),
+            Some("ode-result")
+        );
     }
 }
