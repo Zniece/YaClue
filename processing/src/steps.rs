@@ -5,12 +5,21 @@
 
 use crate::engine::{Engine, EngineError};
 use crate::input::strip_tex_delimiters;
-use crate::quadrature::QuadratureOptions;
 use crate::semantic_core::{RuleEventClass, RuleImportance, RuleTrace};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::semantic_core::{ExpressionPath, ObjectId};
+
+pub use crate::derivatives::{
+    derive_steps, derive_steps_order, derive_steps_order_with_verbosity,
+    derive_steps_with_verbosity,
+};
+pub use crate::integrals::{
+    antiderivative_family, derive_antiderivative_family_with_verbosity, derive_definite,
+    derive_definite_with_options, derive_definite_with_verbosity, derive_integrals,
+    derive_integrals_with_verbosity, AntiderivativeFamily, AntiderivativeStepResult,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -79,24 +88,6 @@ pub struct Step {
     pub tex: String,
     /// 全局粒度筛选使用的语义重要度。
     pub importance: StepImportance,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AntiderivativeFamily {
-    /// Canonical representative used by definite integrals and compositions.
-    pub representative: String,
-    pub representative_tex: String,
-    /// Product-facing description of the complete family.
-    pub expression: String,
-    pub tex: String,
-    pub variable: String,
-    pub arbitrary_constants: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AntiderivativeStepResult {
-    pub result: AntiderivativeFamily,
-    pub steps: Vec<Step>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -479,159 +470,11 @@ fn literal_tex(source: &str) -> String {
     format!(r"\mathtt{{{escaped}}}")
 }
 
-/// 对 `expr` 关于 `var` 生成分步求导过程
-pub fn derive_steps(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-) -> Result<Vec<Step>, EngineError> {
-    derive_steps_with_verbosity(engine, expr, var, StepVerbosity::Detailed)
-}
-
-pub fn derive_steps_with_verbosity(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    crate::derivatives::derivative_steps_with_verbosity(engine, expr, var, 1, verbosity)
-}
-
-/// 对 `expr` 关于 `var` 生成 `order` 阶分步求导过程(步骤按求导轮次拼接)
-pub fn derive_steps_order(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    order: u32,
-) -> Result<Vec<Step>, EngineError> {
-    derive_steps_order_with_verbosity(engine, expr, var, order, StepVerbosity::Detailed)
-}
-
-pub fn derive_steps_order_with_verbosity(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    order: u32,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    crate::derivatives::derivative_steps_with_verbosity(engine, expr, var, order, verbosity)
-}
-
-/// 对 `expr` 关于 `var` 生成分步积分过程
-pub fn derive_integrals(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-) -> Result<Vec<Step>, EngineError> {
-    derive_integrals_with_verbosity(engine, expr, var, StepVerbosity::Detailed)
-}
-
-pub fn derive_integrals_with_verbosity(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    crate::integrals::integral_steps_with_verbosity(engine, expr, var, verbosity)
-}
-
-/// Build the product-facing antiderivative family while keeping the canonical
-/// representative separate for downstream symbolic operations.
-pub fn antiderivative_family(
-    representative: String,
-    representative_tex: String,
-    variable: &str,
-    arbitrary_constant: String,
-) -> AntiderivativeFamily {
-    crate::integrals::antiderivative_family(
-        representative,
-        representative_tex,
-        variable,
-        arbitrary_constant,
-    )
-}
-
-pub fn derive_antiderivative_family_with_verbosity(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    arbitrary_constant: String,
-    verbosity: StepVerbosity,
-) -> Result<AntiderivativeStepResult, EngineError> {
-    crate::integrals::antiderivative_family_with_verbosity(
-        engine,
-        expr,
-        var,
-        arbitrary_constant,
-        verbosity,
-    )
-}
-
-/// 定积分:不定积分步骤链 + 牛顿-莱布尼茨求值(上下限可为任意表达式,如 `Pi`)
-pub fn derive_definite(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    from: &str,
-    to: &str,
-) -> Result<Vec<Step>, EngineError> {
-    derive_definite_configured(engine, expr, var, from, to, None, StepVerbosity::Detailed)
-}
-
-pub fn derive_definite_with_verbosity(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    from: &str,
-    to: &str,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    derive_definite_configured(engine, expr, var, from, to, None, verbosity)
-}
-
-pub fn derive_definite_with_options(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    from: &str,
-    to: &str,
-    options: &QuadratureOptions,
-) -> Result<Vec<Step>, EngineError> {
-    derive_definite_configured(
-        engine,
-        expr,
-        var,
-        from,
-        to,
-        Some(options),
-        StepVerbosity::Detailed,
-    )
-}
-
-fn derive_definite_configured(
-    engine: &mut dyn Engine,
-    expr: &str,
-    var: &str,
-    from: &str,
-    to: &str,
-    numeric_fallback: Option<&QuadratureOptions>,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    crate::integrals::definite_steps_with_options(
-        engine,
-        expr,
-        var,
-        from,
-        to,
-        numeric_fallback,
-        verbosity,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::{ReplEngine, RustEngine};
+    use crate::quadrature::QuadratureOptions;
     use crate::test_support::CountingEngine;
 
     #[test]

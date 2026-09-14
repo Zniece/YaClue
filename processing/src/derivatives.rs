@@ -1125,6 +1125,42 @@ pub fn derivative_steps_with_verbosity(
     )
 }
 
+pub fn derive_steps(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+) -> Result<Vec<Step>, EngineError> {
+    derivative_steps_with_verbosity(engine, expression, variable, 1, StepVerbosity::Detailed)
+}
+
+pub fn derive_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    derivative_steps_with_verbosity(engine, expression, variable, 1, verbosity)
+}
+
+pub fn derive_steps_order(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    order: u32,
+) -> Result<Vec<Step>, EngineError> {
+    derivative_steps_with_verbosity(engine, expression, variable, order, StepVerbosity::Detailed)
+}
+
+pub fn derive_steps_order_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    order: u32,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    derivative_steps_with_verbosity(engine, expression, variable, order, verbosity)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

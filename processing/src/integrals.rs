@@ -13,9 +13,25 @@ use crate::semantic_core::{
     SemanticInterpretation, SemanticOperation, SemanticState, VecEventSink,
 };
 use crate::steps::{
-    render_events, render_rule_trace, AntiderivativeFamily, AntiderivativeStepResult, Step,
-    StepEvent, StepImportance, StepKind, StepVerbosity,
+    render_events, render_rule_trace, Step, StepEvent, StepImportance, StepKind, StepVerbosity,
 };
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AntiderivativeFamily {
+    pub representative: String,
+    pub representative_tex: String,
+    pub expression: String,
+    pub tex: String,
+    pub variable: String,
+    pub arbitrary_constants: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AntiderivativeStepResult {
+    pub result: AntiderivativeFamily,
+    pub steps: Vec<Step>,
+}
 
 struct IntegralRuleEmission {
     rule: String,
@@ -87,7 +103,7 @@ fn parse_compatibility_step_events(
         .collect()
 }
 
-pub(crate) fn integral_steps_with_verbosity(
+pub fn derive_integrals_with_verbosity(
     engine: &mut dyn Engine,
     expression: &str,
     variable: &str,
@@ -104,7 +120,15 @@ pub(crate) fn integral_steps_with_verbosity(
     )
 }
 
-pub(crate) fn antiderivative_family(
+pub fn derive_integrals(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+) -> Result<Vec<Step>, EngineError> {
+    derive_integrals_with_verbosity(engine, expression, variable, StepVerbosity::Detailed)
+}
+
+pub fn antiderivative_family(
     representative: String,
     representative_tex: String,
     variable: &str,
@@ -127,14 +151,14 @@ pub(crate) fn antiderivative_family(
     }
 }
 
-pub(crate) fn antiderivative_family_with_verbosity(
+pub fn derive_antiderivative_family_with_verbosity(
     engine: &mut dyn Engine,
     expression: &str,
     variable: &str,
     arbitrary_constant: String,
     verbosity: StepVerbosity,
 ) -> Result<AntiderivativeStepResult, EngineError> {
-    let mut steps = integral_steps_with_verbosity(engine, expression, variable, verbosity)?;
+    let mut steps = derive_integrals_with_verbosity(engine, expression, variable, verbosity)?;
     let representative = steps
         .last()
         .ok_or_else(|| EngineError::Parse("不定积分步骤缺少最终结果".into()))?;
@@ -730,8 +754,56 @@ pub(crate) fn definite_integral_computation_with_options(
     })
 }
 
+pub fn derive_definite(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    lower: &str,
+    upper: &str,
+) -> Result<Vec<Step>, EngineError> {
+    derive_definite_configured(
+        engine,
+        expression,
+        variable,
+        lower,
+        upper,
+        None,
+        StepVerbosity::Detailed,
+    )
+}
+
+pub fn derive_definite_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    lower: &str,
+    upper: &str,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    derive_definite_configured(engine, expression, variable, lower, upper, None, verbosity)
+}
+
+pub fn derive_definite_with_options(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    lower: &str,
+    upper: &str,
+    options: &QuadratureOptions,
+) -> Result<Vec<Step>, EngineError> {
+    derive_definite_configured(
+        engine,
+        expression,
+        variable,
+        lower,
+        upper,
+        Some(options),
+        StepVerbosity::Detailed,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn definite_steps_with_options(
+fn derive_definite_configured(
     engine: &mut dyn Engine,
     expression: &str,
     variable: &str,
