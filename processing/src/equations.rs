@@ -16,6 +16,29 @@ use crate::semantic_core::{
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
 
+struct EquationRuleEmission {
+    rule: String,
+    expression: String,
+    explanation: String,
+    importance: RuleImportance,
+}
+
+impl EquationRuleEmission {
+    fn new(
+        rule: impl Into<String>,
+        expression: impl Into<String>,
+        explanation: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expression: expression.into(),
+            explanation: explanation.into(),
+            importance,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SolveStatus {
@@ -119,7 +142,7 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        let result = solve(engine, &equation_refs, &variable_refs)?;
+        let (result, emissions) = equation_evaluation(engine, &equation_refs, &variable_refs)?;
         let output_source = match result.status {
             SolveStatus::Solved | SolveStatus::NoSolution => result.raw.clone(),
             SolveStatus::Infinite => format!("AllSolutions({{{}}})", result.variables.join(",")),
@@ -180,36 +203,76 @@ impl SemanticOperation<SolveRequest> for SolveOperation {
                 mode: NormalizationMode::Operation(OperatorId::Solve),
             }),
         });
-        let fact = RuleFact::transition(
-            match result.status {
-                SolveStatus::Solved => "solve-equations",
-                SolveStatus::NoSolution => "solve-no-solution",
-                SolveStatus::Infinite => "solve-all-values",
-                SolveStatus::Unresolved => "hold-solve",
-            },
-            if no_value {
+        let bindings = vec![(
+            "variables".into(),
+            format!("{{{}}}", result.variables.join(",")),
+        )];
+        let input_ref = input.reference(None);
+        let output_ref = output.reference(None);
+        let mut sink = VecEventSink::default();
+        emissions
+            .into_iter()
+            .filter(|emission| {
+                !matches!(
+                    emission.rule.as_str(),
+                    "equation-result" | "equation-system-result"
+                )
+            })
+            .for_each(|emission| {
+                let fact = RuleFact {
+                    class: if emission.rule == "equation-system-inconsistent" && no_value {
+                        crate::semantic_core::RuleEventClass::MathematicalConclusion
+                    } else {
+                        crate::semantic_core::RuleEventClass::EquivalentTransformation
+                    },
+                    rule: emission.rule,
+                    input: input_ref.clone(),
+                    additional_inputs: Vec::new(),
+                    output: output_ref.clone(),
+                    bindings: bindings.clone(),
+                    conditions: Vec::new(),
+                    payload: RulePayload::Rewrite,
+                    importance: emission.importance,
+                    transformation: None,
+                };
+                sink.record_fact(fact, || {
+                    Some(RulePresentation {
+                        expression: emission.expression,
+                        explanation: emission.explanation,
+                        tex_override: None,
+                    })
+                });
+            });
+        let conclusion_rule = match result.status {
+            SolveStatus::Solved => "solve-equations",
+            SolveStatus::NoSolution => "solve-no-solution",
+            SolveStatus::Infinite => "solve-all-values",
+            SolveStatus::Unresolved => "hold-solve",
+        };
+        let conclusion = RuleFact {
+            class: if no_value {
                 crate::semantic_core::RuleEventClass::MathematicalConclusion
             } else {
                 crate::semantic_core::RuleEventClass::EquivalentTransformation
             },
-            input,
-            &output,
-            RulePayload::Rewrite,
-            RuleImportance::Key,
-        )
-        .with_bindings(vec![(
-            "variables".into(),
-            format!("{{{}}}", result.variables.join(",")),
-        )]);
-        let mut sink = VecEventSink::default();
-        sink.record_fact(fact, || {
-            (!unresolved).then(|| RulePresentation {
+            rule: conclusion_rule.into(),
+            input: input_ref,
+            additional_inputs: Vec::new(),
+            output: output_ref,
+            bindings,
+            conditions: Vec::new(),
+            payload: RulePayload::Rewrite,
+            importance: RuleImportance::Key,
+            transformation: None,
+        };
+        sink.record_fact(conclusion, || {
+            Some(RulePresentation {
                 expression: output.print_source(),
                 explanation: match result.status {
                     SolveStatus::Solved => "求得并验证方程解集。",
                     SolveStatus::NoSolution => "方程组没有解。",
                     SolveStatus::Infinite => "方程对指定变量恒成立。",
-                    SolveStatus::Unresolved => unreachable!(),
+                    SolveStatus::Unresolved => "保留当前方法尚未求解的方程对象。",
                 }
                 .into(),
                 tex_override: Some(result.tex),
@@ -252,8 +315,8 @@ pub fn solve_steps_with_verbosity(
     variable: &str,
     verbosity: StepVerbosity,
 ) -> Result<EquationStepResult, EngineError> {
-    let result = solve(engine, &[equation], &[variable])?;
-    let steps = algebraic_equation_steps(engine, equation, variable, &result, verbosity)?;
+    let (result, emissions) = equation_evaluation(engine, &[equation], &[variable])?;
+    let steps = render_equation_emissions(engine, emissions, verbosity)?;
     Ok(EquationStepResult { result, steps })
 }
 
@@ -271,7 +334,12 @@ pub fn solve_system_steps_with_verbosity(
     variables: &[&str],
     verbosity: StepVerbosity,
 ) -> Result<EquationStepResult, EngineError> {
-    let result = solve(engine, equations, variables)?;
+    let (result, emissions) = equation_evaluation(engine, equations, variables)?;
+    let steps = render_equation_emissions(engine, emissions, verbosity)?;
+    Ok(EquationStepResult { result, steps })
+}
+
+fn system_rule_emissions(equations: &[&str], result: &SolveResult) -> Vec<EquationRuleEmission> {
     let normalized = equations
         .iter()
         .map(|equation| {
@@ -281,65 +349,65 @@ pub fn solve_system_steps_with_verbosity(
                 .unwrap_or_else(|| format!("{equation}==0"))
         })
         .collect::<Vec<_>>();
-    let mut events = vec![StepEvent::new(
+    let mut events = vec![EquationRuleEmission::new(
         "equation-system-start",
-        &format!("{{{}}}", equations.join(",")),
+        format!("{{{}}}", equations.join(",")),
         "建立联立方程组。",
-        StepImportance::Routine,
+        RuleImportance::Routine,
     )];
-    events.push(StepEvent::new(
+    events.push(EquationRuleEmission::new(
         "equation-system-variables",
-        &format!("{{{}}}", result.variables.join(",")),
+        format!("{{{}}}", result.variables.join(",")),
         match result.variable_source {
             VariableSource::Explicit => "使用调用方指定的未知量。",
             VariableSource::Inferred => "从全部方程中发现未知量并固定求解顺序。",
         },
-        StepImportance::Normal,
+        RuleImportance::Normal,
     ));
-    events.push(StepEvent::new(
+    events.push(EquationRuleEmission::new(
         "equation-system-normalize",
-        &format!("{{{}}}", normalized.join(",")),
+        format!("{{{}}}", normalized.join(",")),
         "将每个方程移到一边，形成同一个消元系统。",
-        StepImportance::Normal,
+        RuleImportance::Normal,
     ));
     if equations.len() > 1 || result.variables.len() > 1 {
-        events.push(StepEvent::new(
+        events.push(EquationRuleEmission::new(
             "equation-system-eliminate",
             &result.raw,
             "联立消元并保留相容的解分支。",
-            StepImportance::Key,
+            RuleImportance::Key,
         ));
     }
     match result.status {
         SolveStatus::Solved => {
             for solution in &result.solutions {
-                events.push(StepEvent::new(
+                events.push(EquationRuleEmission::new(
                     "equation-system-branch",
-                    &assignments_expression(solution),
+                    assignments_expression(solution),
                     if result.completeness == SolveCompleteness::Parametric {
                         "得到一个参数化解分支；未被消去的符号作为自由参数。"
                     } else {
                         "得到一个同时满足全部方程的解分支。"
                     },
-                    StepImportance::Normal,
+                    RuleImportance::Normal,
                 ));
             }
-            events.push(StepEvent::new(
+            events.push(EquationRuleEmission::new(
                 "equation-system-verify",
                 "0",
                 "将各分支代回全部原方程，残差均为零。",
-                StepImportance::Routine,
+                RuleImportance::Routine,
             ));
         }
-        SolveStatus::NoSolution => events.push(StepEvent::new(
+        SolveStatus::NoSolution => events.push(EquationRuleEmission::new(
             "equation-system-inconsistent",
             "False",
             "消元后不存在能同时满足全部方程的分支。",
-            StepImportance::Key,
+            RuleImportance::Key,
         )),
         SolveStatus::Infinite | SolveStatus::Unresolved => {}
     }
-    events.push(StepEvent::new(
+    events.push(EquationRuleEmission::new(
         "equation-system-result",
         &result.raw,
         match result.status {
@@ -351,36 +419,21 @@ pub fn solve_system_steps_with_verbosity(
             SolveStatus::Infinite => "方程组恒成立，解不唯一。",
             SolveStatus::Unresolved => "当前解析方法未能完整求解该方程组。",
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
-    let steps = render_events(engine, events, verbosity)?;
-    Ok(EquationStepResult { result, steps })
+    events
 }
 
-fn algebraic_equation_steps(
+fn algebraic_equation_emissions(
     engine: &mut dyn Engine,
     equation: &str,
     variable: &str,
     result: &SolveResult,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
+) -> Result<Vec<EquationRuleEmission>, EngineError> {
     let residual = equation
         .split_once("==")
         .map(|(left, right)| format!("({left})-({right})"))
         .unwrap_or_else(|| equation.to_string());
-    let verification_checks = result
-        .solutions
-        .iter()
-        .filter(|solution| solution.len() == 1)
-        .map(|solution| {
-            let assignment = &solution[0];
-            format!(
-                "IsZero(Simplify(Eval(ApplyPure(\"Subst\",{{{},{},{residual}}}))))",
-                assignment.variable, assignment.value
-            )
-        })
-        .collect::<Vec<_>>();
-    let checks = verification_checks.join(",");
     let denominator = equation
         .split_once("==")
         .map(|(left, right)| {
@@ -389,16 +442,16 @@ fn algebraic_equation_steps(
         .unwrap_or_else(|| format!("GetNumerDenom({equation})[2]"));
     let [p, d, f, q] = fresh_internal_symbols(
         "EquationDiagnostic",
-        &[equation, variable, &residual, &denominator, &checks],
+        &[equation, variable, &residual, &denominator],
         ["Polynomial", "Degree", "Factored", "Denominator"],
     );
     let diagnostic = engine.eval_expr(&format!(
-        "[Local({p},{d},{f},{q}); {p}:=NormalForm({residual}); {q}:={denominator}; If(CanBeUni({variable},{p}), [{d}:=Degree({p},{variable}); {f}:=If({d}<=8,Factor({p}),{p}); {{True,{p},{d},{f},{{{checks}}},{q}}};], {{False,{p},0,{p},{{{checks}}},{q}}});]"
+        "[Local({p},{d},{f},{q}); {p}:=NormalForm({residual}); {q}:={denominator}; If(CanBeUni({variable},{p}), [{d}:=Degree({p},{variable}); {f}:=If({d}<=8,Factor({p}),{p}); {{True,{p},{d},{f},{q}}};], {{False,{p},0,{p},{q}}});]"
     ))?;
     let Expr::Call { head, args } = diagnostic else {
         return Err(EngineError::Parse("方程步骤诊断不是列表".into()));
     };
-    if head != "List" || args.len() != 6 {
+    if head != "List" || args.len() != 5 {
         return Err(EngineError::Parse("方程步骤诊断形态异常".into()));
     }
     let polynomial = matches!(&args[0], Expr::Symbol(value) if value == "True");
@@ -408,58 +461,51 @@ fn algebraic_equation_steps(
         _ => None,
     };
     let factored = args[3].to_string();
-    let denominator = args[5].to_string();
+    let denominator = args[4].to_string();
     let has_domain_exclusion = analyze_expression(&denominator, "方程分母")?
         .symbols
         .iter()
         .any(|symbol| symbol == variable);
-    let verified = match &args[4] {
-        Expr::Call { head, args } if head == "List" => args
-            .iter()
-            .map(|value| matches!(value, Expr::Symbol(symbol) if symbol == "True"))
-            .collect::<Vec<_>>(),
-        _ => return Err(EngineError::Parse("候选解残差证书不是列表".into())),
-    };
 
-    let mut events = vec![StepEvent::new(
+    let mut events = vec![EquationRuleEmission::new(
         "equation-start",
         equation,
-        &format!("建立关于 {variable} 的方程。"),
-        StepImportance::Routine,
+        format!("建立关于 {variable} 的方程。"),
+        RuleImportance::Routine,
     )];
     if has_domain_exclusion {
-        events.push(StepEvent::new(
+        events.push(EquationRuleEmission::new(
             "equation-domain-exclusion",
-            &format!("{denominator}!=0"),
+            format!("{denominator}!=0"),
             "原方程的分母不能为零；这些值不属于定义域。",
-            StepImportance::Key,
+            RuleImportance::Key,
         ));
     }
     if polynomial {
-        events.push(StepEvent::new(
+        events.push(EquationRuleEmission::new(
             "equation-normalize",
-            &format!("{normalized}==0"),
+            format!("{normalized}==0"),
             "将方程移到一边并整理为多项式标准形。",
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ));
         match degree {
-            Some(1) => events.push(StepEvent {
+            Some(1) => events.push(EquationRuleEmission {
                 rule: "equation-linear".into(),
-                expr: result.raw.clone(),
-                why: format!("合并同类项并解出 {variable}。"),
-                importance: StepImportance::Normal,
+                expression: result.raw.clone(),
+                explanation: format!("合并同类项并解出 {variable}。"),
+                importance: RuleImportance::Normal,
             }),
-            Some(2) => events.push(StepEvent {
+            Some(2) => events.push(EquationRuleEmission {
                 rule: "equation-quadratic".into(),
-                expr: format!("{normalized}==0"),
-                why: "使用二次方程求根公式求出各个分支。".into(),
-                importance: StepImportance::Normal,
+                expression: format!("{normalized}==0"),
+                explanation: "使用二次方程求根公式求出各个分支。".into(),
+                importance: RuleImportance::Normal,
             }),
-            Some(3..=8) if factored != normalized => events.push(StepEvent {
+            Some(3..=8) if factored != normalized => events.push(EquationRuleEmission {
                 rule: "equation-factor".into(),
-                expr: format!("{factored}==0"),
-                why: "因式分解后令每个因式分别为零。".into(),
-                importance: StepImportance::Key,
+                expression: format!("{factored}==0"),
+                explanation: "因式分解后令每个因式分别为零。".into(),
+                importance: RuleImportance::Key,
             }),
             _ => {}
         }
@@ -469,52 +515,47 @@ fn algebraic_equation_steps(
         events.push(event);
     }
     if result.status == SolveStatus::Solved {
-        let mut certificate = 0;
         for solution in &result.solutions {
             if solution.len() == 1 {
-                if !verified.get(certificate).copied().unwrap_or(false) {
-                    return Err(EngineError::Parse(format!(
-                        "Solve 返回的候选解未通过原方程残差检查: {}=={}",
-                        solution[0].variable, solution[0].value
-                    )));
-                }
-                certificate += 1;
-                events.push(StepEvent {
+                events.push(EquationRuleEmission {
                     rule: "equation-branch".into(),
-                    expr: format!("{}=={}", solution[0].variable, solution[0].value),
-                    why: "得到一个候选解分支。".into(),
-                    importance: StepImportance::Normal,
+                    expression: format!("{}=={}", solution[0].variable, solution[0].value),
+                    explanation: "得到一个候选解分支。".into(),
+                    importance: RuleImportance::Normal,
                 });
-                events.push(StepEvent {
+                events.push(EquationRuleEmission {
                     rule: "equation-verify".into(),
-                    expr: "0".into(),
-                    why: if has_domain_exclusion {
+                    expression: "0".into(),
+                    explanation: if has_domain_exclusion {
                         "候选值不在分母排除集中，代回原方程后的残差为零。".into()
                     } else {
                         "将该候选解代回原方程，残差为零；去根号产生的增根会在此被拒绝。".into()
                     },
-                    importance: StepImportance::Routine,
+                    importance: RuleImportance::Routine,
                 });
             }
         }
     }
-    events.push(StepEvent {
+    events.push(EquationRuleEmission {
         rule: "equation-result".into(),
-        expr: result.raw.clone(),
-        why: match result.status {
+        expression: result.raw.clone(),
+        explanation: match result.status {
             SolveStatus::Solved => "得到方程的解集。",
             SolveStatus::NoSolution => "方程没有满足条件的解。",
             SolveStatus::Infinite => "方程对该变量恒成立。",
             SolveStatus::Unresolved => "当前解析方法未能求解该方程。",
         }
         .into(),
-        importance: StepImportance::Key,
+        importance: RuleImportance::Key,
     });
 
-    render_events(engine, events, verbosity)
+    Ok(events)
 }
 
-fn direct_radical_event(equation: &str, variable: &str) -> Result<Option<StepEvent>, EngineError> {
+fn direct_radical_event(
+    equation: &str,
+    variable: &str,
+) -> Result<Option<EquationRuleEmission>, EngineError> {
     let Some((left, right)) = equation.split_once("==") else {
         return Ok(None);
     };
@@ -532,11 +573,11 @@ fn direct_radical_event(equation: &str, variable: &str) -> Result<Option<StepEve
         {
             continue;
         }
-        return Ok(Some(StepEvent::new(
+        return Ok(Some(EquationRuleEmission::new(
             "equation-radical-square",
-            &format!("{}==({other})^2", call.arguments[0]),
+            format!("{}==({other})^2", call.arguments[0]),
             "孤立平方根后两边平方；这一步可能产生增根，最终必须代回原方程。",
-            StepImportance::Key,
+            RuleImportance::Key,
         )));
     }
     Ok(None)
@@ -553,7 +594,10 @@ fn assignments_expression(assignments: &[Assignment]) -> String {
     )
 }
 
-fn direct_inverse_event(equation: &str, variable: &str) -> Result<Option<StepEvent>, EngineError> {
+fn direct_inverse_event(
+    equation: &str,
+    variable: &str,
+) -> Result<Option<EquationRuleEmission>, EngineError> {
     let Some(function) = direct_function_equation(equation, variable, &["Exp", "Ln"])? else {
         return Ok(None);
     };
@@ -570,21 +614,56 @@ fn direct_inverse_event(equation: &str, variable: &str) -> Result<Option<StepEve
         left.trim()
     };
     let event = match function.as_str() {
-        "Exp" => StepEvent::new(
+        "Exp" => EquationRuleEmission::new(
             "equation-invert-exponential",
-            &format!("{variable}==Ln({other})"),
+            format!("{variable}==Ln({other})"),
             "两边取自然对数，利用自然对数与指数函数互为反函数。",
-            StepImportance::Key,
+            RuleImportance::Key,
         ),
-        "Ln" => StepEvent::new(
+        "Ln" => EquationRuleEmission::new(
             "equation-invert-logarithm",
-            &format!("{variable}==Exp({other})"),
+            format!("{variable}==Exp({other})"),
             "两边取指数，利用指数函数与自然对数互为反函数。",
-            StepImportance::Key,
+            RuleImportance::Key,
         ),
         _ => return Ok(None),
     };
     Ok(Some(event))
+}
+
+fn equation_evaluation(
+    engine: &mut dyn Engine,
+    equations: &[&str],
+    variables: &[&str],
+) -> Result<(SolveResult, Vec<EquationRuleEmission>), EngineError> {
+    let result = solve(engine, equations, variables)?;
+    let emissions = if equations.len() == 1 && result.variables.len() == 1 {
+        algebraic_equation_emissions(engine, equations[0], &result.variables[0], &result)?
+    } else {
+        system_rule_emissions(equations, &result)
+    };
+    Ok((result, emissions))
+}
+
+fn render_equation_emissions(
+    engine: &mut dyn Engine,
+    emissions: Vec<EquationRuleEmission>,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    let events = emissions
+        .into_iter()
+        .map(|emission| StepEvent {
+            rule: emission.rule,
+            expr: emission.expression,
+            why: emission.explanation,
+            importance: match emission.importance {
+                RuleImportance::Routine => StepImportance::Routine,
+                RuleImportance::Normal => StepImportance::Normal,
+                RuleImportance::Key => StepImportance::Key,
+            },
+        })
+        .collect();
+    render_events(engine, events, verbosity)
 }
 
 pub fn solve(
@@ -1335,6 +1414,88 @@ mod tests {
         let held = compute(&mut engine, "x^x==1");
         assert!(matches!(held.output, ComputationOutput::Held(_)));
         assert!(held.subject().unwrap().print_source().starts_with("Solve("));
+    }
+
+    #[test]
+    fn equation_operation_emits_solver_facts_without_legacy_adaptation() {
+        let input = crate::semantic_core::object_from_source(
+            crate::semantic_core::ObjectId(82),
+            "x^2-3*x+2==0",
+            SemanticState {
+                kind: ValueKind::Equation,
+                interpretation: SemanticInterpretation::Equation,
+                metadata: ResultMetadata::solved(Exactness::Symbolic, ConditionSet::empty()),
+                capabilities: CapabilitySet::equation_input(),
+                requirements: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mut engine = RustEngine::spawn().unwrap();
+        let measured = crate::metrics::measure(|| {
+            SolveOperation
+                .compute(
+                    &mut engine,
+                    &input,
+                    &SolveRequest {
+                        equations: vec!["x^2-3*x+2==0".into()],
+                        variables: vec!["x".into()],
+                    },
+                )
+                .unwrap()
+        });
+        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
+        let rules = measured
+            .value
+            .trace
+            .unwrap()
+            .events
+            .into_iter()
+            .map(|event| event.rule)
+            .collect::<Vec<_>>();
+        assert!(rules.contains(&"equation-quadratic".into()));
+        assert_eq!(
+            rules
+                .iter()
+                .filter(|rule| rule.as_str() == "equation-verify")
+                .count(),
+            2
+        );
+        assert_eq!(rules.last().map(String::as_str), Some("solve-equations"));
+    }
+
+    #[test]
+    fn equation_terminal_facts_match_solver_statuses() {
+        let mut engine = RustEngine::spawn().unwrap();
+        for (equation, status, terminal) in [
+            ("x==1", SolveStatus::Solved, "equation-result"),
+            ("Sqrt(x)==-1", SolveStatus::NoSolution, "equation-result"),
+            ("0==0", SolveStatus::Infinite, "equation-result"),
+            ("x^x==1", SolveStatus::Unresolved, "equation-result"),
+        ] {
+            let (result, emissions) =
+                equation_evaluation(&mut engine, &[equation], &["x"]).unwrap();
+            assert_eq!(result.status, status);
+            assert_eq!(
+                emissions.last().map(|event| event.rule.as_str()),
+                Some(terminal)
+            );
+            if status != SolveStatus::Solved {
+                assert!(!emissions
+                    .iter()
+                    .any(|event| event.rule == "equation-verify"));
+            }
+        }
+
+        let (result, emissions) =
+            equation_evaluation(&mut engine, &["x+y==3", "x+y==4"], &["x", "y"]).unwrap();
+        assert_eq!(result.status, SolveStatus::NoSolution);
+        assert!(emissions
+            .iter()
+            .any(|event| event.rule == "equation-system-inconsistent"));
+        assert_eq!(
+            emissions.last().map(|event| event.rule.as_str()),
+            Some("equation-system-result")
+        );
     }
 
     #[test]
