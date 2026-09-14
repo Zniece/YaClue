@@ -2,9 +2,9 @@
 
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::validate_symbol;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssumptionFact {
     Real,

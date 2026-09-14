@@ -337,3 +337,28 @@ fn unified_plain_inputs_expose_the_structured_computation_exit() {
         );
     }
 }
+
+#[test]
+fn product_session_preserves_assumptions_and_recovers_after_invalid_input() {
+    let mut engine = RustEngineProxy::spawn().unwrap();
+    processing::assumptions::assume(
+        &mut engine,
+        "x",
+        processing::assumptions::AssumptionFact::Positive,
+    )
+    .unwrap();
+
+    let assumed =
+        process_expression_with_engine(request("Simplify(Sqrt(x^2))", false), &mut engine).unwrap();
+    assert_eq!(assumed.expression, "x");
+
+    assert!(process_expression_with_engine(request("D(x", false), &mut engine).is_err());
+    let recovered =
+        process_expression_with_engine(request("D(x)(x^2)", false), &mut engine).unwrap();
+    assert_eq!(recovered.expression, "2*x");
+
+    processing::assumptions::clear_assumptions(&mut engine).unwrap();
+    let cleared =
+        process_expression_with_engine(request("Simplify(Sqrt(x^2))", false), &mut engine).unwrap();
+    assert_ne!(cleared.expression, "x");
+}

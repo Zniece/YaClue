@@ -21,6 +21,11 @@ fn json_lines_is_persistent_structured_and_recovers_after_bad_input() {
         json!({"expression":"Gradient(x^2+y^2,{x,y},{1,-2})","steps":false,"verbosity":"standard"}),
         json!({"expression":"ScalarLineIntegral(x,{x,y},{t,0},t,0,1)","steps":false,"verbosity":"standard"}),
         json!({"expression":"ScalarSurfaceIntegral(1,{x,y,z},{u,v,0},{u,v},{0,0},{1,1})","steps":false,"verbosity":"standard"}),
+        json!({"operation":"assume","symbol":"x","fact":"positive"}),
+        json!({"expression":"Simplify(Sqrt(x^2))","steps":false,"verbosity":"standard"}),
+        json!({"operation":"list_assumptions"}),
+        json!({"operation":"clear_assumptions"}),
+        json!({"expression":"Simplify(Sqrt(x^2))","steps":false,"verbosity":"standard"}),
     ];
     {
         let stdin = child.stdin.as_mut().expect("child stdin");
@@ -82,5 +87,13 @@ fn json_lines_is_persistent_structured_and_recovers_after_bad_input() {
     assert_eq!(rows[7]["analysis"], json!([2]));
     assert_eq!(rows[8]["analysis"]["integrand_verified"], true);
     assert_eq!(rows[9]["analysis"]["integrand_verified"], true);
+    assert_eq!(rows[10]["symbol"], "x");
+    assert_eq!(rows[10]["fact"], "positive");
+    assert_eq!(rows[11]["expression"], "x");
+    assert!(rows[12]["assumptions"]
+        .as_array()
+        .is_some_and(|items| !items.is_empty()));
+    assert_eq!(rows[13]["cleared"], true);
+    assert_ne!(rows[14]["expression"], "x");
     assert!(rows.iter().all(|row| row.get("data").is_none()));
 }

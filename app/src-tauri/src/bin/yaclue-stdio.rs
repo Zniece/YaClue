@@ -1,11 +1,24 @@
 use app_lib::{process_expression_with_engine, ProcessExpressionRequest};
 use processing::engine::{ErrorCode, ErrorResponse, RustEngineProxy};
-use serde::Serialize;
+use processing::{assumptions, assumptions::AssumptionFact};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::io::{self, BufRead, Write};
 
 #[derive(Serialize)]
 struct StdioError<'a> {
     error: &'a ErrorResponse,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+enum ControlRequest {
+    Assume {
+        symbol: String,
+        fact: AssumptionFact,
+    },
+    ClearAssumptions,
+    ListAssumptions,
 }
 
 fn write_json(output: &mut impl Write, value: &impl Serialize) -> io::Result<()> {
@@ -29,6 +42,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let is_json_request = input
             .strip_prefix('{')
             .is_some_and(|rest| rest.trim_start().starts_with('"'));
+        if is_json_request {
+            if let Ok(control) = serde_json::from_str::<ControlRequest>(input) {
+                let response = match control {
+                    ControlRequest::Assume { symbol, fact } => {
+                        assumptions::assume(&mut engine, &symbol, fact)
+                            .map_err(|error| error.response())
+                    }
+                    ControlRequest::ClearAssumptions => {
+                        match assumptions::clear_assumptions(&mut engine) {
+                            Ok(()) => {
+                                write_json(&mut stdout, &json!({ "cleared": true }))?;
+                                continue;
+                            }
+                            Err(error) => Err(error.response()),
+                        }
+                    }
+                    ControlRequest::ListAssumptions => {
+                        match assumptions::list_assumptions(&mut engine) {
+                            Ok(assumptions) => {
+                                write_json(&mut stdout, &json!({ "assumptions": assumptions }))?;
+                                continue;
+                            }
+                            Err(error) => Err(error.response()),
+                        }
+                    }
+                };
+                match response {
+                    Ok(state) => write_json(&mut stdout, &state)?,
+                    Err(error) => write_json(&mut stdout, &StdioError { error: &error })?,
+                }
+                continue;
+            }
+        }
         let request = if is_json_request {
             match serde_json::from_str(input) {
                 Ok(request) => request,
