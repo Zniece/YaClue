@@ -129,7 +129,7 @@ function renderSummary(result) {
 }
 
 function localizedResultLabel(result) {
-  return hasTranslation(result.title_key) ? t(result.title_key) : result.title;
+  return hasTranslation(result.title_key) ? t(result.title_key) : t("result");
 }
 
 function renderSemantic(semantic, outcome) {

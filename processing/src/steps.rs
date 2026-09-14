@@ -12,13 +12,9 @@ use std::collections::BTreeMap;
 use crate::messages::MessageRef;
 use crate::semantic_core::{ExpressionPath, ObjectId};
 
-fn event_message_ref(
-    namespace: &str,
-    event: &crate::semantic_core::RuleEvent,
-    fallback: &str,
-) -> MessageRef {
+fn event_message_ref(namespace: &str, event: &crate::semantic_core::RuleEvent) -> MessageRef {
     event.bindings.iter().fold(
-        MessageRef::new(format!("{namespace}.{}", event.rule), fallback),
+        MessageRef::new(format!("{namespace}.{}", event.rule)),
         |message, (name, value)| message.arg(name, value),
     )
 }
@@ -55,6 +51,7 @@ pub struct MathematicalConclusion {
     pub kind: ConclusionKind,
     pub expression: String,
     pub tex: String,
+    #[serde(skip_serializing)]
     pub message: String,
     pub message_ref: MessageRef,
 }
@@ -67,6 +64,7 @@ pub struct MathematicalAnalysis {
     pub rule: String,
     pub expression: String,
     pub tex: String,
+    #[serde(skip_serializing)]
     pub message: String,
     pub message_ref: MessageRef,
     pub importance: StepImportance,
@@ -87,6 +85,7 @@ pub struct Step {
     /// 表达式(yacas 形式)
     pub expr: String,
     /// 声明式文案(来自 Steps'Explain;空串 = 未登记键,前端回退)
+    #[serde(skip_serializing)]
     pub why: String,
     pub message_ref: MessageRef,
     /// LaTeX(已去 $...$ 包裹,直接喂 KaTeX)
@@ -169,7 +168,7 @@ pub(crate) fn render_events(
             rule: event.rule.clone(),
             expr: event.expr,
             why: event.why.clone(),
-            message_ref: MessageRef::new(format!("steps.{}", event.rule), event.why.clone()),
+            message_ref: MessageRef::new(format!("steps.{}", event.rule)),
             tex: strip_tex_delimiters(&tex),
             importance: event.importance,
         })
@@ -230,7 +229,7 @@ pub fn render_rule_trace(
             rule: event.rule.clone(),
             expr: presentation.expression.clone(),
             why: presentation.explanation.clone(),
-            message_ref: event_message_ref("steps", event, &presentation.explanation),
+            message_ref: event_message_ref("steps", event),
             tex: presentation.tex_override.clone().unwrap_or_else(|| {
                 strip_tex_delimiters(&rendered.next().expect("one TeX result per expression"))
             }),
@@ -266,7 +265,7 @@ pub fn render_rule_analyses(
                 expression: presentation.expression.clone(),
                 tex: render_product_tex(engine, &presentation.expression),
                 message: presentation.explanation.clone(),
-                message_ref: event_message_ref("analyses", event, &presentation.explanation),
+                message_ref: event_message_ref("analyses", event),
                 importance: match event.importance {
                     RuleImportance::Routine => StepImportance::Routine,
                     RuleImportance::Normal => StepImportance::Normal,
@@ -331,7 +330,7 @@ pub fn render_rule_trace_in_root(
             rule: event.rule.clone(),
             expr: after.clone(),
             why: presentation.explanation.clone(),
-            message_ref: event_message_ref("steps", event, &presentation.explanation),
+            message_ref: event_message_ref("steps", event),
             tex: after_tex,
             importance: match event.importance {
                 RuleImportance::Routine => StepImportance::Routine,

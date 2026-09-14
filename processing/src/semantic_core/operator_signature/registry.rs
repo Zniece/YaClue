@@ -248,7 +248,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Calculus,
         execution_handler: crate::operator_handlers::execute_calculus_adapter,
         product_kind: "derivative",
-        title: "导数",
     },
     OperatorDescriptor {
         id: OperatorId::Factor,
@@ -262,7 +261,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::AlgebraTransform,
         execution_handler: crate::operator_handlers::execute_algebra_transform_adapter,
         product_kind: "algebra",
-        title: "代数变换",
     },
     OperatorDescriptor {
         id: OperatorId::AlgebraTransform,
@@ -276,7 +274,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::AlgebraTransform,
         execution_handler: crate::operator_handlers::execute_algebra_transform_adapter,
         product_kind: "algebra",
-        title: "代数变换",
     },
     OperatorDescriptor {
         id: OperatorId::AlgebraTransform,
@@ -290,7 +287,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::AlgebraTransform,
         execution_handler: crate::operator_handlers::execute_algebra_transform_adapter,
         product_kind: "algebra",
-        title: "部分分式分解",
     },
     OperatorDescriptor {
         id: OperatorId::Integral,
@@ -304,7 +300,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Calculus,
         execution_handler: crate::operator_handlers::execute_calculus_adapter,
         product_kind: "integral",
-        title: "积分",
     },
     OperatorDescriptor {
         id: OperatorId::Substitute,
@@ -318,7 +313,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Substitute,
         execution_handler: crate::operator_handlers::execute_substitution_adapter,
         product_kind: "substitution",
-        title: "变量替换",
     },
     OperatorDescriptor {
         id: OperatorId::Limit,
@@ -332,7 +326,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Calculus,
         execution_handler: crate::operator_handlers::execute_calculus_adapter,
         product_kind: "limit",
-        title: "极限",
     },
     OperatorDescriptor {
         id: OperatorId::Taylor,
@@ -346,7 +339,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Taylor,
         execution_handler: crate::operator_handlers::execute_taylor_adapter,
         product_kind: "taylor",
-        title: "Taylor 多项式",
     },
     OperatorDescriptor {
         id: OperatorId::Solve,
@@ -360,7 +352,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::EquationSolve,
         execution_handler: crate::operator_handlers::execute_equation_solve_adapter,
         product_kind: "equation",
-        title: "方程",
     },
     OperatorDescriptor {
         id: OperatorId::MatrixTransform,
@@ -374,7 +365,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MatrixUnary,
         execution_handler: crate::operator_handlers::execute_matrix_unary_adapter,
         product_kind: "matrix",
-        title: "线性代数",
     },
     OperatorDescriptor {
         id: OperatorId::MatrixSolve,
@@ -388,7 +378,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MatrixSolve,
         execution_handler: crate::operator_handlers::execute_matrix_solve_adapter,
         product_kind: "matrix",
-        title: "线性方程组",
     },
     OperatorDescriptor {
         id: OperatorId::MatrixAnalyze,
@@ -410,7 +399,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MatrixUnary,
         execution_handler: crate::operator_handlers::execute_matrix_unary_adapter,
         product_kind: "matrix",
-        title: "线性代数",
     },
     OperatorDescriptor {
         id: OperatorId::MatrixDecompose,
@@ -430,7 +418,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MatrixUnary,
         execution_handler: crate::operator_handlers::execute_matrix_unary_adapter,
         product_kind: "matrix",
-        title: "线性代数",
     },
     OperatorDescriptor {
         id: OperatorId::FactorProjection,
@@ -444,7 +431,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::FactorProjection,
         execution_handler: crate::operator_handlers::execute_factor_projection_adapter,
         product_kind: "matrix",
-        title: "矩阵因子",
     },
     OperatorDescriptor {
         id: OperatorId::OdeSolve,
@@ -458,7 +444,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::OdeSolve,
         execution_handler: crate::operator_handlers::execute_ode_solve_adapter,
         product_kind: "ode",
-        title: "常微分方程",
     },
     OperatorDescriptor {
         id: OperatorId::Approximate,
@@ -472,7 +457,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Approximate,
         execution_handler: crate::operator_handlers::execute_approximate_adapter,
         product_kind: "numeric",
-        title: "数值近似",
     },
     OperatorDescriptor {
         id: OperatorId::Sum,
@@ -486,7 +470,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Series,
         execution_handler: crate::operator_handlers::execute_series_adapter,
         product_kind: "series",
-        title: "级数",
     },
     OperatorDescriptor {
         id: OperatorId::ImproperIntegral,
@@ -500,7 +483,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::DefinedIntegral,
         execution_handler: crate::operator_handlers::execute_improper_integral_adapter,
         product_kind: "defined_object",
-        title: "反常积分",
     },
     OperatorDescriptor {
         id: OperatorId::PrincipalValueIntegral,
@@ -514,7 +496,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::DefinedIntegral,
         execution_handler: crate::operator_handlers::execute_principal_value_integral_adapter,
         product_kind: "defined_object",
-        title: "Cauchy 主值",
     },
     OperatorDescriptor {
         id: OperatorId::DoubleIntegral,
@@ -528,7 +509,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MultipleIntegral,
         execution_handler: crate::operator_handlers::execute_double_integral_adapter,
         product_kind: "double_integral",
-        title: "二重积分",
     },
     OperatorDescriptor {
         id: OperatorId::PolarIntegral,
@@ -542,7 +522,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MultipleIntegral,
         execution_handler: crate::operator_handlers::execute_polar_integral_adapter,
         product_kind: "polar_integral",
-        title: "极坐标积分",
     },
     OperatorDescriptor {
         id: OperatorId::OdeSolveNumeric,
@@ -556,7 +535,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::NumericOde,
         execution_handler: crate::operator_handlers::execute_numeric_ode_adapter,
         product_kind: "numeric_ode",
-        title: "常微分方程数值解",
     },
     OperatorDescriptor {
         id: OperatorId::FindRoot,
@@ -570,7 +548,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::NumericRoot,
         execution_handler: crate::operator_handlers::execute_numeric_root_adapter,
         product_kind: "numeric_root",
-        title: "数值根",
     },
     OperatorDescriptor {
         id: OperatorId::Plot,
@@ -584,7 +561,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::PlotEffect,
         execution_handler: crate::operator_handlers::execute_plot_effect_adapter,
         product_kind: "plot",
-        title: "函数图像",
     },
     OperatorDescriptor {
         id: OperatorId::Extrema,
@@ -598,7 +574,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Extrema,
         execution_handler: crate::operator_handlers::execute_extrema_adapter,
         product_kind: "extrema",
-        title: "无约束极值",
     },
     OperatorDescriptor {
         id: OperatorId::Lagrange,
@@ -612,7 +587,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::Extrema,
         execution_handler: crate::operator_handlers::execute_lagrange_adapter,
         product_kind: "lagrange",
-        title: "约束极值",
     },
     OperatorDescriptor {
         id: OperatorId::MultivariateDifferential,
@@ -626,7 +600,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MultivariateDifferential,
         execution_handler: crate::operator_handlers::execute_multivariate_adapter,
         product_kind: "multivariate",
-        title: "多元微分",
     },
     OperatorDescriptor {
         id: OperatorId::MultivariateDifferential,
@@ -640,7 +613,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::MultivariateDifferential,
         execution_handler: crate::operator_handlers::execute_multivariate_adapter,
         product_kind: "multivariate",
-        title: "方向导数",
     },
     OperatorDescriptor {
         id: OperatorId::LineIntegral,
@@ -654,7 +626,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::LineIntegral,
         execution_handler: crate::operator_handlers::execute_line_integral_adapter,
         product_kind: "line_integral",
-        title: "线积分",
     },
     OperatorDescriptor {
         id: OperatorId::SurfaceIntegral,
@@ -668,7 +639,6 @@ pub const OPERATOR_DESCRIPTORS: &[OperatorDescriptor] = &[
         route: ObjectNativeRoute::SurfaceIntegral,
         execution_handler: crate::operator_handlers::execute_surface_integral_adapter,
         product_kind: "surface_integral",
-        title: "曲面积分",
     },
 ];
 

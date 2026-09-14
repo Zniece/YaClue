@@ -246,7 +246,6 @@ pub struct OperatorDescriptor {
     pub route: ObjectNativeRoute,
     pub execution_handler: OperatorExecutionHandler,
     pub product_kind: &'static str,
-    pub title: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,7 +268,7 @@ impl OperatorDescriptor {
         &self,
         has_native_child: bool,
         completed: bool,
-    ) -> Option<(&'static str, &'static str)> {
+    ) -> Option<&'static str> {
         let visible = match self.route {
             ObjectNativeRoute::PlotEffect | ObjectNativeRoute::Extrema => true,
             ObjectNativeRoute::AlgebraTransform => !has_native_child && completed,
@@ -278,6 +277,6 @@ impl OperatorDescriptor {
             | ObjectNativeRoute::Taylor => false,
             _ => !has_native_child,
         };
-        visible.then_some((self.product_kind, self.title))
+        visible.then_some(self.product_kind)
     }
 }

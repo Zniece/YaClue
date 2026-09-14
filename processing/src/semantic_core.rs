@@ -105,7 +105,7 @@ mod tests {
             operator_descriptor("Plot")
                 .unwrap()
                 .product_presentation(true, true),
-            Some(("plot", "函数图像"))
+            Some("plot")
         );
         assert_eq!(
             operator_descriptor("D")

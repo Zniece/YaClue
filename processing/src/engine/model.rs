@@ -245,7 +245,7 @@ impl ErrorResponse {
         };
         Self {
             code,
-            message_ref: crate::messages::MessageRef::new(key, message.clone()),
+            message_ref: crate::messages::MessageRef::with_fallback(key, message.clone()),
             message,
             retryable,
         }

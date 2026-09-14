@@ -17,7 +17,6 @@ fn parse_verbosity(value: &str) -> Result<StepVerbosity, ErrorResponse> {
 
 struct DispatchExpressionResult {
     kind: String,
-    title: String,
     expression: String,
     tex: String,
     steps: Vec<Step>,
@@ -36,12 +35,10 @@ struct DispatchExpressionResult {
 
 fn unified_result(
     kind: &str,
-    title: &str,
     result: processing::composition::CompositionResult,
 ) -> Result<DispatchExpressionResult, ErrorResponse> {
     Ok(DispatchExpressionResult {
         kind: kind.into(),
-        title: title.into(),
         expression: result.value,
         tex: result.tex,
         steps: result.steps,
@@ -83,7 +80,7 @@ fn dispatch_expression_with_engine(
         result.steps.clear();
     }
     let classification = processing::composition::classify_product(elaborated, &result);
-    unified_result(classification.kind, classification.title, result)
+    unified_result(classification.kind, result)
 }
 
 pub fn process_expression_with_engine(
@@ -98,7 +95,6 @@ pub fn process_expression_with_engine(
         return Ok(ProcessExpressionResult {
             kind: "partial_application".into(),
             title_key: "result.partial_application".into(),
-            title: "部分应用".into(),
             expression: partial.expression,
             tex: partial.tex,
             steps: Vec::new(),
@@ -120,7 +116,6 @@ pub fn process_expression_with_engine(
     Ok(ProcessExpressionResult {
         title_key: format!("result.{}", result.kind),
         kind: result.kind,
-        title: result.title,
         expression: result.expression,
         tex: result.tex,
         steps: result.steps,

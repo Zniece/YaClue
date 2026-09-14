@@ -79,7 +79,7 @@ fn unified_expression_dispatches_core_calculator_paths() {
     assert!(!derivative.steps.is_empty());
     assert!(derivative.steps.iter().all(|step| {
         step.message_ref.key == format!("steps.{}", step.rule)
-            && !step.message_ref.fallback.is_empty()
+            && step.message_ref.fallback.is_none()
     }));
 
     let limit =
@@ -429,4 +429,23 @@ fn remaining_operator_families_emit_translated_product_messages() {
         }
     }
     assert!(missing.is_empty(), "missing locale keys: {missing:#?}");
+}
+
+#[test]
+fn mathematical_message_wire_format_contains_only_keys_and_arguments() {
+    let mut engine = RustEngineProxy::spawn().unwrap();
+    for source in ["D(x)Sin(x)^2", "Limit(Sin(x)/x,0)", "Plot(x^2,x,0,1)"] {
+        let result = process_expression_with_engine(request(source, true), &mut engine).unwrap();
+        let value = serde_json::to_value(result).unwrap();
+        assert!(value.get("title").is_none(), "{source}: {value}");
+        for section in ["steps", "analyses", "conclusions"] {
+            for item in value[section].as_array().unwrap() {
+                assert!(item.get("why").is_none(), "{source}: {item}");
+                assert!(item.get("message").is_none(), "{source}: {item}");
+                let message = item["message_ref"].as_object().unwrap();
+                assert!(message.get("key").is_some(), "{source}: {item}");
+                assert!(message.get("fallback").is_none(), "{source}: {item}");
+            }
+        }
+    }
 }

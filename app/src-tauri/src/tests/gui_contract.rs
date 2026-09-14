@@ -29,7 +29,7 @@ fn gui_examples_distinguish_equations_from_solving_them() {
 }
 
 #[test]
-fn gui_uses_stable_locale_keys_with_compatibility_fallbacks() {
+fn gui_uses_stable_locale_keys() {
     let javascript = include_str!("../../../src/main.js");
     let i18n = include_str!("../../../src/i18n.js");
     let html = include_str!("../../../src/index.html");

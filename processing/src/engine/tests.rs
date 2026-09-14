@@ -311,7 +311,10 @@ fn errors_have_stable_codes_and_retry_policy() {
         assert_eq!(response.code, code);
         assert_eq!(response.retryable, retryable);
         assert!(response.message_ref.key.starts_with("errors."));
-        assert_eq!(response.message_ref.fallback, response.message);
+        assert_eq!(
+            response.message_ref.fallback.as_deref(),
+            Some(response.message.as_str())
+        );
         assert!(!response.message.is_empty());
     }
 }

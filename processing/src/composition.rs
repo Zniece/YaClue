@@ -57,7 +57,6 @@ pub struct HeldApplication {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProductClassification {
     pub kind: &'static str,
-    pub title: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,7 +95,7 @@ pub fn classify_product(
         _ => None,
     };
     let has_native_child = crate::arithmetic::has_object_native_descendant(&input.root);
-    let pair = match (&input.root.form, root_descriptor) {
+    let kind = match (&input.root.form, root_descriptor) {
         (MathematicalForm::Structural { operator }, _)
             if matches!(operator.as_str(), "+" | "*")
                 && input
@@ -105,15 +104,15 @@ pub fn classify_product(
                     .iter()
                     .all(|child| matches!(child.form, MathematicalForm::Collection)) =>
         {
-            ("matrix", "线性代数")
+            "matrix"
         }
-        (MathematicalForm::Relation { .. }, _) => ("equation", "方程"),
+        (MathematicalForm::Relation { .. }, _) => "equation",
         (_, Some(descriptor)) => descriptor
             .product_presentation(
                 has_native_child,
                 result.status == CompositionStatus::Completed,
             )
-            .unwrap_or(("composition", "组合运算")),
+            .unwrap_or("composition"),
         (
             MathematicalForm::Number
             | MathematicalForm::Symbol
@@ -121,13 +120,10 @@ pub fn classify_product(
             | MathematicalForm::OpaqueEngineValue { .. }
             | MathematicalForm::Application { .. },
             None,
-        ) if !has_native_child => ("evaluation", "计算结果"),
-        _ => ("composition", "组合运算"),
+        ) if !has_native_child => "evaluation",
+        _ => "composition",
     };
-    ProductClassification {
-        kind: pair.0,
-        title: pair.1,
-    }
+    ProductClassification { kind }
 }
 
 /// Complete product projection for typed partial applications. Binder roles,
@@ -294,10 +290,7 @@ pub fn execute_elaborated(
                 expression: value.clone(),
                 tex: tex.clone(),
                 message: "在标准数学结果之外附加函数图像。".into(),
-                message_ref: crate::messages::MessageRef::new(
-                    "conclusions.plot-attached",
-                    "在标准数学结果之外附加函数图像。",
-                ),
+                message_ref: crate::messages::MessageRef::new("conclusions.plot-attached"),
             }],
             operators: vec![CompositionOperator::Plot],
             reason: None,
@@ -388,12 +381,7 @@ pub fn execute_elaborated(
             message: reason
                 .clone()
                 .unwrap_or_else(|| "该数学对象没有值。".into()),
-            message_ref: crate::messages::MessageRef::new(
-                "conclusions.no-value",
-                reason
-                    .clone()
-                    .unwrap_or_else(|| "该数学对象没有值。".into()),
-            ),
+            message_ref: crate::messages::MessageRef::new("conclusions.no-value"),
         }],
         CompositionStatus::Unresolved => vec![MathematicalConclusion {
             kind: if subject.semantics.metadata.conditions.is_empty() {
@@ -406,12 +394,7 @@ pub fn execute_elaborated(
             message: reason
                 .clone()
                 .unwrap_or_else(|| "数学对象保持未解析。".into()),
-            message_ref: crate::messages::MessageRef::new(
-                "conclusions.unresolved",
-                reason
-                    .clone()
-                    .unwrap_or_else(|| "数学对象保持未解析。".into()),
-            ),
+            message_ref: crate::messages::MessageRef::new("conclusions.unresolved"),
         }],
         CompositionStatus::Completed | CompositionStatus::Unsupported => Vec::new(),
     };

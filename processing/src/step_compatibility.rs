@@ -194,10 +194,7 @@ pub fn derive_antiderivative_family_with_verbosity(
         rule: "antiderivative-family".into(),
         expr: result.expression.clone(),
         why: "加入任意常数，表示全部原函数。".into(),
-        message_ref: crate::messages::MessageRef::new(
-            "steps.integral-arbitrary-constant",
-            "加入任意常数，表示全部原函数。",
-        ),
+        message_ref: crate::messages::MessageRef::new("steps.integral-arbitrary-constant"),
         tex: result.tex.clone(),
         importance: StepImportance::Key,
     });
