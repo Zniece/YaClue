@@ -2,7 +2,7 @@
 //! domain adapter, while the operation boundary owns Held/family semantics.
 
 use crate::engine::{Engine, EngineError, Expr};
-use crate::input::validate_symbol;
+use crate::input::{validate_expression, validate_symbol};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::quadrature::{adaptive_simpson, QuadratureOptions};
 use crate::semantic::{Exactness, ValueKind};
@@ -11,6 +11,10 @@ use crate::semantic_core::{
     NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, ObjectId,
     OperatorId, Requirement, RuleFact, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticOperation, SemanticState, VecEventSink,
+};
+use crate::steps::{
+    render_events, render_rule_trace, AntiderivativeFamily, AntiderivativeStepResult, Step,
+    StepEvent, StepImportance, StepKind, StepVerbosity,
 };
 
 struct IntegralRuleEmission {
@@ -23,6 +27,134 @@ struct IntegralRuleEmission {
 struct IntegralEvaluation {
     result: String,
     emissions: Vec<IntegralRuleEmission>,
+}
+
+fn parse_compatibility_step_events(
+    expr: &Expr,
+    command: &str,
+) -> Result<Vec<StepEvent>, EngineError> {
+    let Expr::Call { head, args } = expr else {
+        return Err(EngineError::Parse("步骤结果不是列表".into()));
+    };
+    if head != "List" {
+        return Err(EngineError::Parse(format!(
+            "步骤结果 head 应为 List，实际为 {head}"
+        )));
+    }
+    if args.is_empty() {
+        return Err(EngineError::Eval(format!(
+            "未能生成步骤(表达式可能不受支持): {command}"
+        )));
+    }
+    args.iter()
+        .enumerate()
+        .map(|(index, step)| {
+            let Expr::Call { head, args: fields } = step else {
+                return Err(EngineError::Parse(format!("步骤事件 {index} 不是列表")));
+            };
+            if head != "List" || fields.len() != 4 {
+                return Err(EngineError::Parse(format!(
+                    "步骤事件 {index} 必须是四字段 List"
+                )));
+            }
+            let string_field = |field: &Expr, name: &str| match field {
+                Expr::Symbol(value)
+                    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') =>
+                {
+                    Ok(value[1..value.len() - 1].to_string())
+                }
+                _ => Err(EngineError::Parse(format!(
+                    "步骤事件 {index} 的 {name} 必须是字符串"
+                ))),
+            };
+            let importance = match &fields[3] {
+                Expr::Number(value) if value == "0" => StepImportance::Routine,
+                Expr::Number(value) if value == "1" => StepImportance::Normal,
+                Expr::Number(value) if value == "2" => StepImportance::Key,
+                _ => {
+                    return Err(EngineError::Parse(format!(
+                        "步骤事件 {index} 的 importance 必须是 0、1 或 2"
+                    )))
+                }
+            };
+            Ok(StepEvent {
+                rule: string_field(&fields[0], "rule")?,
+                expr: fields[1].to_string(),
+                why: string_field(&fields[2], "why")?,
+                importance,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn integral_steps_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    validate_expression(expression, "表达式")?;
+    validate_symbol(variable, "积分变量")?;
+    let command = format!("StepsI'Full({expression}, {variable})");
+    let expression = engine.eval_expr(&command)?;
+    render_events(
+        engine,
+        parse_compatibility_step_events(&expression, &command)?,
+        verbosity,
+    )
+}
+
+pub(crate) fn antiderivative_family(
+    representative: String,
+    representative_tex: String,
+    variable: &str,
+    arbitrary_constant: String,
+) -> AntiderivativeFamily {
+    let constant_tex = arbitrary_constant
+        .strip_prefix('C')
+        .filter(|suffix| !suffix.is_empty())
+        .map_or_else(
+            || r"\mathrm{C}".to_string(),
+            |suffix| format!(r"\mathrm{{C}}_{{{suffix}}}"),
+        );
+    AntiderivativeFamily {
+        expression: format!("({representative} + {arbitrary_constant})"),
+        tex: format!("{representative_tex} + {constant_tex}"),
+        representative,
+        representative_tex,
+        variable: variable.into(),
+        arbitrary_constants: vec![arbitrary_constant],
+    }
+}
+
+pub(crate) fn antiderivative_family_with_verbosity(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    arbitrary_constant: String,
+    verbosity: StepVerbosity,
+) -> Result<AntiderivativeStepResult, EngineError> {
+    let mut steps = integral_steps_with_verbosity(engine, expression, variable, verbosity)?;
+    let representative = steps
+        .last()
+        .ok_or_else(|| EngineError::Parse("不定积分步骤缺少最终结果".into()))?;
+    let result = antiderivative_family(
+        representative.expr.clone(),
+        representative.tex.clone(),
+        variable,
+        arbitrary_constant,
+    );
+    steps.push(Step {
+        kind: StepKind::EquivalentTransformation,
+        before_expr: None,
+        before_tex: None,
+        rule: "antiderivative-family".into(),
+        expr: result.expression.clone(),
+        why: "加入任意常数，表示全部原函数。".into(),
+        tex: result.tex.clone(),
+        importance: StepImportance::Key,
+    });
+    Ok(AntiderivativeStepResult { result, steps })
 }
 
 fn evaluate_integral_rules(
@@ -598,6 +730,40 @@ pub(crate) fn definite_integral_computation_with_options(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn definite_steps_with_options(
+    engine: &mut dyn Engine,
+    expression: &str,
+    variable: &str,
+    lower: &str,
+    upper: &str,
+    numeric_fallback: Option<&QuadratureOptions>,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    validate_expression(expression, "被积表达式")?;
+    validate_expression(lower, "下限")?;
+    validate_expression(upper, "上限")?;
+    validate_symbol(variable, "积分变量")?;
+    let computation = definite_integral_computation_with_options(
+        engine,
+        expression,
+        &DefiniteIntegralRequest {
+            variable: variable.into(),
+            lower: lower.into(),
+            upper: upper.into(),
+        },
+        numeric_fallback,
+    )?;
+    render_rule_trace(
+        engine,
+        computation
+            .trace
+            .as_ref()
+            .ok_or_else(|| EngineError::Eval("定积分计算缺少规则轨迹".into()))?,
+        verbosity,
+    )
+}
+
 fn numeric_bound(
     engine: &mut dyn Engine,
     expression: &str,
@@ -763,5 +929,20 @@ mod tests {
             .unwrap()
             .print_source()
             .starts_with("Integrate("));
+    }
+
+    #[test]
+    fn malformed_integral_rule_events_fail_the_protocol() {
+        for fullform in [
+            "(List (List \"ok\" x \"why\" 1) (Pair \"bad\" y \"why\" 1))",
+            "(List (List \"missing\" x))",
+            "(List (List \"bad-importance\" x \"why\" 9))",
+        ] {
+            let expr = Expr::parse_fullform(fullform).unwrap();
+            assert!(matches!(
+                parse_compatibility_step_events(&expr, "test"),
+                Err(EngineError::Parse(_))
+            ));
+        }
     }
 }

@@ -1,11 +1,10 @@
-//! 加工层的步骤 API:调用引擎的 StepsD'Full/StepsI'Full(.ys 步骤生成器),
-//! 提取结构化步骤(规则名 + 表达式 + 文案 + LaTeX)供 GUI 渲染。
+//! Product projection for semantic rule traces.
 //!
-//! 步骤数据格式(来自 StepsX'Full):{规则名, 表达式, 文案, 重要度} 四元组列表;
-//! 本模块严格校验后将其转为 `Step { rule, expr, why, tex, importance }`。
+//! Mathematical algorithms and domain decisions live in their owning modules;
+//! this module filters, replays and renders already-established facts.
 
-use crate::engine::{Engine, EngineError, Expr};
-use crate::input::{strip_tex_delimiters, validate_expression, validate_symbol};
+use crate::engine::{Engine, EngineError};
+use crate::input::strip_tex_delimiters;
 use crate::quadrature::QuadratureOptions;
 use crate::semantic_core::{RuleEventClass, RuleImportance, RuleTrace};
 use serde::{Deserialize, Serialize};
@@ -480,72 +479,6 @@ fn literal_tex(source: &str) -> String {
     format!(r"\mathtt{{{escaped}}}")
 }
 
-/// 执行 StepsX'Full 命令并提取步骤(规则名 + 表达式 + 文案 + LaTeX)
-fn steps_from_command(
-    engine: &mut dyn Engine,
-    command: &str,
-    verbosity: StepVerbosity,
-) -> Result<Vec<Step>, EngineError> {
-    let expr = engine.eval_expr(command)?;
-    let events = parse_step_events(&expr, command)?;
-    render_events(engine, events, verbosity)
-}
-
-fn parse_step_events(expr: &Expr, command: &str) -> Result<Vec<StepEvent>, EngineError> {
-    let Expr::Call { head, args } = expr else {
-        return Err(EngineError::Parse("步骤结果不是列表".into()));
-    };
-    if head != "List" {
-        return Err(EngineError::Parse(format!(
-            "步骤结果 head 应为 List，实际为 {head}"
-        )));
-    }
-    if args.is_empty() {
-        return Err(EngineError::Eval(format!(
-            "未能生成步骤(表达式可能不受支持): {command}"
-        )));
-    }
-    args.iter()
-        .enumerate()
-        .map(|(index, step)| {
-            let Expr::Call { head, args: fields } = step else {
-                return Err(EngineError::Parse(format!("步骤事件 {index} 不是列表")));
-            };
-            if head != "List" || fields.len() != 4 {
-                return Err(EngineError::Parse(format!(
-                    "步骤事件 {index} 必须是四字段 List"
-                )));
-            }
-            let string_field = |field: &Expr, name: &str| match field {
-                Expr::Symbol(value)
-                    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') =>
-                {
-                    Ok(value[1..value.len() - 1].to_string())
-                }
-                _ => Err(EngineError::Parse(format!(
-                    "步骤事件 {index} 的 {name} 必须是字符串"
-                ))),
-            };
-            let importance = match &fields[3] {
-                Expr::Number(value) if value == "0" => StepImportance::Routine,
-                Expr::Number(value) if value == "1" => StepImportance::Normal,
-                Expr::Number(value) if value == "2" => StepImportance::Key,
-                _ => {
-                    return Err(EngineError::Parse(format!(
-                        "步骤事件 {index} 的 importance 必须是 0、1 或 2"
-                    )))
-                }
-            };
-            Ok(StepEvent {
-                rule: string_field(&fields[0], "rule")?,
-                expr: fields[1].to_string(),
-                why: string_field(&fields[2], "why")?,
-                importance,
-            })
-        })
-        .collect()
-}
-
 /// 对 `expr` 关于 `var` 生成分步求导过程
 pub fn derive_steps(
     engine: &mut dyn Engine,
@@ -599,9 +532,7 @@ pub fn derive_integrals_with_verbosity(
     var: &str,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expression(expr, "表达式")?;
-    validate_symbol(var, "积分变量")?;
-    steps_from_command(engine, &format!("StepsI'Full({expr}, {var})"), verbosity)
+    crate::integrals::integral_steps_with_verbosity(engine, expr, var, verbosity)
 }
 
 /// Build the product-facing antiderivative family while keeping the canonical
@@ -612,21 +543,12 @@ pub fn antiderivative_family(
     variable: &str,
     arbitrary_constant: String,
 ) -> AntiderivativeFamily {
-    let constant_tex = arbitrary_constant
-        .strip_prefix('C')
-        .filter(|suffix| !suffix.is_empty())
-        .map_or_else(
-            || r"\mathrm{C}".to_string(),
-            |suffix| format!(r"\mathrm{{C}}_{{{suffix}}}"),
-        );
-    AntiderivativeFamily {
-        expression: format!("({representative} + {arbitrary_constant})"),
-        tex: format!("{representative_tex} + {constant_tex}"),
+    crate::integrals::antiderivative_family(
         representative,
         representative_tex,
-        variable: variable.into(),
-        arbitrary_constants: vec![arbitrary_constant],
-    }
+        variable,
+        arbitrary_constant,
+    )
 }
 
 pub fn derive_antiderivative_family_with_verbosity(
@@ -636,27 +558,13 @@ pub fn derive_antiderivative_family_with_verbosity(
     arbitrary_constant: String,
     verbosity: StepVerbosity,
 ) -> Result<AntiderivativeStepResult, EngineError> {
-    let mut steps = derive_integrals_with_verbosity(engine, expr, var, verbosity)?;
-    let representative = steps
-        .last()
-        .ok_or_else(|| EngineError::Parse("不定积分步骤缺少最终结果".into()))?;
-    let result = antiderivative_family(
-        representative.expr.clone(),
-        representative.tex.clone(),
+    crate::integrals::antiderivative_family_with_verbosity(
+        engine,
+        expr,
         var,
         arbitrary_constant,
-    );
-    steps.push(Step {
-        kind: StepKind::EquivalentTransformation,
-        before_expr: None,
-        before_tex: None,
-        rule: "antiderivative-family".into(),
-        expr: result.expression.clone(),
-        why: "加入任意常数，表示全部原函数。".into(),
-        tex: result.tex.clone(),
-        importance: StepImportance::Key,
-    });
-    Ok(AntiderivativeStepResult { result, steps })
+        verbosity,
+    )
 }
 
 /// 定积分:不定积分步骤链 + 牛顿-莱布尼茨求值(上下限可为任意表达式,如 `Pi`)
@@ -709,26 +617,13 @@ fn derive_definite_configured(
     numeric_fallback: Option<&QuadratureOptions>,
     verbosity: StepVerbosity,
 ) -> Result<Vec<Step>, EngineError> {
-    validate_expression(expr, "被积表达式")?;
-    validate_expression(from, "下限")?;
-    validate_expression(to, "上限")?;
-    validate_symbol(var, "积分变量")?;
-    let computation = crate::integrals::definite_integral_computation_with_options(
+    crate::integrals::definite_steps_with_options(
         engine,
         expr,
-        &crate::integrals::DefiniteIntegralRequest {
-            variable: var.into(),
-            lower: from.into(),
-            upper: to.into(),
-        },
+        var,
+        from,
+        to,
         numeric_fallback,
-    )?;
-    render_rule_trace(
-        engine,
-        computation
-            .trace
-            .as_ref()
-            .ok_or_else(|| EngineError::Eval("定积分计算缺少规则轨迹".into()))?,
         verbosity,
     )
 }
@@ -738,21 +633,6 @@ mod tests {
     use super::*;
     use crate::engine::{ReplEngine, RustEngine};
     use crate::test_support::CountingEngine;
-
-    #[test]
-    fn malformed_step_events_fail_the_protocol() {
-        for fullform in [
-            "(List (List \"ok\" x \"why\" 1) (Pair \"bad\" y \"why\" 1))",
-            "(List (List \"missing\" x))",
-            "(List (List \"bad-importance\" x \"why\" 9))",
-        ] {
-            let expr = Expr::parse_fullform(fullform).unwrap();
-            assert!(matches!(
-                parse_step_events(&expr, "test"),
-                Err(EngineError::Parse(_))
-            ));
-        }
-    }
 
     #[test]
     fn verbosity_filters_before_rendering_visible_steps() {
