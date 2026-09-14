@@ -90,9 +90,9 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "YaClue ${{ github.ref_name }}"
           releaseBody: |
-            Alpha 3 freezes the pre-semantic-core implementation as the correctness and performance baseline for the upcoming architectural rewrite.
+            Alpha 4 introduces the typed semantic core and structured mathematical-object pipeline. Limits, derivatives, equations, ODEs, algebra, numerical operations, plots, and other migrated capabilities now compose through one typed execution model.
 
-            Desktop packages are available for Linux, macOS, and Windows. The Android arm64 APK is test-signed for direct evaluation and is not an app-store package. See docs/releases/v0.1.0-alpha.3.md for the frozen baseline and known distribution constraints.
+            Desktop packages are available for Linux, macOS, and Windows. The Android arm64 APK is test-signed for direct evaluation and is not an app-store package. See docs/releases/v0.1.0-alpha.4.md for capabilities, validation, and known distribution constraints.
           releaseDraft: false
           prerelease: true
 
