@@ -103,7 +103,8 @@ function resetOutput() {
 }
 
 function localizedMessage(messageRef, fallback = "") {
-  if (!messageRef || !hasTranslation(messageRef.key)) return messageRef?.fallback || fallback;
+  if (!messageRef) return fallback;
+  if (!hasTranslation(messageRef.key)) return t("missingTranslation", { key: messageRef.key });
   return t(messageRef.key, messageRef.args || {});
 }
 

@@ -40,6 +40,7 @@ fn gui_uses_stable_locale_keys() {
     assert!(html.contains("id=\"locale\""));
     assert!(html.contains("data-i18n=\"tagline\""));
     assert!(i18n.contains("inconsistent keys"));
+    assert!(javascript.contains("t(\"missingTranslation\", { key: messageRef.key })"));
     assert!(!javascript
         .chars()
         .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)));

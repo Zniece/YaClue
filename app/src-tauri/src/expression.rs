@@ -6,6 +6,29 @@ use processing::steps::{Step, StepVerbosity};
 use crate::expression_protocol::{ProcessExpressionRequest, ProcessExpressionResult};
 use crate::message;
 
+#[cfg(test)]
+fn assert_product_messages_are_localized(result: &ProcessExpressionResult) {
+    let catalogue = include_str!("../../src/i18n.js");
+    let keys = std::iter::once(&result.title_key)
+        .chain(result.steps.iter().map(|item| &item.message_ref.key))
+        .chain(result.analyses.iter().map(|item| &item.message_ref.key))
+        .chain(result.conclusions.iter().map(|item| &item.message_ref.key));
+    for key in keys {
+        assert_eq!(
+            catalogue.matches(&format!("\"{key}\"")).count(),
+            2,
+            "{}: product message `{key}` must exist exactly once in every locale",
+            result.expression
+        );
+    }
+}
+
+fn checked_product_result(result: ProcessExpressionResult) -> ProcessExpressionResult {
+    #[cfg(test)]
+    assert_product_messages_are_localized(&result);
+    result
+}
+
 fn parse_verbosity(value: &str) -> Result<StepVerbosity, ErrorResponse> {
     match value {
         "concise" => Ok(StepVerbosity::Concise),
@@ -99,7 +122,7 @@ pub fn process_expression_with_engine(
     if let Some(partial) =
         processing::composition::project_partial(&mut *engine, &elaborated).map_err(message)?
     {
-        return Ok(ProcessExpressionResult {
+        return Ok(checked_product_result(ProcessExpressionResult {
             kind: "partial_application".into(),
             title_key: "result.partial_application".into(),
             expression: partial.expression,
@@ -117,10 +140,10 @@ pub fn process_expression_with_engine(
             details: Some(partial.details),
             semantic: partial.semantic,
             outcome: partial.outcome,
-        });
+        }));
     }
     let result = dispatch_expression_with_engine(request, engine, &elaborated)?;
-    Ok(ProcessExpressionResult {
+    Ok(checked_product_result(ProcessExpressionResult {
         title_key: format!("result.{}", result.kind),
         kind: result.kind,
         expression: result.expression,
@@ -138,5 +161,5 @@ pub fn process_expression_with_engine(
         details: None,
         semantic: result.semantic,
         outcome: result.outcome,
-    })
+    }))
 }
