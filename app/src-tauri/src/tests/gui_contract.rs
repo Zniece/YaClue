@@ -71,6 +71,17 @@ fn changing_locale_renders_the_complete_existing_result_again() {
 }
 
 #[test]
+fn gui_foundation_exposes_status_focus_and_reduced_motion_contracts() {
+    let html = include_str!("../../../src/index.html");
+    let css = include_str!("../../../src/styles.css");
+
+    assert!(html.contains("class=\"header-tools\""));
+    assert!(html.contains("role=\"status\" aria-live=\"polite\""));
+    assert!(css.contains("button:focus-visible"));
+    assert!(css.contains("@media (prefers-reduced-motion: reduce)"));
+}
+
+#[test]
 fn core_branch_step_keys_exist_in_every_locale() {
     let i18n = include_str!("../../../src/i18n.js");
     for key in [
