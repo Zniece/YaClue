@@ -95,7 +95,7 @@ impl RustEngineProxy {
 
 impl Drop for RustEngineProxy {
     fn drop(&mut self) {
-        drop(self.tx.take()); // 关闭命令通道 → 引擎线程 for 循环结束 → join 可返回
+        drop(self.tx.take()); // Closing the channel ends the engine loop so join can return.
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }

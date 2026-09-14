@@ -43,7 +43,7 @@ pub fn eval(env: &mut Environment, expr: &Rc<LispObject>) -> Result<Rc<LispObjec
         env.eval_depth -= 1;
         return Err(err);
     }
-    // 超时采样:按 1024 次求值一查,时钟读取开销可忽略。
+    // Check the deadline every 1024 evaluations to make clock overhead negligible.
     env.eval_ops += 1;
     if env.eval_ops & 0x3FF == 0 {
         if let Some(dl) = env.eval_deadline {

@@ -76,10 +76,10 @@ pub struct Environment {
     pub max_eval_depth: u32,
     pub last_unique_id: u32,
 
-    /// 求值截止时间(None = 不限时)。由求值循环按操作数采样检查
-    /// (见 evaluator::eval),超时返回 UserInterrupt;病态输入不再挂死。
+    /// Evaluation deadline (`None` means unlimited). The evaluator samples it
+    /// by operation count and returns `UserInterrupt` when it expires.
     pub eval_deadline: Option<std::time::Instant>,
-    /// 求值操作计数(采样触发器)。
+    /// Evaluation operation counter used to trigger deadline sampling.
     pub eval_ops: u64,
 
     pub true_atom: Option<Rc<LispObject>>,
@@ -236,7 +236,7 @@ impl Environment {
         e
     }
 
-    /// 设置求值超时(从现在起 `dur`);再次调用刷新,传 None 清除。
+    /// Set or refresh the evaluation timeout from now; `None` clears it.
     pub fn set_eval_timeout(&mut self, dur: Option<std::time::Duration>) {
         self.eval_deadline = dur.map(|d| std::time::Instant::now() + d);
         self.eval_ops = 0;

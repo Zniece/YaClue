@@ -5,16 +5,16 @@ use yacas_rs::value::{atom_or_number, build_list, clone_kind, LispObject, Object
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    /// 数字(保持原文,如 "2", "2.5", "1/3" 的分子分母会被拆成 Call)
+    /// A number in source form. Fractions such as `1/3` are represented as calls.
     Number(String),
-    /// 符号/变量/函数名/运算符名(如 "x", "Sin", "+")
+    /// A symbol, variable, function name, or operator name such as `x`, `Sin`, or `+`.
     Symbol(String),
-    /// 复合表达式:head + 参数列表(如 (+ x 1)、(Sin x))
+    /// A compound expression: a head and arguments, such as `(+ x 1)` or `(Sin x)`.
     Call { head: String, args: Vec<Expr> },
 }
 
 impl fmt::Display for Expr {
-    /// 序列化为 Yacas 语法(加括号避免优先级问题)
+    /// Serialize as Yacas syntax, adding parentheses to avoid precedence ambiguity.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Number(n) | Expr::Symbol(n) => write!(f, "{n}"),
@@ -30,7 +30,7 @@ impl fmt::Display for Expr {
                 }
                 op @ ("-" | "/" | "^" | "=" | "!=" | "<" | ">" | "<=" | ">=") => {
                     if args.len() == 1 {
-                        // 一元运算符(如 -a)
+                        // Unary operator, for example `-a`.
                         write!(f, "({op} {})", args[0])
                     } else {
                         write!(f, "({} {} {})", args[0], op, args[1])
@@ -52,7 +52,7 @@ impl fmt::Display for Expr {
 }
 
 impl Expr {
-    /// 解析 Yacas FullForm 输出(如 `(+ (+ (^ x 2) (* 2 x)) 1)`)
+    /// Parse Yacas FullForm output such as `(+ (+ (^ x 2) (* 2 x)) 1)`.
     pub fn parse_fullform(s: &str) -> Result<Expr, String> {
         let tokens = tokenize_fullform(s);
         let mut pos = 0;
@@ -100,9 +100,9 @@ pub(crate) fn canonical_call_ast(
     Ok(LispObject::new(ObjectKind::Sublist(list)))
 }
 
-/// 分词:空白分隔,且 `(`/`)` 独立成 token(真实输出中会粘连,如 `))1`)。
-/// 字符串字面量(`"..."`,含转义)整体作为一个 token —— 文案等含空格的字符串
-/// 不会被拆开。
+/// Tokenize on whitespace and emit `(` and `)` separately. Real output can
+/// place them next to other tokens, as in `))1`. A quoted string, including
+/// escapes, stays in one token so embedded whitespace is preserved.
 fn tokenize_fullform(s: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut atom = String::new();
@@ -121,7 +121,7 @@ fn tokenize_fullform(s: &str) -> Vec<String> {
                 }
             }
             '"' => {
-                // 字符串字面量:吞到闭合引号(`\` 转义下一个字符),整体入 token
+                // Consume through the closing quote; `\` escapes the next character.
                 if !atom.is_empty() {
                     tokens.push(std::mem::take(&mut atom));
                 }
@@ -189,15 +189,15 @@ fn classify_atom(tok: &str) -> Expr {
 }
 
 // ============================================================
-// 引擎接口
+// Engine interface
 // ============================================================
 
-/// 一次求值的结果
+/// The result of one evaluation.
 #[derive(Debug, Clone)]
 pub struct EvalResult {
-    /// 结构化结果(由 FullForm 解析)
+    /// Structured result parsed from FullForm.
     pub expr: Expr,
-    /// TeXForm(已去引号,可直接喂 KaTeX)
+    /// Unquoted TeXForm ready for KaTeX.
     pub tex: String,
 }
 
@@ -207,11 +207,11 @@ pub enum EngineError {
     InvalidInput(String),
     Spawn(String),
     Io(String),
-    /// yacas 报告的命令错误(原始输出)
+    /// Raw command error reported by Yacas.
     Eval(String),
-    /// FullForm/TeXForm 输出解析失败
+    /// Failed to parse FullForm or TeXForm output.
     Parse(String),
-    /// 命令执行超时；Rust 引擎中断当前求值，C++ 代理终止子进程
+    /// Command evaluation exceeded its deadline and was interrupted.
     Timeout(String),
 }
 
@@ -305,18 +305,18 @@ impl fmt::Display for EngineError {
     }
 }
 
-/// 引擎适配接口:C++ 原版与 Rust 移植版都实现它
+/// Evaluation boundary implemented by the Rust engine and usable by test doubles.
 pub trait Engine {
-    /// 执行一条 Yacas 命令,返回结构化结果 + TeXForm
+    /// Execute one Yacas command and return its structured result and TeXForm.
     fn eval(&mut self, command: &str) -> Result<EvalResult, EngineError>;
 
-    /// 只返回结构化结果。无需展示整个结果时，实现可跳过 TeXForm。
+    /// Return only the structured result. Implementations may skip TeXForm.
     fn eval_expr(&mut self, command: &str) -> Result<Expr, EngineError> {
         self.eval(command).map(|result| result.expr)
     }
 
-    /// 在同一宿主请求中依次求值表达式并生成 TeX。实现可覆盖此方法，
-    /// 以复用解析器、Environment、截止时间和线程往返。
+    /// Render expressions sequentially in one host request. Implementations may
+    /// override this to reuse a parser, environment, deadline, and thread hop.
     fn render_tex_batch(&mut self, expressions: &[String]) -> Result<Vec<String>, EngineError> {
         expressions
             .iter()
@@ -336,8 +336,8 @@ pub trait Engine {
         ))
     }
 
-    /// 追踪信息:命中的规则列表(供步骤层使用);未实现时返回空
-    #[allow(dead_code)] // 步骤层接口,暂未消费
+    /// Return matched rule names for step projection; empty when unsupported.
+    #[allow(dead_code)] // Step-layer boundary; currently has no consumer.
     fn trace(&mut self, _command: &str) -> Result<Vec<String>, EngineError> {
         Ok(vec![])
     }

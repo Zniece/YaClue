@@ -70,7 +70,7 @@ pub struct MathematicalAnalysis {
     pub importance: StepImportance,
 }
 
-/// 一步:规则名 + 表达式 + 文案(声明式)+ LaTeX(GUI 渲染用)
+/// One equivalent transformation and its structured presentation data.
 #[derive(Debug, Clone, Serialize)]
 pub struct Step {
     pub kind: StepKind,
@@ -80,17 +80,17 @@ pub struct Step {
     pub before_expr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before_tex: Option<String>,
-    /// 规则名(英文键,文案命中失败时前端回退显示它)
+    /// Stable rule key.
     pub rule: String,
-    /// 表达式(yacas 形式)
+    /// Expression in Yacas syntax.
     pub expr: String,
-    /// 声明式文案(来自 Steps'Explain;空串 = 未登记键,前端回退)
+    /// Legacy internal explanation, excluded from the wire format.
     #[serde(skip_serializing)]
     pub why: String,
     pub message_ref: MessageRef,
-    /// LaTeX(已去 $...$ 包裹,直接喂 KaTeX)
+    /// LaTeX without `$...$` delimiters, ready for KaTeX.
     pub tex: String,
-    /// 全局粒度筛选使用的语义重要度。
+    /// Semantic importance used by the global verbosity filter.
     pub importance: StepImportance,
 }
 
@@ -530,18 +530,18 @@ mod tests {
         let steps = derive_steps(&mut engine, "Sin(x)^2", "x").expect("StepsD 失败");
 
         assert!(steps.len() >= 3, "步骤过少: {}", steps.len());
-        // Sin(x)^2:外层幂的底是复合式 → 链式键
+        // The outer power has a compound base, so it uses the chain-rule key.
         assert_eq!(steps[0].rule, "power-chain-rule");
         assert!(steps.iter().any(|s| s.rule == "sin-rule"));
         assert_eq!(steps.last().unwrap().rule, "simplify");
-        // 每步都有可渲染的 LaTeX 与声明式文案
+        // Every step has renderable LaTeX and a legacy internal explanation.
         for s in &steps {
             assert!(!s.tex.is_empty(), "步骤缺少 TeX: {s:?}");
             assert!(!s.why.is_empty(), "步骤缺少文案: {s:?}");
         }
-        // 文案内容抽查(声明式,非教学腔)
+        // Spot-check the declarative explanation.
         assert_eq!(steps[0].why, "链式法则: (u^n)' = n*u^(n-1)*u'");
-        // 最后一步与引擎 D 代数等价
+        // The final step is algebraically equivalent to the engine derivative.
         let diff = engine
             .eval("Simplify(StepsD(Sin(x)^2, x)[Length(StepsD(Sin(x)^2, x))][2] - D(x)Sin(x)^2)")
             .expect("验证求值失败");
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn derive_steps_errors_on_bad_input() {
         let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
-        // 非法语法(D 的非法逗号形式)应报错而非静默
+        // Invalid comma-style derivative syntax must fail explicitly.
         let err = derive_steps(&mut engine, "D(x^2,x)", "x").unwrap_err();
         assert!(
             err.to_string().contains("failed"),
@@ -562,9 +562,9 @@ mod tests {
     #[test]
     fn derive_integrals_works() {
         let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
-        // 分部积分
+        // Integration by parts.
         let steps = derive_integrals(&mut engine, "x*Sin(x)", "x").expect("StepsI 失败");
-        // x*Sin(x):分部策略横幅为第一步
+        // The method-selection event is first for `x*Sin(x)`.
         assert_eq!(steps[0].rule, "method-parts");
         let diff = engine
             .eval(
@@ -581,7 +581,7 @@ mod tests {
         // u-substitution
         let steps = derive_integrals(&mut engine, "Sin(x^2)*2*x", "x").expect("StepsI 失败");
         assert!(steps.iter().any(|s| s.rule == "u-sub-rule"));
-        // u-sub 步骤带换元文案
+        // The substitution step includes its internal explanation.
         let usub = steps.iter().find(|s| s.rule == "u-sub-rule").unwrap();
         assert_eq!(usub.why, "换元: u = g(x), du = g'(x) dx");
         let diff = engine
@@ -589,7 +589,7 @@ mod tests {
             .expect("验证求值失败");
         assert_eq!(diff.expr.to_string(), "0", "u-sub 结果错误: {}", diff.expr);
 
-        // 非法输入同样被校验拦截
+        // Validation rejects malformed integral input as well.
         assert!(derive_integrals(&mut engine, "x); Echo(1); (x", "x").is_err());
     }
 
@@ -606,9 +606,9 @@ mod tests {
     fn mixed_trigonometric_powers_use_a_real_teaching_chain() {
         let mut engine = RustEngine::spawn().unwrap();
         for (integrand, var) in [
-            ("Sin(x)^3*Cos(x)^2", "x"), // 奇次 Sin
-            ("Sin(x)^2*Cos(x)^3", "x"), // 奇次 Cos
-            ("Sin(u)^3*Cos(u)^2", "u"), // 哑元与积分变量同名时必须让位
+            ("Sin(x)^3*Cos(x)^2", "x"), // Odd power of sine.
+            ("Sin(x)^2*Cos(x)^3", "x"), // Odd power of cosine.
+            ("Sin(u)^3*Cos(u)^2", "u"), // The dummy must avoid the integration variable.
         ] {
             let steps = derive_integrals(&mut engine, integrand, var).unwrap();
             assert_eq!(steps[0].rule, "method-trig-power-product");
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn derive_steps_rejects_injection() {
         let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
-        // 命令注入尝试:分号、换行、赋值、引号、括号不匹配
+        // Injection attempts: semicolon, newline, assignment, quote, and unmatched parenthesis.
         for bad in [
             "x); Echo(\"pwned\"); (x",
             "x;\nEcho(1)",
@@ -656,24 +656,24 @@ mod tests {
                 "应拒绝恶意输入: {bad:?}"
             );
         }
-        // 合法输入不受影响
+        // Valid input remains accepted.
         assert!(derive_steps(&mut engine, "Sin(x)^2", "x").is_ok());
     }
 
-    /// 高阶导数:derive_steps_order 逐轮拼接(RustEngine 路径,默认可运行)
+    /// Higher derivatives concatenate one round per order on the Rust engine path.
     #[test]
     fn derive_steps_order_works() {
         let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
         let steps =
             derive_steps_order(&mut engine, "x^4", "x", 2).expect("StepsD'Full(order) 失败");
         assert!(steps.len() >= 4, "步骤过少: {}", steps.len());
-        // 末轮最终形态与引擎二阶导一致(4*x^3 -> 12*x^2)
+        // The last round agrees with the engine's second derivative.
         let last = steps.last().unwrap();
         assert!(last.expr.contains("12"), "二阶导数异常: {}", last.expr);
         for s in &steps {
             assert!(!s.why.is_empty(), "步骤缺少文案: {s:?}");
         }
-        // order=0 拒绝
+        // Order zero is rejected.
         assert!(derive_steps_order(&mut engine, "x^4", "x", 0).is_err());
 
         let standard =

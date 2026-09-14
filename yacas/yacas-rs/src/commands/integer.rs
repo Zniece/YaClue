@@ -282,7 +282,7 @@ pub fn cmd_math_div(
             return Err(YacasError::InvalidArg);
         }
         if !(x == i64::MIN && y == -1) {
-            // i64::MIN / -1 溢出(wrapping_div 会静默回绕成 i64::MIN),回落大数路径
+            // `i64::MIN / -1` overflows; use the big-integer path instead of wrapping.
             return Ok(int_number(x.wrapping_div(y)));
         }
     }

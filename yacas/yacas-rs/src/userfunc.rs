@@ -23,8 +23,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// 规则尝试统计(YACAS_RULE_STATS=1 时启用):诊断每节点全量扫描开销(D6)。
-/// TRIES/MATCHES 全量计数;MATCH_TIME 按 1/256 采样外推(时钟读取降本)。
+/// Rule-attempt statistics enabled by `YACAS_RULE_STATS=1` for diagnosing
+/// per-node rule-table scanning. Tries and matches are exact; match time is
+/// sampled at 1/256 and extrapolated to reduce clock overhead.
 pub static RULE_TRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static RULE_MATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static RULE_MATCH_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -288,7 +289,7 @@ impl BranchingUserFunction {
             };
             let matched = rule_matches(&kind, env, arguments)?;
             if let Some(t0) = t_start {
-                // 1/256 采样,外推全量谓词耗时
+                // Extrapolate the 1/256 sample to total predicate time.
                 RULE_MATCH_TIME.fetch_add(
                     t0.elapsed().as_nanos() as u64 * 256,
                     std::sync::atomic::Ordering::Relaxed,

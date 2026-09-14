@@ -232,7 +232,7 @@ fn parse_fullform_basic() {
             ]
         }
     );
-    // 序列化回 Yacas 语法(嵌套二元运算每层都带括号,安全冗余)
+    // Serialize back to Yacas syntax, conservatively parenthesizing nested operators.
     assert_eq!(e.to_string(), "(((x ^ 2) + (2 * x)) + 1)");
 }
 
@@ -255,7 +255,7 @@ fn parse_fullform_scientific_number() {
 
 #[test]
 fn display_unary_minus_roundtrip() {
-    // 一元负号的 FullForm 形式为原子 `-x` 或 `(- x)`,Display 需可回读
+    // FullForm may encode unary minus as `-x` or `(- x)`; Display must round-trip it.
     let e = Expr::parse_fullform("(- x)").unwrap();
     assert_eq!(e.to_string(), "(- x)");
     let e2 = Expr::parse_fullform("-x").unwrap();

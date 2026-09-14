@@ -1,4 +1,4 @@
-// 引擎适配接口：加工层和步骤层只依赖本模块。
+// Engine boundary: processing and step projection depend only on this module.
 
 mod config;
 mod model;

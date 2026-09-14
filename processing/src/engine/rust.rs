@@ -16,7 +16,7 @@ impl RustEngine {
         self.env.secure = !enabled;
     }
 
-    /// 装载脚本库(scripts 目录默认 yacas/scripts,可用 YACAS_SCRIPTS 覆盖)
+    /// Load the script library, using `YACAS_SCRIPTS` to override its default path.
     pub fn spawn() -> Result<Self, EngineError> {
         let scripts = std::env::var("YACAS_SCRIPTS").unwrap_or_else(|_| default_scripts_dir());
         let steps = std::env::var("YACAS_STEPS_SCRIPTS").unwrap_or_else(|_| default_steps_dir());
@@ -27,7 +27,7 @@ impl RustEngine {
         mut scripts: String,
         steps: String,
     ) -> Result<Self, EngineError> {
-        // 与 cyacas main 注入 rootdir 的方式一致:目录以 '/' 结尾
+        // Yacas directory values conventionally end in `/`.
         if !scripts.ends_with('/') {
             scripts.push('/');
         }
@@ -51,7 +51,7 @@ impl RustEngine {
     }
 }
 
-/// 解析 + 求值一条命令,返回求值结果对象
+/// Parse and evaluate one command, returning the engine value object.
 pub(super) fn eval_cmd(
     env: &mut yacas_rs::env::Environment,
     command: &str,
@@ -62,7 +62,7 @@ pub(super) fn eval_cmd(
     yacas_rs::evaluator::eval(env, &tree)
 }
 
-/// Rust 引擎单次求值超时(病态输入的兜底;正常用例远低于此值,θ 链最重 ~3s)
+/// Per-evaluation deadline protecting the Rust engine from pathological input.
 #[cfg(not(test))]
 const RUST_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 // Unit tests exercise several expensive symbolic solvers concurrently. Their
