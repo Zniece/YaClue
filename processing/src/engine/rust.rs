@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::repl::{
+use super::config::{
     default_scripts_dir, default_steps_dir, steps_boot_cmds_from_dir, yacas_directory_literal,
 };
 use super::{Engine, EngineError, EvalResult, Expr};

@@ -165,16 +165,6 @@ integrals, algebraic transformations, equations and systems, limits,
 function plotting, assumptions, and direct engine evaluation. It is an
 integration prototype rather than the final GUI design.
 
-## Optional upstream comparison
-
-Normal builds and tests use Rust. For a specific compatibility question,
-set `YACAS_BIN` to a separately built Yacas executable to enable the optional
-C++ adapter checks. Intentional behavior improvements are governed by this
-project's tests; C++ output is not an automatic replacement for a golden
-baseline. Run those explicitly with
-`cargo test -p processing engine::tests -- --ignored --test-threads=1`;
-without the binary they fail instead of being reported as passed.
-
 This workspace uses the root `Cargo.lock`; Rust workspace members do not
 maintain separate lockfiles. The independently built Tauri application keeps
 its own `app/src-tauri/Cargo.lock`.

@@ -466,7 +466,7 @@ fn literal_tex(source: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{ReplEngine, RustEngine};
+    use crate::engine::RustEngine;
     use crate::integrals::antiderivative_family;
     use crate::quadrature::QuadratureOptions;
     use crate::step_compatibility::{
@@ -508,11 +508,7 @@ mod tests {
 
     #[test]
     fn derive_steps_returns_rules_and_tex() {
-        if !crate::engine::cpp_reference_available() {
-            eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-            return;
-        }
-        let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+        let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
         let steps = derive_steps(&mut engine, "Sin(x)^2", "x").expect("StepsD 失败");
 
         assert!(steps.len() >= 3, "步骤过少: {}", steps.len());
@@ -536,11 +532,7 @@ mod tests {
 
     #[test]
     fn derive_steps_errors_on_bad_input() {
-        if !crate::engine::cpp_reference_available() {
-            eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-            return;
-        }
-        let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+        let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
         // 非法语法(D 的非法逗号形式)应报错而非静默
         let err = derive_steps(&mut engine, "D(x^2,x)", "x").unwrap_err();
         assert!(err.to_string().contains("错误"), "应报告错误: {err}");
@@ -548,11 +540,7 @@ mod tests {
 
     #[test]
     fn derive_integrals_works() {
-        if !crate::engine::cpp_reference_available() {
-            eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-            return;
-        }
-        let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+        let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
         // 分部积分
         let steps = derive_integrals(&mut engine, "x*Sin(x)", "x").expect("StepsI 失败");
         // x*Sin(x):分部策略横幅为第一步
@@ -632,11 +620,7 @@ mod tests {
 
     #[test]
     fn derive_steps_rejects_injection() {
-        if !crate::engine::cpp_reference_available() {
-            eprintln!("skip: C++ reference binary not available (set YACAS_BIN to enable)");
-            return;
-        }
-        let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
+        let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
         // 命令注入尝试:分号、换行、赋值、引号、括号不匹配
         for bad in [
             "x); Echo(\"pwned\"); (x",

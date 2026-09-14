@@ -2,7 +2,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use super::repl::{default_scripts_dir, default_steps_dir};
+use super::config::{default_scripts_dir, default_steps_dir};
 use super::rust::eval_cmd;
 use super::*;
 
@@ -263,124 +263,6 @@ fn display_unary_minus_roundtrip() {
 }
 
 #[test]
-#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
-fn engine_eval_returns_structured() {
-    let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
-    let r = engine.eval("D(x) Sin(x)^2").expect("求值失败");
-    // (* 2 (* (Cos x) (Sin x)))
-    assert_eq!(
-        r.expr,
-        Expr::Call {
-            head: "*".into(),
-            args: vec![
-                Expr::Number("2".into()),
-                Expr::Call {
-                    head: "*".into(),
-                    args: vec![
-                        Expr::Call {
-                            head: "Cos".into(),
-                            args: vec![Expr::Symbol("x".into())]
-                        },
-                        Expr::Call {
-                            head: "Sin".into(),
-                            args: vec![Expr::Symbol("x".into())]
-                        }
-                    ]
-                }
-            ]
-        }
-    );
-    assert!(r.tex.contains("\\cos"), "TeX 异常: {}", r.tex);
-
-    // 会话状态跨命令保持
-    let _ = engine.eval("a := 5");
-    let r = engine.eval("a^2").expect("状态保持失败");
-    assert_eq!(r.expr, Expr::Number("25".into()));
-
-    // 矩阵:多行 FullForm + 单行结果,验证后缀切分
-    let r = engine.eval("{{1,2},{3,4}}").expect("矩阵求值失败");
-    assert_eq!(
-        r.expr,
-        Expr::Call {
-            head: "List".into(),
-            args: vec![
-                Expr::Call {
-                    head: "List".into(),
-                    args: vec![Expr::Number("1".into()), Expr::Number("2".into())]
-                },
-                Expr::Call {
-                    head: "List".into(),
-                    args: vec![Expr::Number("3".into()), Expr::Number("4".into())]
-                }
-            ]
-        }
-    );
-}
-
-#[test]
-#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
-fn repl_eval_executes_input_once() {
-    let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
-    engine.eval("replReviewCounter:=0").unwrap();
-    assert_eq!(
-        engine
-            .eval("replReviewCounter:=replReviewCounter+1")
-            .unwrap()
-            .expr,
-        Expr::Number("1".into())
-    );
-    assert_eq!(
-        engine.eval("replReviewCounter").unwrap().expr,
-        Expr::Number("1".into())
-    );
-}
-
-#[test]
-#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
-fn stepsd_works_through_engine() {
-    let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
-    // 步骤层 v1:StepsD 返回 {规则名, 表达式} 列表
-    let r = engine.eval("StepsD(x*Sin(x), x)").expect("StepsD 求值失败");
-    assert!(
-        matches!(r.expr, Expr::Call { ref head, .. } if head == "List"),
-        "StepsD 应返回列表,实际: {}",
-        r.expr
-    );
-    // 最终一步(化简后)与引擎 D 结果代数等价(用 Simplify 判定)
-    let diff = engine
-        .eval("Simplify(StepsD(x*Sin(x), x)[Length(StepsD(x*Sin(x), x))][2] - D(x)x*Sin(x))")
-        .expect("最终步求值失败");
-    assert_eq!(
-        diff.expr.to_string(),
-        "0",
-        "StepsD 最终步与 D 不一致: {}",
-        diff.expr
-    );
-}
-
-#[test]
-#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
-fn engine_reports_errors() {
-    let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
-    // D 是 bodied 运算符,逗号形式是非法语法——应报错而非静默
-    let err = engine.eval("D(x^2,x)").unwrap_err();
-    assert!(err.to_string().contains("错误"), "应报告错误: {err}");
-}
-
-#[test]
-#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
-fn d_bodied_syntax_works() {
-    let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
-    // D 的合法语法(stdopers.ys:39):D(var)expr 与 D(var,order)expr
-    let r = engine.eval("D(x) x^2").expect("D(x)x^2 失败");
-    assert_eq!(r.expr.to_string(), "(2 * x)");
-    let r = engine.eval("D(x,2) x^4").expect("D(x,2)x^4 失败");
-    assert_eq!(r.expr.to_string(), "(12 * (x ^ 2))");
-    let r = engine.eval("D(x) Sin(x)").expect("D(x)Sin(x) 失败");
-    assert_eq!(r.expr.to_string(), "Cos(x)");
-}
-
-#[test]
 fn rust_engine_proxy_end_to_end() {
     let mut e = RustEngineProxy::spawn().expect("proxy spawn");
     let r = e.eval("D(x) Sin(x)").expect("eval");
@@ -389,18 +271,6 @@ fn rust_engine_proxy_end_to_end() {
     let r = e.eval("Integrate(x) x^2").expect("eval2");
     let s = r.expr.to_string();
     assert!(s.contains("x") && s.contains("3"), "积分异常: {s}");
-}
-
-#[test]
-#[ignore = "requires an external C++ Yacas binary via YACAS_BIN"]
-fn engine_recovers_after_timeout() {
-    let mut engine = ReplEngine::spawn().expect("启动 yacas 失败");
-    // 死循环触发超时(引擎被终止)
-    let err = engine.eval("While(True) 1").unwrap_err();
-    assert!(matches!(err, EngineError::Timeout(_)), "应报超时: {err}");
-    // 下一次调用自动重启并恢复工作
-    let r = engine.eval("D(x) Sin(x)^2").expect("重启后应恢复");
-    assert!(r.tex.contains("\\cos"), "TeX 异常: {}", r.tex);
 }
 
 #[test]

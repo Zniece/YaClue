@@ -6,10 +6,6 @@ description = "Rust implementation of the yacas engine"
 license = "MIT"
 repository = "https://github.com/Zniece/YaClue"
 
-[[bin]]
-name = "golden"
-path = "src/bin/golden.rs"
-
 [[bench]]
 name = "nat_ops"
 harness = false

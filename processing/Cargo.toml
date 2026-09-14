@@ -13,7 +13,3 @@ legacy-step-api = []
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 yacas-rs = { path = "../yacas/yacas-rs" }
-
-[[example]]
-name = "steps_demo"
-required-features = ["legacy-step-api"]
