@@ -17,10 +17,12 @@ fn gui_renders_analysis_without_an_equivalence_arrow() {
 fn gui_examples_distinguish_equations_from_solving_them() {
     let javascript = include_str!("../../../src/main.js");
     let html = include_str!("../../../src/index.html");
+    let i18n = include_str!("../../../src/i18n.js");
     assert!(javascript.contains("Solve(x^2-5*x+6==0,x)"));
     assert!(!javascript.contains("[\"代数方程\", \"x^2-5*x+6==0\""));
-    assert!(html.contains("==</code> 构造方程"));
-    assert!(html.contains("显式使用 Solve 或 OdeSolve"));
+    assert!(html.contains("data-i18n=\"constructEquation\""));
+    assert!(html.contains("data-i18n=\"equationHelp\""));
+    assert!(i18n.contains("显式使用 Solve 或 OdeSolve"));
 }
 
 #[test]
@@ -34,4 +36,6 @@ fn gui_uses_stable_locale_keys_with_compatibility_fallbacks() {
     assert!(i18n.contains("\"en-US\""));
     assert!(html.contains("id=\"locale\""));
     assert!(html.contains("data-i18n=\"tagline\""));
+    assert!(i18n.contains("inconsistent keys"));
+    assert!(!javascript.chars().any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)));
 }

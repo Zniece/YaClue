@@ -16,35 +16,23 @@ const semanticEl = $("#semantic-summary");
 const assumptions = new Map();
 let calculating = false;
 let inputHelpTimer;
+let lastResult;
 
 const TEMPLATES = [
-  ["求导", "D(x)x^3*Sin(x)", "D(变量[,阶数])表达式"],
-  ["不定积分", "Integrate(x)x*Exp(x)", "Integrate(变量)表达式"],
-  ["定积分", "Integrate(x,0,Pi)Sin(x)", "Integrate(变量,下限,上限)表达式"],
-  ["极限", "Limit(Sin(x)/x,0)", "支持 Limit(表达式,趋近值)，或 Limit(变量,趋近值[,方向])表达式"],
-  ["Taylor 展开", "Taylor(Exp(x),0,6)", "支持 Taylor(表达式,展开点,次数)，默认变量为 x"],
-  ["二重积分", "DoubleIntegral(x*y,y,0,x,x,0,1)", "被积式,内层变量与上下限,外层变量与上下限"],
-  ["极坐标积分", "PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)", "被积式,直角变量,极坐标变量及边界"],
-  ["解代数方程", "Solve(x^2-5*x+6==0,x)", "Solve(方程,变量)；单独输入 == 只构造方程，不会自动求解"],
-  ["方程组", "Solve({x+y==3,x-y==1},{x,y})", "Solve({方程...},{变量...})"],
-  ["常微分方程", "OdeSolve(y''+4*y==Sin(x))", "当前标准形式使用自变量 x、因变量 y"],
-  ["ODE 数值解", "OdeSolveNumeric(y'==y,x,y,0,1,2)", "方程,自变量,因变量,起点,初值,终点"],
-  ["因式分解", "Factor(x^4-1)", "Factor(表达式)"],
-  ["展开", "Expand((x+1)^4)", "Expand(表达式)"],
-  ["化简", "Simplify((x^2-1)/(x-1))", "Simplify(表达式)"],
-  ["整理", "Tidy((x+x)/2+x^2-x^2)", "Tidy(表达式)"],
-  ["部分分式", "Apart(1/(x^2-1),x)", "Apart(表达式,变量)"],
-  ["无约束极值", "Extrema(x^2+y^2-2*x+4*y,x,y)", "Extrema(表达式,x变量,y变量)"],
-  ["约束极值", "Lagrange(x+y,x^2+y^2-1,x,y)", "约束按等于 0 的表达式输入"],
-  ["矩阵乘法", "{{1,2},{3,4}}*{{5,6},{7,8}}", "直接使用 + 或 *"],
-  ["行列式", "Determinant({{1,2},{3,4}})", "Determinant(矩阵)"],
-  ["逆矩阵", "Inverse({{1,2},{3,4}})", "Inverse(矩阵)"],
-  ["转置", "Transpose({{1,2,3},{4,5,6}})", "Transpose(矩阵)"],
-  ["特征值", "EigenValues({{2,1},{1,2}})", "EigenValues(矩阵)"],
-  ["线性方程组", "MatrixSolve({{2,1},{1,-1}},{5,1})", "MatrixSolve(系数矩阵,常数向量)"],
-  ["高精度近似", "N(Pi,30)", "N(表达式,精度)"],
-  ["数值求根", "FindRoot(Cos(x)-x,x,1)", "FindRoot(表达式,变量,初值)"],
-  ["函数绘图", "Plot(Sin(x)+Cos(2*x)/2,x,-6.28,6.28)", "Plot(表达式,变量,数值下界,数值上界)"],
+  ["derivative", "D(x)x^3*Sin(x)"], ["indefiniteIntegral", "Integrate(x)x*Exp(x)"],
+  ["definiteIntegral", "Integrate(x,0,Pi)Sin(x)"], ["limit", "Limit(Sin(x)/x,0)"],
+  ["taylor", "Taylor(Exp(x),0,6)"], ["doubleIntegral", "DoubleIntegral(x*y,y,0,x,x,0,1)"],
+  ["polarIntegral", "PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)"],
+  ["solveEquation", "Solve(x^2-5*x+6==0,x)"], ["equationSystem", "Solve({x+y==3,x-y==1},{x,y})"],
+  ["ode", "OdeSolve(y''+4*y==Sin(x))"], ["numericOde", "OdeSolveNumeric(y'==y,x,y,0,1,2)"],
+  ["factor", "Factor(x^4-1)"], ["expand", "Expand((x+1)^4)"],
+  ["simplify", "Simplify((x^2-1)/(x-1))"], ["tidy", "Tidy((x+x)/2+x^2-x^2)"],
+  ["apart", "Apart(1/(x^2-1),x)"], ["extrema", "Extrema(x^2+y^2-2*x+4*y,x,y)"],
+  ["lagrange", "Lagrange(x+y,x^2+y^2-1,x,y)"], ["matrixMultiply", "{{1,2},{3,4}}*{{5,6},{7,8}}"],
+  ["determinant", "Determinant({{1,2},{3,4}})"], ["inverse", "Inverse({{1,2},{3,4}})"],
+  ["transpose", "Transpose({{1,2,3},{4,5,6}})"], ["eigenvalues", "EigenValues({{2,1},{1,2}})"],
+  ["matrixSolve", "MatrixSolve({{2,1},{1,-1}},{5,1})"], ["numeric", "N(Pi,30)"],
+  ["findRoot", "FindRoot(Cos(x)-x,x,1)"], ["plot", "Plot(Sin(x)+Cos(2*x)/2,x,-6.28,6.28)"],
 ];
 
 function hideInputHelp() {
@@ -75,7 +63,9 @@ function insertTemplate(textarea, markedTemplate) {
 function renderTemplates() {
   const target = $("#template-list");
   target.innerHTML = "";
-  TEMPLATES.forEach(([label, expression, help]) => {
+  TEMPLATES.forEach(([key, expression]) => {
+    const label = t(`template.${key}.label`);
+    const help = t(`template.${key}.help`);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "shortcut";
@@ -133,6 +123,10 @@ function renderSummary(result) {
   else math.textContent = result.expression || t("completed");
 }
 
+function localizedResultLabel(result) {
+  return hasTranslation(result.title_key) ? t(result.title_key) : result.title;
+}
+
 function renderSemantic(semantic, outcome) {
   if (!semantic) return;
   const kindNames = {
@@ -150,11 +144,11 @@ function renderSemantic(semantic, outcome) {
   if (semantic.bound_symbols?.length) items.push(t("boundSymbols", { value: semantic.bound_symbols.join(", ") }));
   if (semantic.constants?.length) items.push(t("constants", { value: semantic.constants.join(", ") }));
   const reasonNames = {
-    condition_insufficient: "条件不足",
-    algorithm_uncovered: "算法未覆盖",
-    mathematical_absence: "数学上不存在",
-    divergent: "发散",
-    unsupported_operation: "不支持的运算",
+    condition_insufficient: t("reason.condition_insufficient"),
+    algorithm_uncovered: t("reason.algorithm_uncovered"),
+    mathematical_absence: t("reason.mathematical_absence"),
+    divergent: t("reason.divergent"),
+    unsupported_operation: t("reason.unsupported_operation"),
   };
   if (outcome?.conditionality === "conditional") items.push(t("conditional"));
   if (outcome?.completeness === "representative") items.push(t("representative"));
@@ -281,8 +275,9 @@ async function calculate() {
         verbosity: $("#verbosity").value,
       },
     });
-    $("#result-title").textContent = hasTranslation(result.title_key) ? t(result.title_key) : result.title;
-    $("#result-kind").textContent = result.kind.replaceAll("_", " ");
+    lastResult = result;
+    $("#result-title").textContent = localizedResultLabel(result);
+    $("#result-kind").textContent = localizedResultLabel(result);
     renderSemantic(result.semantic, result.outcome);
     if (result.kind === "plot") {
       renderSummary(result);
@@ -335,7 +330,7 @@ function renderAssumptions() {
   assumptions.forEach(({ fact, symbol }) => {
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = `${symbol}: ${fact}`;
+    chip.textContent = `${symbol}: ${t(`fact.${fact}`)}`;
     list.appendChild(chip);
   });
   $("#assumption-summary").textContent = assumptions.size ? t("assumptionCount", { count: assumptions.size }) : t("noAssumptions");
@@ -369,7 +364,17 @@ $("#stdio-run").addEventListener("click", runStdio);
 $("#stdio-clear").addEventListener("click", () => { $("#stdio-output").textContent = ""; });
 $("#locale").value = getLocale();
 $("#locale").addEventListener("change", (event) => setLocale(event.target.value));
-document.addEventListener("localechange", () => { renderTemplates(); renderAssumptions(); setBusy(calculating); });
+document.addEventListener("localechange", () => {
+  renderTemplates();
+  renderAssumptions();
+  setBusy(calculating);
+  if (lastResult) {
+    $("#result-title").textContent = localizedResultLabel(lastResult);
+    $("#result-kind").textContent = localizedResultLabel(lastResult);
+    semanticEl.innerHTML = "";
+    renderSemantic(lastResult.semantic, lastResult.outcome);
+  }
+});
 exprEl.addEventListener("keydown", (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate(); });
 exprEl.addEventListener("input", hideInputHelp);
 applyTranslations();

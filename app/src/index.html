@@ -22,13 +22,13 @@
           </div>
         </div>
         <div class="shortcut-header"><span data-i18n="shortcuts">快捷输入</span><small data-i18n="shortcutHelp">在光标处插入表达式模板</small></div>
-        <div id="template-list" class="shortcut-list" aria-label="快捷输入"></div>
+        <div id="template-list" class="shortcut-list" data-i18n-aria-label="shortcuts" aria-label="Templates"></div>
         <label class="expression-label" for="expr" data-i18n="expression">数学表达式</label>
         <div class="expression-box">
           <textarea id="expr" rows="4" spellcheck="false" aria-describedby="input-help">D(x)Sin(x)^2</textarea>
           <button id="clear-expression" class="icon-button" data-i18n-title="clearInput" data-i18n-aria-label="clearInput" title="清空输入" aria-label="清空输入">×</button>
         </div>
-        <div class="input-footer"><p id="input-help" role="status" aria-live="polite" hidden></p><span><kbd>⌘</kbd><kbd>Enter</kbd> 计算</span></div>
+        <div class="input-footer"><p id="input-help" role="status" aria-live="polite" hidden></p><span><kbd>⌘</kbd><kbd>Enter</kbd> <span data-i18n="calculate">Calculate</span></span></div>
         <details class="context-panel">
           <summary><span data-i18n="context">计算上下文与输入帮助</span> <span id="assumption-summary">无假设</span></summary>
           <div class="context-grid">
@@ -44,10 +44,10 @@
             </section>
             <section class="syntax-help">
               <h3 data-i18n="commonInput">常用输入</h3>
-              <p><code>*</code> 乘法　<code>^</code> 乘方　<code>==</code> 构造方程</p>
-              <p><code>Pi</code> 圆周率　<code>Infinity</code> 无穷</p>
+              <p><code>*</code> <span data-i18n="multiplication">multiply</span>　<code>^</code> <span data-i18n="power">power</span>　<code>==</code> <span data-i18n="constructEquation">construct equation</span></p>
+              <p><code>Pi</code> <span data-i18n="pi">pi</span>　<code>Infinity</code> <span data-i18n="infinity">infinity</span></p>
               <p><code>Sin(x)</code>　<code>Exp(x)</code>　<code>Ln(x)</code>　<code>Sqrt(x)</code></p>
-              <p class="muted">方程本身是数学对象；求解时请显式使用 Solve 或 OdeSolve。模板使用 YaClue 数学输入运算符。</p>
+              <p class="muted" data-i18n="equationHelp">An equation is a mathematical object. Use Solve or OdeSolve explicitly to solve it.</p>
             </section>
           </div>
         </details>
