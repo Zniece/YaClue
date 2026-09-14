@@ -5,9 +5,9 @@ use std::rc::Rc;
 
 use crate::engine::{Engine, EngineError};
 use crate::semantic_core::{
-    CapabilitySet, Certificate, Computation, ComputationOutput, MathematicalObject,
-    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
-    Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    CapabilitySet, Certificate, CertificateEvidence, Computation, ComputationOutput,
+    MathematicalObject, NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta,
+    OperatorId, Requirement, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
     SemanticInterpretation, SemanticState, TraceMode,
 };
 use crate::{improper_integrals::ImproperIntegralRequest, protocol::ConditionSet};
@@ -178,14 +178,9 @@ fn lower_euler_gamma(
             tex_override: Some(lowered.tex),
         }),
     };
-    let certificate = lowered.certificate.map(|certificate| Certificate {
-        kind: certificate.rule,
-        payload: format!(
-            "source=improper_integral;target=gamma;bindings={:?};conditions={:?}",
-            certificate.bindings,
-            certificate.conditions.conditions()
-        ),
-    });
+    let certificate = lowered
+        .certificate
+        .map(|certificate| Certificate::new(CertificateEvidence::IntrinsicLowering(certificate)));
     let mut trace = RuleTrace {
         events: vec![event],
     };

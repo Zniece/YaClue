@@ -632,17 +632,17 @@ fn migrated_object_pipeline_release_contract() {
         extrema.value().unwrap().semantics.kind,
         processing::semantic::ValueKind::SolutionSet
     );
-    assert!(extrema
-        .certificates
-        .iter()
-        .any(|item| item.kind == "extrema_analysis"));
+    assert!(extrema.certificates.iter().any(|item| matches!(
+        item.evidence,
+        processing::semantic_core::CertificateEvidence::ExtremaAnalysis(_)
+    )));
 
     let lagrange = execute(&mut engine, "Lagrange(x+y,x^2+y^2-1,x,y)");
     assert!(matches!(lagrange.output, ComputationOutput::Value(_)));
-    assert!(lagrange
-        .certificates
-        .iter()
-        .any(|item| item.kind == "lagrange_analysis"));
+    assert!(lagrange.certificates.iter().any(|item| matches!(
+        item.evidence,
+        processing::semantic_core::CertificateEvidence::LagrangeAnalysis(_)
+    )));
 
     let absent = execute(&mut engine, "Extrema(x+y,x,y)");
     assert!(matches!(absent.output, ComputationOutput::NoValue(_)));

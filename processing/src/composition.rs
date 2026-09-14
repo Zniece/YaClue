@@ -251,18 +251,10 @@ pub fn execute_elaborated(
             }
             constants
         });
-    let analysis = computation.certificates.iter().find_map(|certificate| {
-        matches!(
-            certificate.kind.as_str(),
-            "extrema_analysis"
-                | "lagrange_analysis"
-                | "multivariate_shape"
-                | "line_integral"
-                | "surface_integral"
-        )
-        .then(|| serde_json::from_str(&certificate.payload).ok())
-        .flatten()
-    });
+    let analysis = computation
+        .certificates
+        .iter()
+        .find_map(crate::semantic_core::Certificate::analysis);
     let mut result_binders = match subject.semantics.kind {
         crate::semantic::ValueKind::FunctionFamily => input.analyzed.semantic.bound_symbols.clone(),
         _ => Vec::new(),

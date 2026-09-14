@@ -12,10 +12,10 @@ use yacas_rs::value::{spine_refs, ObjectKind};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
-    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
-    SemanticState,
+    CapabilitySet, Certificate, CertificateEvidence, Computation, ComputationOutput,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
+    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 
 pub const MAX_MULTIVARIATE_DIMENSION: usize = 16;
@@ -151,11 +151,9 @@ impl SemanticOperation<MultivariateObjectRequest> for MultivariateDifferentialOp
             trace: Some(RuleTrace {
                 events: vec![event],
             }),
-            certificates: vec![Certificate {
-                kind: "multivariate_shape".into(),
-                payload: serde_json::to_string(&result.shape)
-                    .map_err(|error| EngineError::Parse(error.to_string()))?,
-            }],
+            certificates: vec![Certificate::new(CertificateEvidence::MultivariateShape(
+                result.shape,
+            ))],
             effects: Vec::new(),
         })
     }

@@ -7,10 +7,10 @@ use crate::semantic::{Exactness, ValueKind};
 #[cfg(test)]
 use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta, OperatorId, RuleEvent,
-    RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    CapabilitySet, Certificate, CertificateEvidence, Computation, ComputationOutput,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectCapability, ObjectDelta,
+    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use serde::Serialize;
 
@@ -328,13 +328,12 @@ impl SemanticOperation<FindRootRequest> for FindRootOperation {
             trace: Some(RuleTrace {
                 events: vec![event],
             }),
-            certificates: vec![Certificate {
-                kind: "numeric_root_attempt".into(),
-                payload: format!(
-                    "status={:?}; initial={}; tolerance={}; bracket={:?}",
-                    result.status, request.initial, request.tolerance, request.bracket
-                ),
-            }],
+            certificates: vec![Certificate::new(CertificateEvidence::NumericRootAttempt {
+                status: result.status,
+                initial: request.initial,
+                tolerance: request.tolerance,
+                bracket: request.bracket,
+            })],
             effects: Vec::new(),
         })
     }
@@ -909,6 +908,9 @@ mod tests {
             .unwrap()
             .print_source()
             .starts_with("FindRoot("));
-        assert_eq!(failed.certificates[0].kind, "numeric_root_attempt");
+        assert!(matches!(
+            failed.certificates[0].evidence,
+            CertificateEvidence::NumericRootAttempt { .. }
+        ));
     }
 }

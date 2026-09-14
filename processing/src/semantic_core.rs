@@ -2680,10 +2680,73 @@ impl EventSink for VecEventSink {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Versioned evidence emitted by a semantic operation. Known evidence is
+/// represented by bounded variants; only out-of-tree extensions may carry an
+/// open JSON document, and they must declare their protocol identity/version.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
+pub enum CertificateEvidence {
+    EquivalentRepresentation {
+        operation: String,
+        before: String,
+        after: String,
+    },
+    NumericRootAttempt {
+        status: crate::numeric::RootStatus,
+        initial: f64,
+        tolerance: f64,
+        bracket: Option<(f64, f64)>,
+    },
+    MultivariateShape(Vec<usize>),
+    LineIntegral(crate::line_integrals::LineIntegralResult),
+    SurfaceIntegral(crate::surface_integrals::SurfaceIntegralResult),
+    ExtremaAnalysis(crate::extrema::ExtremaResult),
+    LagrangeAnalysis(crate::extrema::LagrangeResult),
+    NumericOdeBudget {
+        status: crate::ode_numeric::NumericOdeStatus,
+        accepted_steps: usize,
+        rejected_steps: usize,
+        evaluations: usize,
+        estimated_error: f64,
+    },
+    IntrinsicLowering(crate::intrinsics::LoweringCertificate),
+    Extension(ExtensionCertificateEnvelope),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExtensionCertificateEnvelope {
+    pub namespace: String,
+    pub name: String,
+    pub version: u32,
+    pub document: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Certificate {
-    pub kind: String,
-    pub payload: String,
+    pub version: u32,
+    pub evidence: CertificateEvidence,
+}
+
+impl Certificate {
+    pub const CURRENT_VERSION: u32 = 1;
+
+    pub fn new(evidence: CertificateEvidence) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            evidence,
+        }
+    }
+
+    pub fn analysis(&self) -> Option<serde_json::Value> {
+        match &self.evidence {
+            CertificateEvidence::MultivariateShape(shape) => serde_json::to_value(shape).ok(),
+            CertificateEvidence::LineIntegral(result) => serde_json::to_value(result).ok(),
+            CertificateEvidence::SurfaceIntegral(result) => serde_json::to_value(result).ok(),
+            CertificateEvidence::ExtremaAnalysis(result) => serde_json::to_value(result).ok(),
+            CertificateEvidence::LagrangeAnalysis(result) => serde_json::to_value(result).ok(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

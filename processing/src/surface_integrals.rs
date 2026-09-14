@@ -12,10 +12,10 @@ use yacas_rs::value::{spine_refs, ObjectKind};
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
-    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
-    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
-    SemanticState,
+    CapabilitySet, Certificate, CertificateEvidence, Computation, ComputationOutput,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
+    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -179,11 +179,9 @@ impl SemanticOperation<SurfaceIntegralObjectRequest> for SurfaceIntegralOperatio
                 ComputationOutput::Held(output)
             },
             trace: Some(RuleTrace { events }),
-            certificates: vec![Certificate {
-                kind: "surface_integral".into(),
-                payload: serde_json::to_string(&result)
-                    .map_err(|error| EngineError::Parse(error.to_string()))?,
-            }],
+            certificates: vec![Certificate::new(CertificateEvidence::SurfaceIntegral(
+                result,
+            ))],
             effects: Vec::new(),
         })
     }
@@ -211,8 +209,8 @@ fn object_components(input: &crate::semantic_core::MathematicalObject) -> Vec<St
     })
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct SurfaceIntegralResult {
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SurfaceIntegralResult {
     pub kind: SurfaceIntegralKind,
     pub orientation: SurfaceOrientation,
     pub surface: [String; 3],

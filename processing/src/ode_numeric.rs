@@ -10,10 +10,10 @@ use crate::semantic::{Exactness, ValueKind};
 #[cfg(test)]
 use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    CapabilitySet, Certificate, Computation, ComputationOutput, NormalizationLevel,
-    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance,
-    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
-    SemanticState,
+    CapabilitySet, Certificate, CertificateEvidence, Computation, ComputationOutput,
+    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
+    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
+    SemanticOperation, SemanticState,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -182,17 +182,13 @@ impl SemanticOperation<NumericOdeRequest> for NumericOdeOperation {
             trace: Some(RuleTrace {
                 events: vec![event],
             }),
-            certificates: vec![Certificate {
-                kind: "numeric-ode-budget".into(),
-                payload: format!(
-                    "status={:?};accepted={};rejected={};evaluations={};error={}",
-                    result.status,
-                    result.accepted_steps,
-                    result.rejected_steps,
-                    result.evaluations,
-                    result.estimated_error
-                ),
-            }],
+            certificates: vec![Certificate::new(CertificateEvidence::NumericOdeBudget {
+                status: result.status,
+                accepted_steps: result.accepted_steps,
+                rejected_steps: result.rejected_steps,
+                evaluations: result.evaluations,
+                estimated_error: result.estimated_error,
+            })],
             effects: Vec::new(),
         })
     }
@@ -718,7 +714,10 @@ mod tests {
             output.semantics.interpretation,
             SemanticInterpretation::NumericTrajectory(ref trajectory) if trajectory.points.len() > 1
         ));
-        assert!(result.certificates[0].payload.contains("evaluations="));
+        assert!(matches!(
+            result.certificates[0].evidence,
+            CertificateEvidence::NumericOdeBudget { evaluations, .. } if evaluations > 0
+        ));
     }
 
     #[test]

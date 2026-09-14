@@ -11,10 +11,10 @@ use crate::semantic::{Exactness, ValueKind};
 #[cfg(test)]
 use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    CapabilitySet, Certificate, Computation, ComputationOutput, MathematicalObject,
-    NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId,
-    RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace, SemanticInterpretation,
-    SemanticOperation, SemanticState,
+    CapabilitySet, Certificate, CertificateEvidence, Computation, ComputationOutput,
+    MathematicalObject, NormalizationLevel, NormalizationMetadata, NormalizationMode, ObjectDelta,
+    OperatorId, RuleEvent, RuleImportance, RulePayload, RulePresentation, RuleTrace,
+    SemanticInterpretation, SemanticOperation, SemanticState,
 };
 use crate::steps::{render_events, Step, StepEvent, StepImportance, StepVerbosity};
 use serde::Serialize;
@@ -39,7 +39,7 @@ pub enum CriticalPointKind {
     Inconclusive,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CriticalPoint {
     pub coordinates: Vec<Assignment>,
     pub value: String,
@@ -50,7 +50,7 @@ pub struct CriticalPoint {
     pub kind: CriticalPointKind,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ExtremaResult {
     pub status: ExtremaStatus,
     pub expression: String,
@@ -75,7 +75,7 @@ pub enum LagrangeStatus {
     Unresolved,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LagrangeCandidate {
     pub coordinates: Vec<Assignment>,
     pub multiplier: String,
@@ -88,7 +88,7 @@ pub struct LagrangeCandidate {
     pub real_verified: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LagrangeResult {
     pub status: LagrangeStatus,
     pub expression: String,
@@ -216,11 +216,7 @@ fn extrema_computation(
         "Extrema",
         resolution,
         events,
-        Certificate {
-            kind: "extrema_analysis".into(),
-            payload: serde_json::to_string(&result)
-                .map_err(|error| EngineError::Parse(error.to_string()))?,
-        },
+        Certificate::new(CertificateEvidence::ExtremaAnalysis(result)),
     )
 }
 
@@ -253,11 +249,7 @@ fn lagrange_computation(
         "Lagrange",
         resolution,
         events,
-        Certificate {
-            kind: "lagrange_analysis".into(),
-            payload: serde_json::to_string(&result)
-                .map_err(|error| EngineError::Parse(error.to_string()))?,
-        },
+        Certificate::new(CertificateEvidence::LagrangeAnalysis(result)),
     )
 }
 

@@ -211,14 +211,14 @@ impl SemanticOperation<TransformRequest> for TransformOperation {
                 events: vec![event],
             }),
             certificates: (!result.unresolved)
-                .then(|| crate::semantic_core::Certificate {
-                    kind: "equivalent-representation".into(),
-                    payload: format!(
-                        "operation={};before={};after={}",
-                        request.kind.name(),
-                        result.input,
-                        result.output
-                    ),
+                .then(|| {
+                    crate::semantic_core::Certificate::new(
+                        crate::semantic_core::CertificateEvidence::EquivalentRepresentation {
+                            operation: request.kind.name().into(),
+                            before: result.input,
+                            after: result.output,
+                        },
+                    )
                 })
                 .into_iter()
                 .collect(),
