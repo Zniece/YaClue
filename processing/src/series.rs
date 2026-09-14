@@ -12,10 +12,34 @@ use crate::semantic::{Exactness, ValueKind};
 #[cfg(test)]
 use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    CapabilitySet, Computation, ComputationOutput, NormalizationLevel, NormalizationMetadata,
-    NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance, RulePayload,
-    RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
+    CapabilitySet, Computation, ComputationOutput, EventSink, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleFact, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState, VecEventSink,
 };
+
+struct SeriesRuleEmission {
+    rule: String,
+    expression: String,
+    explanation: String,
+    importance: RuleImportance,
+}
+
+impl SeriesRuleEmission {
+    fn new(
+        rule: impl Into<String>,
+        expression: impl Into<String>,
+        explanation: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expression: expression.into(),
+            explanation: explanation.into(),
+            importance,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SumRequest {
@@ -55,17 +79,11 @@ impl SemanticOperation<SumRequest> for SumOperation {
             "Sum({},{},{},{term})",
             request.variable, request.lower, request.upper
         );
-        let (source, metadata, held, no_value, steps) = if request.upper == "Infinity" {
-            let stepped = infinite_series_steps_with_verbosity(
-                engine,
-                &term,
-                &request.variable,
-                &request.lower,
-                StepVerbosity::Detailed,
-            )?;
+        let (source, metadata, held, no_value, emissions) = if request.upper == "Infinity" {
+            let (result, emissions) =
+                infinite_series_evaluation(engine, &term, &request.variable, &request.lower)?;
             let conditions = ConditionSet::new(
-                stepped
-                    .result
+                result
                     .conditions
                     .iter()
                     .map(|description| Condition::Unknown {
@@ -73,7 +91,7 @@ impl SemanticOperation<SumRequest> for SumOperation {
                     })
                     .collect::<Vec<_>>(),
             )?;
-            let (metadata, held, no_value) = match stepped.result.status {
+            let (metadata, held, no_value) = match result.status {
                 SeriesStatus::AbsolutelyConvergent | SeriesStatus::ConditionallyConvergent => (
                     ResultMetadata::solved(Exactness::Symbolic, conditions),
                     false,
@@ -99,19 +117,20 @@ impl SemanticOperation<SumRequest> for SumOperation {
                 ),
             };
             (
-                stepped.result.value.unwrap_or_else(|| held_source.clone()),
+                result.value.unwrap_or_else(|| held_source.clone()),
                 metadata,
                 held,
                 no_value,
-                stepped.steps,
+                emissions,
             )
         } else {
-            let result = finite_sum(
+            let result = finite_sum_internal(
                 engine,
                 &term,
                 &request.variable,
                 &request.lower,
                 &request.upper,
+                false,
             )?;
             let (metadata, held, no_value) = match result.status {
                 SumStatus::Evaluated => (
@@ -136,24 +155,20 @@ impl SemanticOperation<SumRequest> for SumOperation {
                     true,
                 ),
             };
-            let presentation = Step {
-                kind: crate::steps::StepKind::EquivalentTransformation,
-                before_expr: None,
-                before_tex: None,
-                rule: if held { "hold-sum" } else { "finite-sum" }.into(),
-                expr: if held {
+            let emission = SeriesRuleEmission::new(
+                if held { "hold-sum" } else { "finite-sum" },
+                if held {
                     held_source.clone()
                 } else {
                     result.value.clone()
                 },
-                why: if held {
-                    "保留尚无闭式结果的求和对象。".into()
+                if held {
+                    "保留尚无闭式结果的求和对象。"
                 } else {
-                    "计算有限求和。".into()
+                    "计算有限求和。"
                 },
-                tex: result.tex.clone(),
-                importance: StepImportance::Key,
-            };
+                RuleImportance::Key,
+            );
             (
                 if held {
                     held_source.clone()
@@ -163,7 +178,7 @@ impl SemanticOperation<SumRequest> for SumOperation {
                 metadata,
                 held,
                 no_value,
-                vec![presentation],
+                vec![emission],
             )
         };
 
@@ -212,35 +227,36 @@ impl SemanticOperation<SumRequest> for SumOperation {
                 mode: NormalizationMode::Operation(OperatorId::Sum),
             }),
         });
-        crate::metrics::record_legacy_trace_adaptations(steps.len());
-        let events = steps
-            .into_iter()
-            .map(|step| RuleEvent {
+        let input_ref = input.reference(None);
+        let output_ref = output.reference(None);
+        let bindings = vec![
+            ("variable".into(), request.variable.clone()),
+            ("lower".into(), request.lower.clone()),
+            ("upper".into(), request.upper.clone()),
+        ];
+        let conditions = output.semantics.metadata.conditions.conditions().to_vec();
+        let mut sink = VecEventSink::default();
+        emissions.into_iter().for_each(|emission| {
+            let fact = RuleFact {
                 class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-                rule: step.rule,
-                input: input.reference(None),
+                rule: emission.rule,
+                input: input_ref.clone(),
                 additional_inputs: Vec::new(),
-                output: output.reference(None),
-                bindings: vec![
-                    ("variable".into(), request.variable.clone()),
-                    ("lower".into(), request.lower.clone()),
-                    ("upper".into(), request.upper.clone()),
-                ],
-                conditions: output.semantics.metadata.conditions.conditions().to_vec(),
+                output: output_ref.clone(),
+                bindings: bindings.clone(),
+                conditions: conditions.clone(),
                 payload: RulePayload::Structural,
-                importance: match step.importance {
-                    StepImportance::Routine => RuleImportance::Routine,
-                    StepImportance::Normal => RuleImportance::Normal,
-                    StepImportance::Key => RuleImportance::Key,
-                },
+                importance: emission.importance,
                 transformation: None,
-                presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
-                    expression: step.expr,
-                    explanation: step.why,
-                    tex_override: Some(step.tex),
-                }),
-            })
-            .collect();
+            };
+            sink.record_fact(fact, || {
+                Some(RulePresentation {
+                    expression: emission.expression,
+                    explanation: emission.explanation,
+                    tex_override: None,
+                })
+            });
+        });
         Ok(Computation {
             output: if no_value {
                 ComputationOutput::NoValue(output)
@@ -249,7 +265,9 @@ impl SemanticOperation<SumRequest> for SumOperation {
             } else {
                 ComputationOutput::Value(output)
             },
-            trace: Some(RuleTrace { events }),
+            trace: Some(RuleTrace {
+                events: sink.events,
+            }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })
@@ -357,13 +375,30 @@ pub fn finite_sum(
     from: &str,
     to: &str,
 ) -> Result<FiniteSumResult, EngineError> {
+    finite_sum_internal(engine, term, variable, from, to, true)
+}
+
+fn finite_sum_internal(
+    engine: &mut dyn Engine,
+    term: &str,
+    variable: &str,
+    from: &str,
+    to: &str,
+    render_value: bool,
+) -> Result<FiniteSumResult, EngineError> {
     validate_request(term, variable, from)?;
     validate_expression(to, "求和上限")?;
-    let evaluated = engine.eval(&format!("Sum({variable},{from},{to},{term})"))?;
-    let value = evaluated.expr.to_string();
-    let status = if matches!(&evaluated.expr, Expr::Symbol(symbol) if symbol == "Undefined") {
+    let command = format!("Sum({variable},{from},{to},{term})");
+    let (expression, tex) = if render_value {
+        let evaluated = engine.eval(&command)?;
+        (evaluated.expr, strip_tex_delimiters(&evaluated.tex))
+    } else {
+        (engine.eval_expr(&command)?, String::new())
+    };
+    let value = expression.to_string();
+    let status = if matches!(&expression, Expr::Symbol(symbol) if symbol == "Undefined") {
         SumStatus::Undefined
-    } else if matches!(&evaluated.expr, Expr::Call { head, .. } if head == "Sum") {
+    } else if matches!(&expression, Expr::Call { head, .. } if head == "Sum") {
         SumStatus::Unresolved
     } else {
         SumStatus::Evaluated
@@ -375,7 +410,7 @@ pub fn finite_sum(
         term: term.into(),
         value,
         status,
-        tex: strip_tex_delimiters(&evaluated.tex),
+        tex,
     })
 }
 
@@ -455,40 +490,50 @@ pub fn infinite_series_steps_with_verbosity(
     from: &str,
     verbosity: StepVerbosity,
 ) -> Result<InfiniteSeriesStepResult, EngineError> {
-    let mut result = infinite_series_internal(engine, term, variable, from, false)?;
-    let series = format!("Sum({variable},{from},Infinity,{term})");
-    let mut events = vec![StepEvent::new(
-        "series-start",
-        &series,
-        "建立无穷级数并检查通项与适用的收敛判别法。",
-        StepImportance::Routine,
-    )];
-    events.push(StepEvent::new(
-        method_rule(result.method),
-        result.test_value.as_deref().unwrap_or(term),
-        method_explanation(result.method),
-        StepImportance::Key,
-    ));
-    for condition in &result.conditions {
-        events.push(StepEvent::new(
-            "series-condition",
-            condition,
-            "只有满足该条件时，当前判别结论成立。",
-            StepImportance::Key,
-        ));
-    }
-    events.push(StepEvent::new(
-        "series-result",
-        result.value.as_deref().unwrap_or(&series),
-        series_status_explanation(result.status),
-        StepImportance::Key,
-    ));
-    let steps = render_events(engine, events, verbosity)?;
+    let (mut result, emissions) = infinite_series_evaluation(engine, term, variable, from)?;
+    let steps = render_series_emissions(engine, emissions, verbosity)?;
     result.tex = steps
         .last()
         .map(|step| step.tex.clone())
         .unwrap_or_default();
     Ok(InfiniteSeriesStepResult { result, steps })
+}
+
+fn infinite_series_evaluation(
+    engine: &mut dyn Engine,
+    term: &str,
+    variable: &str,
+    from: &str,
+) -> Result<(InfiniteSeriesResult, Vec<SeriesRuleEmission>), EngineError> {
+    let result = infinite_series_internal(engine, term, variable, from, false)?;
+    let series = format!("Sum({variable},{from},Infinity,{term})");
+    let mut emissions = vec![SeriesRuleEmission::new(
+        "series-start",
+        series.clone(),
+        "建立无穷级数并检查通项与适用的收敛判别法。",
+        RuleImportance::Routine,
+    )];
+    emissions.push(SeriesRuleEmission::new(
+        method_rule(result.method),
+        result.test_value.clone().unwrap_or_else(|| term.to_owned()),
+        method_explanation(result.method),
+        RuleImportance::Key,
+    ));
+    for condition in &result.conditions {
+        emissions.push(SeriesRuleEmission::new(
+            "series-condition",
+            condition.clone(),
+            "只有满足该条件时，当前判别结论成立。",
+            RuleImportance::Key,
+        ));
+    }
+    emissions.push(SeriesRuleEmission::new(
+        "series-result",
+        result.value.clone().unwrap_or(series),
+        series_status_explanation(result.status),
+        RuleImportance::Key,
+    ));
+    Ok((result, emissions))
 }
 
 /// Analyze `Sum(coefficient * (variable-center)^index)`.
@@ -599,14 +644,31 @@ pub fn power_series_steps_with_verbosity(
     center: &str,
     verbosity: StepVerbosity,
 ) -> Result<PowerSeriesStepResult, EngineError> {
-    let mut result = power_series_internal(engine, coefficient, index, variable, center, false)?;
-    let mut events = Vec::new();
+    let (mut result, emissions) =
+        power_series_evaluation(engine, coefficient, index, variable, center)?;
+    let steps = render_series_emissions(engine, emissions, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(PowerSeriesStepResult { result, steps })
+}
+
+fn power_series_evaluation(
+    engine: &mut dyn Engine,
+    coefficient: &str,
+    index: &str,
+    variable: &str,
+    center: &str,
+) -> Result<(PowerSeriesResult, Vec<SeriesRuleEmission>), EngineError> {
+    let result = power_series_internal(engine, coefficient, index, variable, center, false)?;
+    let mut emissions = Vec::new();
     if let Some(radius) = &result.radius {
-        events.push(StepEvent::new(
+        emissions.push(SeriesRuleEmission::new(
             "power-series-radius",
-            radius,
+            radius.clone(),
             "对系数应用比值或根值判别，得到收敛半径。",
-            StepImportance::Key,
+            RuleImportance::Key,
         ));
     }
     for (side, endpoint, status, included) in [
@@ -624,9 +686,9 @@ pub fn power_series_steps_with_verbosity(
         ),
     ] {
         if let (Some(endpoint), Some(status)) = (endpoint, status) {
-            events.push(StepEvent::new(
-                &format!("power-series-endpoint-{side}"),
-                endpoint,
+            emissions.push(SeriesRuleEmission::new(
+                format!("power-series-endpoint-{side}"),
+                endpoint.clone(),
                 if included {
                     match status {
                         SeriesStatus::ConditionallyConvergent => {
@@ -637,27 +699,48 @@ pub fn power_series_steps_with_verbosity(
                 } else {
                     "代入该端点后级数发散或无法证明收敛，因此不包含此端点。"
                 },
-                StepImportance::Normal,
+                RuleImportance::Normal,
             ));
         }
     }
     let interval = power_series_interval(&result);
-    events.push(StepEvent::new(
+    emissions.push(SeriesRuleEmission::new(
         "power-series-result",
-        &interval,
+        interval,
         if result.status == PowerSeriesStatus::Convergent {
             "得到收敛半径，并逐一检查所有有限端点。"
         } else {
             "当前有界判别规则不足以确定收敛区间。"
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
-    let steps = render_events(engine, events, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(PowerSeriesStepResult { result, steps })
+    Ok((result, emissions))
+}
+
+fn render_series_emissions(
+    engine: &mut dyn Engine,
+    emissions: Vec<SeriesRuleEmission>,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    render_events(
+        engine,
+        emissions
+            .into_iter()
+            .map(|emission| {
+                StepEvent::new(
+                    &emission.rule,
+                    &emission.expression,
+                    &emission.explanation,
+                    match emission.importance {
+                        RuleImportance::Routine => StepImportance::Routine,
+                        RuleImportance::Normal => StepImportance::Normal,
+                        RuleImportance::Key => StepImportance::Key,
+                    },
+                )
+            })
+            .collect(),
+        verbosity,
+    )
 }
 
 fn validate_request(term: &str, variable: &str, from: &str) -> Result<(), EngineError> {
@@ -848,6 +931,35 @@ mod tests {
             held.subject().unwrap().semantics.interpretation,
             SemanticInterpretation::HeldTypedApplication(_)
         ));
+    }
+
+    #[test]
+    fn sum_operation_emits_domain_facts_without_legacy_adaptation() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let measured = crate::metrics::measure(|| {
+            SumOperation
+                .compute(
+                    &mut engine,
+                    &object("r^k"),
+                    &SumRequest {
+                        variable: "k".into(),
+                        lower: "0".into(),
+                        upper: "Infinity".into(),
+                    },
+                )
+                .unwrap()
+        });
+        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
+        let output = measured.value.subject().unwrap();
+        assert!(!output.semantics.metadata.conditions.is_empty());
+        let trace = measured.value.trace.as_ref().unwrap();
+        assert!(trace
+            .events
+            .iter()
+            .any(|event| event.rule == "series-condition"));
+        assert!(trace.events.iter().all(|event| {
+            event.conditions == output.semantics.metadata.conditions.conditions()
+        }));
     }
 
     #[test]
