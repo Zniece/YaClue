@@ -13,10 +13,34 @@ use crate::semantic::{Exactness, ValueKind};
 #[cfg(test)]
 use crate::semantic_core::object_from_source;
 use crate::semantic_core::{
-    CapabilitySet, Computation, ComputationOutput, NormalizationLevel, NormalizationMetadata,
-    NormalizationMode, ObjectDelta, OperatorId, RuleEvent, RuleImportance, RulePayload,
-    RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation, SemanticState,
+    CapabilitySet, Computation, ComputationOutput, EventSink, NormalizationLevel,
+    NormalizationMetadata, NormalizationMode, ObjectDelta, OperatorId, RuleFact, RuleImportance,
+    RulePayload, RulePresentation, RuleTrace, SemanticInterpretation, SemanticOperation,
+    SemanticState, VecEventSink,
 };
+
+struct MultipleIntegralRuleEmission {
+    rule: String,
+    expression: String,
+    explanation: String,
+    importance: RuleImportance,
+}
+
+impl MultipleIntegralRuleEmission {
+    fn new(
+        rule: impl Into<String>,
+        expression: impl Into<String>,
+        explanation: impl Into<String>,
+        importance: RuleImportance,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            expression: expression.into(),
+            explanation: explanation.into(),
+            importance,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MultipleIntegralRequest {
@@ -54,75 +78,92 @@ impl SemanticOperation<MultipleIntegralRequest> for MultipleIntegralOperation {
             ));
         }
         let expression = input.print_source();
-        let (operator, operator_id, value, unresolved, steps, held_source) = match request {
-            MultipleIntegralRequest::Double { inner, outer } => {
-                let result = double_integral_steps_with_verbosity(
-                    engine,
-                    &expression,
-                    IntegralBound {
-                        variable: &inner.0,
-                        lower: &inner.1,
-                        upper: &inner.2,
-                    },
-                    IntegralBound {
-                        variable: &outer.0,
-                        lower: &outer.1,
-                        upper: &outer.2,
-                    },
-                    StepVerbosity::Detailed,
-                )?;
-                let unresolved = result.result.status != IteratedIntegralStatus::Evaluated;
-                let held_source = format!(
-                    "DoubleIntegral({expression},{},{},{},{},{},{})",
-                    inner.0, inner.1, inner.2, outer.0, outer.1, outer.2
-                );
-                (
-                    "DoubleIntegral",
-                    OperatorId::DoubleIntegral,
-                    result.result.value,
-                    unresolved,
-                    result.steps,
-                    held_source,
-                )
-            }
-            MultipleIntegralRequest::Polar {
-                x,
-                y,
-                radius,
-                angle,
-                radial,
-                angular,
-            } => {
-                let result = polar_integral_steps_with_verbosity(
-                    engine,
-                    &expression,
+        let (operator, operator_id, value, unresolved, emissions, held_source, bindings) =
+            match request {
+                MultipleIntegralRequest::Double { inner, outer } => {
+                    let (result, emissions) = double_integral_evaluation(
+                        engine,
+                        &expression,
+                        IntegralBound {
+                            variable: &inner.0,
+                            lower: &inner.1,
+                            upper: &inner.2,
+                        },
+                        IntegralBound {
+                            variable: &outer.0,
+                            lower: &outer.1,
+                            upper: &outer.2,
+                        },
+                    )?;
+                    let unresolved = result.status != IteratedIntegralStatus::Evaluated;
+                    let held_source = format!(
+                        "DoubleIntegral({expression},{},{},{},{},{},{})",
+                        inner.0, inner.1, inner.2, outer.0, outer.1, outer.2
+                    );
+                    (
+                        "DoubleIntegral",
+                        OperatorId::DoubleIntegral,
+                        result.value,
+                        unresolved,
+                        emissions,
+                        held_source,
+                        vec![
+                            ("inner_variable".into(), inner.0.clone()),
+                            ("inner_lower".into(), inner.1.clone()),
+                            ("inner_upper".into(), inner.2.clone()),
+                            ("outer_variable".into(), outer.0.clone()),
+                            ("outer_lower".into(), outer.1.clone()),
+                            ("outer_upper".into(), outer.2.clone()),
+                        ],
+                    )
+                }
+                MultipleIntegralRequest::Polar {
                     x,
                     y,
                     radius,
                     angle,
-                    PolarRegion {
-                        radial_lower: &radial.0,
-                        radial_upper: &radial.1,
-                        angle_lower: &angular.0,
-                        angle_upper: &angular.1,
-                    },
-                    StepVerbosity::Detailed,
-                )?;
-                let unresolved = result.result.integral.status != IteratedIntegralStatus::Evaluated;
-                let held_source = format!(
-                    "PolarIntegral({expression},{x},{y},{radius},{angle},{},{},{},{})",
-                    radial.0, radial.1, angular.0, angular.1
-                );
-                (
-                    "PolarIntegral",
-                    OperatorId::PolarIntegral,
-                    result.result.integral.value,
-                    unresolved,
-                    result.steps,
-                    held_source,
-                )
-            }
-        };
+                    radial,
+                    angular,
+                } => {
+                    let (result, emissions) = polar_integral_evaluation(
+                        engine,
+                        &expression,
+                        x,
+                        y,
+                        radius,
+                        angle,
+                        PolarRegion {
+                            radial_lower: &radial.0,
+                            radial_upper: &radial.1,
+                            angle_lower: &angular.0,
+                            angle_upper: &angular.1,
+                        },
+                    )?;
+                    let unresolved = result.integral.status != IteratedIntegralStatus::Evaluated;
+                    let held_source = format!(
+                        "PolarIntegral({expression},{x},{y},{radius},{angle},{},{},{},{})",
+                        radial.0, radial.1, angular.0, angular.1
+                    );
+                    (
+                        "PolarIntegral",
+                        OperatorId::PolarIntegral,
+                        result.integral.value,
+                        unresolved,
+                        emissions,
+                        held_source,
+                        vec![
+                            ("x".into(), x.clone()),
+                            ("y".into(), y.clone()),
+                            ("radius".into(), radius.clone()),
+                            ("angle".into(), angle.clone()),
+                            ("radial_lower".into(), radial.0.clone()),
+                            ("radial_upper".into(), radial.1.clone()),
+                            ("angular_lower".into(), angular.0.clone()),
+                            ("angular_upper".into(), angular.1.clone()),
+                        ],
+                    )
+                }
+            };
         let source = if unresolved { held_source } else { value };
         let metadata = if unresolved {
             ResultMetadata::unresolved(Exactness::Symbolic, OutcomeReason::AlgorithmUncovered)
@@ -170,38 +211,39 @@ impl SemanticOperation<MultipleIntegralRequest> for MultipleIntegralOperation {
                 mode: NormalizationMode::Operation(operator_id),
             }),
         });
-        crate::metrics::record_legacy_trace_adaptations(steps.len());
-        let events = steps
-            .into_iter()
-            .map(|step| RuleEvent {
+        let input_ref = input.reference(None);
+        let output_ref = output.reference(None);
+        let mut sink = VecEventSink::default();
+        emissions.into_iter().for_each(|emission| {
+            let fact = RuleFact {
                 class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
-                rule: step.rule,
-                input: input.reference(None),
+                rule: emission.rule,
+                input: input_ref.clone(),
                 additional_inputs: Vec::new(),
-                output: output.reference(None),
-                bindings: Vec::new(),
+                output: output_ref.clone(),
+                bindings: bindings.clone(),
                 conditions: Vec::new(),
                 payload: RulePayload::Structural,
-                importance: match step.importance {
-                    StepImportance::Routine => RuleImportance::Routine,
-                    StepImportance::Normal => RuleImportance::Normal,
-                    StepImportance::Key => RuleImportance::Key,
-                },
+                importance: emission.importance,
                 transformation: None,
-                presentation: crate::semantic_core::materialize_presentation(|| RulePresentation {
-                    expression: step.expr,
-                    explanation: step.why,
-                    tex_override: Some(step.tex),
-                }),
-            })
-            .collect();
+            };
+            sink.record_fact(fact, || {
+                Some(RulePresentation {
+                    expression: emission.expression,
+                    explanation: emission.explanation,
+                    tex_override: None,
+                })
+            });
+        });
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
             } else {
                 ComputationOutput::Value(output)
             },
-            trace: Some(RuleTrace { events }),
+            trace: Some(RuleTrace {
+                events: sink.events,
+            }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })
@@ -358,69 +400,84 @@ pub fn polar_integral_steps_with_verbosity(
     region: PolarRegion<'_>,
     verbosity: StepVerbosity,
 ) -> Result<PolarIntegralStepResult, EngineError> {
-    validate_polar_request(expression, x, y, radius, angle, region)?;
-    let mut result = evaluate_polar(engine, expression, x, y, radius, angle, region, false)?;
-    let mut events = vec![
-        StepEvent::new(
-            "polar-coordinate-substitution",
-            &format!(
-                "{{{}=={},{}=={}}}",
-                x, result.x_substitution, y, result.y_substitution
-            ),
-            "使用极坐标替换笛卡尔坐标。",
-            StepImportance::Key,
-        ),
-        StepEvent::new(
-            "polar-jacobian",
-            &result.jacobian,
-            "计算坐标变换的 Jacobian 行列式；在非负径向范围内面积因子为 r。",
-            StepImportance::Normal,
-        ),
-        StepEvent::new(
-            "polar-transform-integrand",
-            &result.transformed_integrand,
-            "替换被积式并乘以 Jacobian 面积因子。",
-            StepImportance::Normal,
-        ),
-        StepEvent::new(
-            "iterated-integral-inner",
-            &result.integral.inner.value,
-            if result.integral.inner.completed {
-                "先计算径向定积分。"
-            } else {
-                "径向定积分未得到解析结果。"
-            },
-            StepImportance::Normal,
-        ),
-    ];
-    if let Some(outer) = &result.integral.outer {
-        events.push(StepEvent::new(
-            "iterated-integral-outer",
-            &outer.value,
-            if outer.completed {
-                "再计算角向定积分。"
-            } else {
-                "角向定积分未得到解析结果。"
-            },
-            StepImportance::Normal,
-        ));
-    }
-    events.push(StepEvent::new(
-        "polar-integral-result",
-        &result.integral.value,
-        match result.integral.status {
-            IteratedIntegralStatus::Evaluated => "得到极坐标二重积分结果。",
-            IteratedIntegralStatus::InnerUnresolved => "径向积分未解析完成。",
-            IteratedIntegralStatus::OuterUnresolved => "角向积分未解析完成。",
-        },
-        StepImportance::Key,
-    ));
-    let steps = render_events(engine, events, verbosity)?;
+    let (mut result, emissions) =
+        polar_integral_evaluation(engine, expression, x, y, radius, angle, region)?;
+    let steps = render_multiple_integral_emissions(engine, emissions, verbosity)?;
     result.integral.tex = steps
         .last()
         .map(|step| step.tex.clone())
         .unwrap_or_default();
     Ok(PolarIntegralStepResult { result, steps })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn polar_integral_evaluation(
+    engine: &mut dyn Engine,
+    expression: &str,
+    x: &str,
+    y: &str,
+    radius: &str,
+    angle: &str,
+    region: PolarRegion<'_>,
+) -> Result<(PolarIntegralResult, Vec<MultipleIntegralRuleEmission>), EngineError> {
+    validate_polar_request(expression, x, y, radius, angle, region)?;
+    let result = evaluate_polar(engine, expression, x, y, radius, angle, region, false)?;
+    let mut emissions = vec![
+        MultipleIntegralRuleEmission::new(
+            "polar-coordinate-substitution",
+            format!(
+                "{{{}=={},{}=={}}}",
+                x, result.x_substitution, y, result.y_substitution
+            ),
+            "使用极坐标替换笛卡尔坐标。",
+            RuleImportance::Key,
+        ),
+        MultipleIntegralRuleEmission::new(
+            "polar-jacobian",
+            result.jacobian.clone(),
+            "计算坐标变换的 Jacobian 行列式；在非负径向范围内面积因子为 r。",
+            RuleImportance::Normal,
+        ),
+        MultipleIntegralRuleEmission::new(
+            "polar-transform-integrand",
+            result.transformed_integrand.clone(),
+            "替换被积式并乘以 Jacobian 面积因子。",
+            RuleImportance::Normal,
+        ),
+        MultipleIntegralRuleEmission::new(
+            "iterated-integral-inner",
+            result.integral.inner.value.clone(),
+            if result.integral.inner.completed {
+                "先计算径向定积分。"
+            } else {
+                "径向定积分未得到解析结果。"
+            },
+            RuleImportance::Normal,
+        ),
+    ];
+    if let Some(outer) = &result.integral.outer {
+        emissions.push(MultipleIntegralRuleEmission::new(
+            "iterated-integral-outer",
+            outer.value.clone(),
+            if outer.completed {
+                "再计算角向定积分。"
+            } else {
+                "角向定积分未得到解析结果。"
+            },
+            RuleImportance::Normal,
+        ));
+    }
+    emissions.push(MultipleIntegralRuleEmission::new(
+        "polar-integral-result",
+        result.integral.value.clone(),
+        match result.integral.status {
+            IteratedIntegralStatus::Evaluated => "得到极坐标二重积分结果。",
+            IteratedIntegralStatus::InnerUnresolved => "径向积分未解析完成。",
+            IteratedIntegralStatus::OuterUnresolved => "角向积分未解析完成。",
+        },
+        RuleImportance::Key,
+    ));
+    Ok((result, emissions))
 }
 
 pub fn double_integral(
@@ -449,57 +506,68 @@ pub fn double_integral_steps_with_verbosity(
     outer_bound: IntegralBound<'_>,
     verbosity: StepVerbosity,
 ) -> Result<DoubleIntegralStepResult, EngineError> {
+    let (mut result, emissions) =
+        double_integral_evaluation(engine, expression, inner_bound, outer_bound)?;
+    let steps = render_multiple_integral_emissions(engine, emissions, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(DoubleIntegralStepResult { result, steps })
+}
+
+fn double_integral_evaluation(
+    engine: &mut dyn Engine,
+    expression: &str,
+    inner_bound: IntegralBound<'_>,
+    outer_bound: IntegralBound<'_>,
+) -> Result<(DoubleIntegralResult, Vec<MultipleIntegralRuleEmission>), EngineError> {
     validate_request(expression, inner_bound, outer_bound)?;
-    let mut result = evaluate(engine, expression, inner_bound, outer_bound, false)?;
+    let result = evaluate(engine, expression, inner_bound, outer_bound, false)?;
     let setup = nested_expression(expression, inner_bound, outer_bound);
-    let mut events = vec![StepEvent::new(
+    let mut emissions = vec![MultipleIntegralRuleEmission::new(
         "iterated-integral-setup",
-        &setup,
+        setup,
         "按给定次序建立二重迭代积分，先计算内层积分。",
-        StepImportance::Routine,
+        RuleImportance::Routine,
     )];
-    events.push(StepEvent::new(
+    emissions.push(MultipleIntegralRuleEmission::new(
         "iterated-integral-inner",
-        &result.inner.value,
+        result.inner.value.clone(),
         if result.inner.completed {
             "计算内层定积分，结果作为外层变量的函数。"
         } else {
             "内层定积分未得到解析结果，停止后续解析积分。"
         },
         if result.inner.completed {
-            StepImportance::Normal
+            RuleImportance::Normal
         } else {
-            StepImportance::Key
+            RuleImportance::Key
         },
     ));
     if let Some(outer) = &result.outer {
-        events.push(StepEvent::new(
+        emissions.push(MultipleIntegralRuleEmission::new(
             "iterated-integral-outer",
-            &outer.value,
+            outer.value.clone(),
             if outer.completed {
                 "对内层结果计算外层定积分。"
             } else {
                 "外层定积分未得到解析结果。"
             },
-            StepImportance::Normal,
+            RuleImportance::Normal,
         ));
     }
-    events.push(StepEvent::new(
+    emissions.push(MultipleIntegralRuleEmission::new(
         "iterated-integral-result",
-        &result.value,
+        result.value.clone(),
         match result.status {
             IteratedIntegralStatus::Evaluated => "得到二重积分的解析结果。",
             IteratedIntegralStatus::InnerUnresolved => "内层积分未解析完成。",
             IteratedIntegralStatus::OuterUnresolved => "外层积分未解析完成。",
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
-    let steps = render_events(engine, events, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(DoubleIntegralStepResult { result, steps })
+    Ok((result, emissions))
 }
 
 pub fn triple_integral(
@@ -538,14 +606,31 @@ pub fn triple_integral_steps_with_verbosity(
     outer: IntegralBound<'_>,
     verbosity: StepVerbosity,
 ) -> Result<TripleIntegralStepResult, EngineError> {
+    let (mut result, emissions) =
+        triple_integral_evaluation(engine, expression, inner, middle, outer)?;
+    let steps = render_multiple_integral_emissions(engine, emissions, verbosity)?;
+    result.tex = steps
+        .last()
+        .map(|step| step.tex.clone())
+        .unwrap_or_default();
+    Ok(TripleIntegralStepResult { result, steps })
+}
+
+fn triple_integral_evaluation(
+    engine: &mut dyn Engine,
+    expression: &str,
+    inner: IntegralBound<'_>,
+    middle: IntegralBound<'_>,
+    outer: IntegralBound<'_>,
+) -> Result<(TripleIntegralResult, Vec<MultipleIntegralRuleEmission>), EngineError> {
     validate_triple_request(expression, inner, middle, outer)?;
-    let mut result = evaluate_triple(engine, expression, inner, middle, outer, false)?;
+    let result = evaluate_triple(engine, expression, inner, middle, outer, false)?;
     let setup = nested_triple_expression(expression, inner, middle, outer);
-    let mut events = vec![StepEvent::new(
+    let mut emissions = vec![MultipleIntegralRuleEmission::new(
         "triple-integral-setup",
-        &setup,
+        setup,
         "按给定次序建立三重迭代积分。",
-        StepImportance::Routine,
+        RuleImportance::Routine,
     )];
     let rules = [
         "triple-integral-inner",
@@ -558,38 +643,59 @@ pub fn triple_integral_steps_with_verbosity(
         "对中层结果计算最外层定积分。",
     ];
     for (index, layer) in result.layers.iter().enumerate() {
-        events.push(StepEvent::new(
+        emissions.push(MultipleIntegralRuleEmission::new(
             rules[index],
-            &layer.value,
+            layer.value.clone(),
             if layer.completed {
                 explanations[index]
             } else {
                 "该层积分未得到解析结果，停止后续解析积分。"
             },
             if layer.completed {
-                StepImportance::Normal
+                RuleImportance::Normal
             } else {
-                StepImportance::Key
+                RuleImportance::Key
             },
         ));
     }
-    events.push(StepEvent::new(
+    emissions.push(MultipleIntegralRuleEmission::new(
         "triple-integral-result",
-        &result.value,
+        result.value.clone(),
         match result.status {
             TripleIntegralStatus::Evaluated => "得到三重积分的解析结果。",
             TripleIntegralStatus::InnerUnresolved => "内层积分未解析完成。",
             TripleIntegralStatus::MiddleUnresolved => "中层积分未解析完成。",
             TripleIntegralStatus::OuterUnresolved => "外层积分未解析完成。",
         },
-        StepImportance::Key,
+        RuleImportance::Key,
     ));
-    let steps = render_events(engine, events, verbosity)?;
-    result.tex = steps
-        .last()
-        .map(|step| step.tex.clone())
-        .unwrap_or_default();
-    Ok(TripleIntegralStepResult { result, steps })
+    Ok((result, emissions))
+}
+
+fn render_multiple_integral_emissions(
+    engine: &mut dyn Engine,
+    emissions: Vec<MultipleIntegralRuleEmission>,
+    verbosity: StepVerbosity,
+) -> Result<Vec<Step>, EngineError> {
+    render_events(
+        engine,
+        emissions
+            .into_iter()
+            .map(|emission| {
+                StepEvent::new(
+                    &emission.rule,
+                    &emission.expression,
+                    &emission.explanation,
+                    match emission.importance {
+                        RuleImportance::Routine => StepImportance::Routine,
+                        RuleImportance::Normal => StepImportance::Normal,
+                        RuleImportance::Key => StepImportance::Key,
+                    },
+                )
+            })
+            .collect(),
+        verbosity,
+    )
 }
 
 fn validate_polar_request(
@@ -1164,6 +1270,30 @@ mod tests {
             held.subject().unwrap().semantics.interpretation,
             SemanticInterpretation::HeldTypedApplication(_)
         ));
+        assert!(held.trace.as_ref().unwrap().events.iter().any(|event| {
+            event.rule == "iterated-integral-inner"
+                && event
+                    .bindings
+                    .contains(&("inner_variable".into(), "y".into()))
+        }));
+    }
+
+    #[test]
+    fn multiple_integrals_emit_domain_facts_without_legacy_adaptation() {
+        let mut engine = RustEngine::spawn().unwrap();
+        let measured = crate::metrics::measure(|| {
+            MultipleIntegralOperation
+                .compute(
+                    &mut engine,
+                    &object("x+y"),
+                    &MultipleIntegralRequest::Double {
+                        inner: ("y".into(), "0".into(), "1".into()),
+                        outer: ("x".into(), "0".into(), "1".into()),
+                    },
+                )
+                .unwrap()
+        });
+        assert_eq!(measured.metrics.legacy_trace_adaptations, 0);
     }
 
     #[test]

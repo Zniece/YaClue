@@ -141,6 +141,7 @@ pub(crate) fn record_rule_presentation() {
     record_thread_metric(|metrics| metrics.rule_presentations += 1);
 }
 
+#[allow(dead_code)] // Retained as the E4 migration tripwire until E4.3.3 removes it.
 pub(crate) fn record_legacy_trace_adaptations(count: usize) {
     LEGACY_TRACE_ADAPTATIONS.fetch_add(count as u64, Ordering::Relaxed);
     record_thread_metric(|metrics| metrics.legacy_trace_adaptations += count as u64);
