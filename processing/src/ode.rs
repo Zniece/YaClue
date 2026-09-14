@@ -224,6 +224,11 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
         let input_ref = input.reference(None);
         let output_ref = output.reference(None);
         let mut sink = VecEventSink::default();
+        let mut transition_expressions = emissions
+            .iter()
+            .filter(|emission| emission.rule != "ode-result")
+            .map(|emission| emission.expr.clone())
+            .collect::<Vec<_>>();
         emissions
             .into_iter()
             .filter(|emission| emission.rule != "ode-result")
@@ -276,15 +281,20 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
                 tex_override: Some(result.tex),
             })
         });
+        transition_expressions.push(output.print_source());
+        let (output, events) = crate::semantic_core::materialize_rule_transitions(
+            input,
+            output,
+            sink.events,
+            &transition_expressions,
+        )?;
         Ok(Computation {
             output: if solved {
                 ComputationOutput::Value(output)
             } else {
                 ComputationOutput::Held(output)
             },
-            trace: Some(RuleTrace {
-                events: sink.events,
-            }),
+            trace: Some(RuleTrace { events }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })

@@ -25,8 +25,8 @@ use processing::ode_numeric::{solve_initial_value, NumericOdeOptions, NumericOde
 use processing::plot::{sample, SampleOptions, SampleTermination};
 use processing::protocol::{Condition, ResolutionState};
 use processing::semantic_core::{
-    ComputationContext, ComputationOutput, Effect, NormalizationLevel, OperatorId,
-    SemanticInterpretation, TraceMode,
+    transformation_chain_is_continuous, ComputationContext, ComputationOutput, Effect,
+    NormalizationLevel, OperatorId, SemanticInterpretation, TraceMode,
 };
 use processing::steps::{derive_integrals, derive_steps};
 
@@ -130,6 +130,87 @@ fn cross_domain_rule_emission_release_contract() {
             assert_eq!(
                 off.metrics.engine_requests, detailed.metrics.engine_requests,
                 "enabling detailed trace must not rerun the solver for {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn domain_rule_events_reference_actual_object_deltas() {
+    let mut engine = RustEngine::spawn().expect("engine boot");
+    let cases = [
+        ("D(x)(x^3)", &["variable", "order"][..], false),
+        ("Integrate(x)(2*x)", &["variable", "constant"][..], false),
+        (
+            "Sum(k,0,Infinity,r^k)",
+            &["variable", "lower", "upper"][..],
+            true,
+        ),
+        (
+            "DoubleIntegral(x+y,y,0,1,x,0,1)",
+            &["inner_variable", "outer_variable"][..],
+            false,
+        ),
+        ("Solve({x+y==3,x-y==1},{x,y})", &["variables"][..], false),
+        ("OdeSolve(y'==y)", &["independent", "dependent"][..], false),
+    ];
+
+    for (source, binding_keys, expects_conditions) in cases {
+        let measured = execute_with_metrics(&mut engine, source, TraceMode::Detailed);
+        let computation = measured.value;
+        let trace = computation.trace.as_ref().unwrap();
+        assert!(trace.validate_classifications().is_ok(), "{source}");
+        let events = trace
+            .events
+            .iter()
+            .filter(|event| {
+                event.class == processing::semantic_core::RuleEventClass::EquivalentTransformation
+                    && event.presentation.is_some()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(!events.is_empty(), "{source}");
+        assert!(transformation_chain_is_continuous(&events), "{source}");
+        assert!(
+            events.iter().all(|event| {
+                event.input.object == event.output.object
+                    && event.output.revision.0 == event.input.revision.0 + 1
+                    && event.input.focus.is_none()
+                    && event.output.focus.is_none()
+                    && event
+                        .transformation_context()
+                        .is_some_and(|context| context.is_replayable(event))
+            }),
+            "{source}"
+        );
+        assert_eq!(
+            events.last().unwrap().output,
+            computation.subject().unwrap().reference(None),
+            "{source}"
+        );
+        for key in binding_keys {
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event.bindings.iter().any(|(name, _)| name == key)),
+                "missing {key} binding for {source}"
+            );
+        }
+        if expects_conditions {
+            assert!(
+                events.iter().any(|event| !event.conditions.is_empty()),
+                "{source}"
+            );
+            assert_eq!(
+                events.last().unwrap().conditions,
+                computation
+                    .subject()
+                    .unwrap()
+                    .semantics
+                    .metadata
+                    .conditions
+                    .conditions(),
+                "{source}"
             );
         }
     }

@@ -236,6 +236,10 @@ impl SemanticOperation<SumRequest> for SumOperation {
         ];
         let conditions = output.semantics.metadata.conditions.conditions().to_vec();
         let mut sink = VecEventSink::default();
+        let transition_expressions = emissions
+            .iter()
+            .map(|emission| emission.expression.clone())
+            .collect::<Vec<_>>();
         emissions.into_iter().for_each(|emission| {
             let fact = RuleFact {
                 class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
@@ -257,6 +261,12 @@ impl SemanticOperation<SumRequest> for SumOperation {
                 })
             });
         });
+        let (output, events) = crate::semantic_core::materialize_rule_transitions(
+            input,
+            output,
+            sink.events,
+            &transition_expressions,
+        )?;
         Ok(Computation {
             output: if no_value {
                 ComputationOutput::NoValue(output)
@@ -265,9 +275,7 @@ impl SemanticOperation<SumRequest> for SumOperation {
             } else {
                 ComputationOutput::Value(output)
             },
-            trace: Some(RuleTrace {
-                events: sink.events,
-            }),
+            trace: Some(RuleTrace { events }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })

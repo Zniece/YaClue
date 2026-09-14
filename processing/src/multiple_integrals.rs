@@ -214,6 +214,10 @@ impl SemanticOperation<MultipleIntegralRequest> for MultipleIntegralOperation {
         let input_ref = input.reference(None);
         let output_ref = output.reference(None);
         let mut sink = VecEventSink::default();
+        let transition_expressions = emissions
+            .iter()
+            .map(|emission| emission.expression.clone())
+            .collect::<Vec<_>>();
         emissions.into_iter().for_each(|emission| {
             let fact = RuleFact {
                 class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
@@ -235,15 +239,19 @@ impl SemanticOperation<MultipleIntegralRequest> for MultipleIntegralOperation {
                 })
             });
         });
+        let (output, events) = crate::semantic_core::materialize_rule_transitions(
+            input,
+            output,
+            sink.events,
+            &transition_expressions,
+        )?;
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
             } else {
                 ComputationOutput::Value(output)
             },
-            trace: Some(RuleTrace {
-                events: sink.events,
-            }),
+            trace: Some(RuleTrace { events }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })

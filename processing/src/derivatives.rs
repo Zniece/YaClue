@@ -328,6 +328,11 @@ pub fn derivative_computation_for_object(
     });
     let output_ref = output_object.reference(None);
     let last = evaluation.emissions.len() - 1;
+    let transition_expressions = evaluation
+        .emissions
+        .iter()
+        .map(|emission| emission.expression.clone())
+        .collect::<Vec<_>>();
     let mut sink = VecEventSink::default();
     evaluation
         .emissions
@@ -365,15 +370,19 @@ pub fn derivative_computation_for_object(
                 })
             });
         });
+    let (output_object, events) = crate::semantic_core::materialize_rule_transitions(
+        operand,
+        output_object,
+        sink.events,
+        &transition_expressions,
+    )?;
     Ok(Computation {
         output: if unresolved {
             ComputationOutput::Held(output_object)
         } else {
             ComputationOutput::Value(output_object)
         },
-        trace: Some(RuleTrace {
-            events: sink.events,
-        }),
+        trace: Some(RuleTrace { events }),
         certificates: Vec::new(),
         effects: Vec::new(),
     })
@@ -1131,7 +1140,10 @@ mod tests {
             computation.value().unwrap().print_source(),
             "2*Sin(x)*Cos(x)"
         );
-        assert_eq!(computation.value().unwrap().revision.0, 1);
+        assert_eq!(
+            computation.value().unwrap().revision.0,
+            computation.trace.as_ref().unwrap().events.len() as u64
+        );
         assert_eq!(
             computation
                 .value()
@@ -1208,7 +1220,7 @@ mod tests {
         assert_eq!(derivative.value().unwrap().id, limited.id);
         assert_eq!(
             derivative.value().unwrap().revision.0,
-            limited.revision.0 + 1
+            limited.revision.0 + derivative.trace.as_ref().unwrap().events.len() as u64
         );
         assert_eq!(derivative.value().unwrap().print_source(), "2*x");
         assert_eq!(

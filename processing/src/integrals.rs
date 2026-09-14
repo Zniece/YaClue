@@ -256,6 +256,11 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
         let output_ref = output.reference(None);
         let variable_binding = vec![("variable".into(), request.variable.clone())];
         let mut sink = VecEventSink::default();
+        let mut transition_expressions = evaluation
+            .emissions
+            .iter()
+            .map(|emission| emission.expression.clone())
+            .collect::<Vec<_>>();
         evaluation.emissions.into_iter().for_each(|emission| {
             let fact = RuleFact {
                 class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
@@ -311,15 +316,20 @@ impl SemanticOperation<IntegralRequest> for IntegralOperation {
                 tex_override: None,
             })
         });
+        transition_expressions.push(output.print_source());
+        let (output, events) = crate::semantic_core::materialize_rule_transitions(
+            input,
+            output,
+            sink.events,
+            &transition_expressions,
+        )?;
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
             } else {
                 ComputationOutput::Value(output)
             },
-            trace: Some(RuleTrace {
-                events: sink.events,
-            }),
+            trace: Some(RuleTrace { events }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })
@@ -430,6 +440,11 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
         ];
         let last = evaluation.emissions.len() - 1;
         let mut sink = VecEventSink::default();
+        let transition_expressions = evaluation
+            .emissions
+            .iter()
+            .map(|emission| emission.expression.clone())
+            .collect::<Vec<_>>();
         evaluation
             .emissions
             .into_iter()
@@ -463,15 +478,19 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
                     })
                 });
             });
+        let (output, events) = crate::semantic_core::materialize_rule_transitions(
+            input,
+            output,
+            sink.events,
+            &transition_expressions,
+        )?;
         Ok(Computation {
             output: if unresolved {
                 ComputationOutput::Held(output)
             } else {
                 ComputationOutput::Value(output)
             },
-            trace: Some(RuleTrace {
-                events: sink.events,
-            }),
+            trace: Some(RuleTrace { events }),
             certificates: Vec::new(),
             effects: Vec::new(),
         })
@@ -522,7 +541,7 @@ pub(crate) fn definite_integral_computation_with_options(
     )?;
     let value = format_numeric_result(result.value);
     let parsed = crate::semantic_core::parse_engine_expression(&value)?;
-    let input_ref = input.reference(None);
+    let numeric_input_ref = output.reference(None);
     output.apply(ObjectDelta {
         expression: Some(parsed.raw_expression()),
         semantics: Some(SemanticState {
@@ -542,7 +561,7 @@ pub(crate) fn definite_integral_computation_with_options(
     let fact = RuleFact {
         class: crate::semantic_core::RuleEventClass::EquivalentTransformation,
         rule: "numeric-integration-rule".into(),
-        input: input_ref,
+        input: numeric_input_ref,
         additional_inputs: Vec::new(),
         output: output.reference(None),
         bindings: vec![
@@ -570,11 +589,10 @@ pub(crate) fn definite_integral_computation_with_options(
             tex_override: None,
         })
     });
+    let events = sink.events;
     Ok(Computation {
         output: ComputationOutput::Value(output),
-        trace: Some(RuleTrace {
-            events: sink.events,
-        }),
+        trace: Some(RuleTrace { events }),
         certificates,
         effects,
     })

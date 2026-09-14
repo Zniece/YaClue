@@ -2361,6 +2361,62 @@ impl RuleEvent {
     }
 }
 
+/// Materialize domain rule emissions as real, consecutive object revisions.
+///
+/// Domain algorithms may discover all emissions before constructing their
+/// final semantic state. This boundary replays each emitted expression through
+/// `ObjectDelta`, then attaches the final semantics to the last transition so
+/// event references describe the versions that actually existed.
+pub(crate) fn materialize_rule_transitions(
+    input: &MathematicalObject,
+    final_output: MathematicalObject,
+    mut events: Vec<RuleEvent>,
+    transition_expressions: &[String],
+) -> Result<(MathematicalObject, Vec<RuleEvent>), EngineError> {
+    if events.is_empty() {
+        return Ok((final_output, events));
+    }
+
+    if transition_expressions.len() != events.len() {
+        return Err(EngineError::Parse(format!(
+            "规则事件与对象变换表达式数量不一致: events={}, expressions={}",
+            events.len(),
+            transition_expressions.len()
+        )));
+    }
+    let final_expression = final_output.raw_expression();
+    let final_normalization = final_output
+        .normalization
+        .as_ref()
+        .map(|state| state.metadata.clone());
+    let mut object = input.clone();
+    let last = events.len() - 1;
+
+    for (index, event) in events.iter_mut().enumerate() {
+        let before = object.reference(None);
+        let expression = if index == last {
+            final_expression.clone()
+        } else {
+            parse_engine_expression(&transition_expressions[index])?.raw_expression()
+        };
+        object.apply(ObjectDelta {
+            expression: Some(expression),
+            semantics: (index == last).then(|| final_output.semantics.clone()),
+            overlay: (index == last).then(|| final_output.overlay.clone()),
+            normalization: if index == last {
+                final_normalization.clone()
+            } else {
+                None
+            },
+        });
+        let after = object.reference(None);
+        event.input = before;
+        event.output = after;
+    }
+
+    Ok((object, events))
+}
+
 /// Identity-based continuity contract for a chain of whole-expression
 /// transformations. Text and TeX are projections and therefore cannot prove
 /// continuity on their own.
