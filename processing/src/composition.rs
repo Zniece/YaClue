@@ -54,6 +54,181 @@ pub struct HeldApplication {
     pub pending_operators: Vec<CompositionOperator>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProductClassification {
+    pub kind: &'static str,
+    pub title: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PartialProductDetails {
+    PartialApplication {
+        partial: crate::semantic_core::PartialApplication,
+    },
+    AmbiguousPartialApplication {
+        candidates: Vec<crate::semantic_core::PartialApplication>,
+        display_templates: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct PartialProductProjection {
+    pub expression: String,
+    pub tex: String,
+    pub details: PartialProductDetails,
+    pub semantic: SemanticSummary,
+    pub outcome: ResultMetadata,
+}
+
+/// Publish product classification from the same typed structure that drove
+/// execution. Product clients must not rediscover it from syntax or status.
+pub fn classify_product(
+    input: &crate::elaboration::ElaboratedInput,
+    result: &CompositionResult,
+) -> ProductClassification {
+    use crate::elaboration::MathematicalForm;
+    let root_descriptor = match &input.root.form {
+        MathematicalForm::Application { head } | MathematicalForm::EffectApplication { head } => {
+            operator_descriptor(head)
+                .filter(|_| crate::semantic_core::is_object_native_operator(head))
+        }
+        _ => None,
+    };
+    let has_native_child = crate::arithmetic::has_object_native_descendant(&input.root);
+    let pair = match (&input.root.form, root_descriptor) {
+        (MathematicalForm::Structural { operator }, _)
+            if matches!(operator.as_str(), "+" | "*")
+                && input
+                    .root
+                    .children
+                    .iter()
+                    .all(|child| matches!(child.form, MathematicalForm::Collection)) =>
+        {
+            ("matrix", "线性代数")
+        }
+        (MathematicalForm::Relation { .. }, _) => ("equation", "方程"),
+        (_, Some(descriptor)) => descriptor
+            .product_presentation(
+                has_native_child,
+                result.status == CompositionStatus::Completed,
+            )
+            .unwrap_or(("composition", "组合运算")),
+        (
+            MathematicalForm::Number
+            | MathematicalForm::Symbol
+            | MathematicalForm::Collection
+            | MathematicalForm::OpaqueEngineValue { .. }
+            | MathematicalForm::Application { .. },
+            None,
+        ) if !has_native_child => ("evaluation", "计算结果"),
+        _ => ("composition", "组合运算"),
+    };
+    ProductClassification {
+        kind: pair.0,
+        title: pair.1,
+    }
+}
+
+/// Complete product projection for typed partial applications. Binder roles,
+/// outcome and TeX are derived once in Processing and merely serialized by
+/// clients.
+pub fn project_partial(
+    engine: &mut dyn Engine,
+    input: &crate::elaboration::ElaboratedInput,
+) -> Result<Option<PartialProductProjection>, EngineError> {
+    if let Some(partial_object) = crate::elaboration::operand_partial(&input.root)? {
+        let SemanticInterpretation::PartialApplication(partial) =
+            &partial_object.semantics.interpretation
+        else {
+            unreachable!("operand_partial returns a partial application")
+        };
+        let mut semantic = input.analyzed.semantic.clone();
+        semantic.kind = crate::semantic::ValueKind::Unevaluated;
+        for scope in &partial.binder_scopes {
+            let Some(name) = input
+                .root
+                .children
+                .get(scope.binder_slot)
+                .map(|child| child.object.print_source())
+            else {
+                continue;
+            };
+            semantic.symbols.retain(|symbol| symbol != &name);
+            if !semantic.bound_symbols.contains(&name) {
+                semantic.bound_symbols.push(name.clone());
+                semantic.bound_symbols.sort();
+            }
+            if let Some(identity) = semantic
+                .symbol_identities
+                .iter_mut()
+                .find(|identity| identity.name == name)
+            {
+                identity.role = crate::binding::SymbolRole::Bound;
+                identity.binder = Some(scope.binder_slot as u32);
+            }
+        }
+        let sources = input
+            .root
+            .children
+            .iter()
+            .map(|child| child.object.print_source())
+            .collect::<Vec<_>>();
+        let parameter_tex = engine
+            .render_tex_batch(&sources)?
+            .into_iter()
+            .map(|tex| strip_tex_delimiters(&tex))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let outcome = ResultMetadata::unresolved(
+            semantic.exactness,
+            crate::protocol::OutcomeReason::AlgorithmUncovered,
+        );
+        return Ok(Some(PartialProductProjection {
+            expression: input.source.clone(),
+            tex: format!(
+                "\\operatorname{{{}}}\\left({parameter_tex}\\right)",
+                partial.spelling
+            ),
+            details: PartialProductDetails::PartialApplication {
+                partial: partial.clone(),
+            },
+            semantic,
+            outcome,
+        }));
+    }
+    let Some(partials) = crate::elaboration::partial_candidates(&input.root)? else {
+        return Ok(None);
+    };
+    let mut semantic = input.analyzed.semantic.clone();
+    semantic.kind = crate::semantic::ValueKind::Unevaluated;
+    let bound_sources = input
+        .root
+        .children
+        .iter()
+        .map(|child| child.object.print_source())
+        .collect::<Vec<_>>();
+    let display_templates = partials
+        .candidates
+        .iter()
+        .map(|candidate| candidate.display_template(&bound_sources))
+        .collect();
+    let outcome = ResultMetadata::unresolved(
+        semantic.exactness,
+        crate::protocol::OutcomeReason::AlgorithmUncovered,
+    );
+    Ok(Some(PartialProductProjection {
+        expression: input.source.clone(),
+        tex: format!("\\operatorname{{{}}}", partials.spelling),
+        details: PartialProductDetails::AmbiguousPartialApplication {
+            candidates: partials.candidates,
+            display_templates,
+        },
+        semantic,
+        outcome,
+    }))
+}
+
 /// Parse and execute a complete mathematical input through the object-native
 /// path. The `Option` remains for source compatibility; successful complete
 /// inputs now always return `Some`.

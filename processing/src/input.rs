@@ -31,24 +31,6 @@ pub struct ExpressionAnalysis {
     pub constants: Vec<String>,
 }
 
-/// Stable, storage-independent view of a parsed root call.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RootCall {
-    pub head: String,
-    pub arguments: Vec<String>,
-    pub argument_heads: Vec<Option<String>>,
-}
-
-pub fn root_call(input: &str, label: &str) -> Result<Option<RootCall>, EngineError> {
-    validate_safe_text(input, label)?;
-    with_parse_env(|env| {
-        let tree = yacas_rs::parser::parse_expression(env, &format!("{input};"))
-            .map_err(|error| EngineError::InvalidInput(format!("{label}语法错误: {error:?}")))?
-            .ok_or_else(|| EngineError::InvalidInput(format!("{label}为空")))?;
-        Ok(root_call_from_tree(env, &tree))
-    })
-}
-
 pub fn analyze_expression(input: &str, label: &str) -> Result<ExpressionAnalysis, EngineError> {
     validate_safe_text(input, label)?;
     let tree = with_parse_env(|env| yacas_rs::parser::parse_expression(env, &format!("{input};")));
@@ -86,34 +68,6 @@ pub(crate) fn fresh_internal_symbols<const N: usize>(
         }
     }
     unreachable!()
-}
-
-pub(crate) fn root_call_from_tree(
-    env: &yacas_rs::env::Environment,
-    tree: &Rc<LispObject>,
-) -> Option<RootCall> {
-    let ObjectKind::Sublist(first) = &tree.kind else {
-        return None;
-    };
-    let nodes: Vec<_> = spine_refs(first).collect();
-    let head = nodes.first()?.atom_string()?;
-    let mut arguments = Vec::with_capacity(nodes.len().saturating_sub(1));
-    let mut argument_heads = Vec::with_capacity(nodes.len().saturating_sub(1));
-    for argument in &nodes[1..] {
-        arguments.push(yacas_rs::printer::infix_print(env, argument));
-        argument_heads.push(match &argument.kind {
-            ObjectKind::Sublist(first) => spine_refs(first)
-                .next()
-                .and_then(|node| node.atom_string())
-                .map(|name| name.to_string()),
-            _ => None,
-        });
-    }
-    Some(RootCall {
-        head: head.to_string(),
-        arguments,
-        argument_heads,
-    })
 }
 
 pub fn validate_expression(input: &str, label: &str) -> Result<(), EngineError> {
@@ -494,35 +448,6 @@ mod tests {
         assert_eq!(
             direct_function_equation("Sin(x)==x", "x", &functions).unwrap(),
             None
-        );
-    }
-
-    #[test]
-    fn exposes_root_calls_without_engine_storage_types() {
-        let derivative = root_call("D(x,2)Sin(x)", "表达式").unwrap().unwrap();
-        assert_eq!(derivative.head, "D");
-        assert_eq!(derivative.arguments, ["x", "2", "Sin(x)"]);
-
-        for (source, head, arguments) in [
-            ("Integrate(x,0,Pi)Sin(x)", "Integrate", 4),
-            ("Limit(x,0)Sin(x)/x", "Limit", 3),
-            ("N(Pi,30)", "N", 2),
-            ("OdeSolve(y'==y)", "OdeSolve", 1),
-            ("Solve({x+y==3,x-y==1},{x,y})", "Solve", 2),
-            ("Plot(Sin(x),x,-6.28,6.28)", "Plot", 4),
-        ] {
-            let call = root_call(source, "表达式").unwrap().unwrap();
-            assert_eq!(call.head, head, "{source}");
-            assert_eq!(call.arguments.len(), arguments, "{source}");
-        }
-
-        let product = root_call("{{1,2},{3,4}}*{{5,6},{7,8}}", "表达式")
-            .unwrap()
-            .unwrap();
-        assert_eq!(product.head, "*");
-        assert_eq!(
-            product.argument_heads,
-            [Some("List".into()), Some("List".into())]
         );
     }
 }

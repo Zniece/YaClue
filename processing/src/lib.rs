@@ -38,6 +38,8 @@ pub mod quadrature;
 pub mod semantic;
 pub mod semantic_core;
 pub mod series;
+#[cfg(any(test, feature = "legacy-step-api"))]
+#[doc(hidden)]
 pub mod step_compatibility;
 pub mod steps;
 pub mod substitution;

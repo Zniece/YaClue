@@ -32,6 +32,7 @@ pub struct ElaboratedObject {
 
 #[derive(Clone)]
 pub struct ElaboratedInput {
+    pub source: String,
     pub root: ElaboratedObject,
     pub analyzed: crate::semantic::AnalyzedInput,
 }
@@ -58,6 +59,7 @@ pub fn elaborate_input(source: &str) -> Result<ElaboratedInput, EngineError> {
             .ok_or_else(|| EngineError::InvalidInput("语义表达式为空".into()))?;
         let mut next_id = 1;
         Ok(ElaboratedInput {
+            source: source.to_owned(),
             root: elaborate_node(&tree, &mut next_id),
             analyzed: crate::semantic::analyze_tree(env, &tree),
         })

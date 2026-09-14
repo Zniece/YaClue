@@ -3,6 +3,8 @@ use processing::semantic::SemanticSummary;
 use processing::steps::Step;
 use serde::{Deserialize, Serialize};
 
+pub(crate) type ProcessExpressionDetails = processing::composition::PartialProductDetails;
+
 #[derive(Deserialize)]
 pub struct ProcessExpressionRequest {
     pub expression: String,
@@ -29,16 +31,4 @@ pub struct ProcessExpressionResult {
     pub(crate) details: Option<ProcessExpressionDetails>,
     pub(crate) semantic: SemanticSummary,
     pub(crate) outcome: ResultMetadata,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub(crate) enum ProcessExpressionDetails {
-    PartialApplication {
-        partial: processing::semantic_core::PartialApplication,
-    },
-    AmbiguousPartialApplication {
-        candidates: Vec<processing::semantic_core::PartialApplication>,
-        display_templates: Vec<String>,
-    },
 }

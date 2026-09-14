@@ -953,6 +953,7 @@ pub struct RowOperation {
     pub matrix: Vec<Vec<String>>,
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub(crate) struct LinearStructureEmission {
     pub(crate) rule: String,
     pub(crate) expression: String,
@@ -1221,6 +1222,7 @@ pub fn linear_structure(
     parse_linear_structure(fields, strip_tex_delimiters(&evaluated.tex))
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub(crate) fn linear_structure_evaluation(
     engine: &mut dyn Engine,
     matrix: &str,
@@ -1343,6 +1345,7 @@ fn parse_linear_structure(
     })
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 fn parse_row_operation(expression: &Expr) -> Result<RowOperation, EngineError> {
     let fields = exact_fields(expression, "行操作事件", 5)?;
     let kind = match fields[0].to_string().trim_matches('"') {

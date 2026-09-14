@@ -585,6 +585,7 @@ fn power_series_internal(
     })
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub(crate) fn power_series_evaluation(
     engine: &mut dyn Engine,
     coefficient: &str,
@@ -692,6 +693,7 @@ fn series_status_explanation(status: SeriesStatus) -> &'static str {
     }
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 fn power_series_interval(result: &PowerSeriesResult) -> String {
     match (&result.left_endpoint, &result.right_endpoint) {
         (Some(_), Some(_)) => result.radius.clone().unwrap_or_else(|| "Undefined".into()),

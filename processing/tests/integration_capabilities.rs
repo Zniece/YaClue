@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-step-api")]
+
 use processing::composition::execute_steps;
 use processing::engine::{Engine, RustEngine};
 use processing::multiple_integrals::{

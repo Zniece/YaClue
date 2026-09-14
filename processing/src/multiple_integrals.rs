@@ -497,6 +497,7 @@ pub fn triple_integral(
     evaluate_triple(engine, expression, inner, middle, outer, true)
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub(crate) fn triple_integral_evaluation(
     engine: &mut dyn Engine,
     expression: &str,
@@ -1019,6 +1020,7 @@ fn nested_expression(
     )
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 fn nested_triple_expression(
     expression: &str,
     inner: IntegralBound<'_>,

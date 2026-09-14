@@ -4,6 +4,7 @@
 use crate::engine::{Engine, EngineError, Expr};
 use crate::input::validate_symbol;
 use crate::protocol::{ConditionSet, OutcomeReason, ResultMetadata};
+#[cfg(any(test, feature = "legacy-step-api"))]
 use crate::quadrature::{adaptive_simpson, QuadratureOptions};
 use crate::semantic::{Exactness, ValueKind};
 use crate::semantic_core::{
@@ -529,6 +530,7 @@ impl SemanticOperation<DefiniteIntegralRequest> for DefiniteIntegralOperation {
 /// Compatibility entry for callers that explicitly request bounded numeric
 /// degradation. The exact/held decision and the numeric rule fact both come
 /// from the semantic computation; product steps are only a later projection.
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub(crate) fn definite_integral_computation_with_options(
     engine: &mut dyn Engine,
     expression: &str,
@@ -627,6 +629,7 @@ pub(crate) fn definite_integral_computation_with_options(
     })
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 fn numeric_bound(
     engine: &mut dyn Engine,
     expression: &str,
@@ -642,6 +645,7 @@ fn numeric_bound(
     }
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 fn format_numeric_result(value: f64) -> String {
     if value == 0.0 {
         "0".into()

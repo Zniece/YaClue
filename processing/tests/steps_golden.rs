@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-step-api")]
+
 //! 步骤层 golden 快照测试(步骤生成的安全网)。
 //!
 //! 对一组覆盖全部规则键的题目,经 `derive_steps`/`derive_integrals`

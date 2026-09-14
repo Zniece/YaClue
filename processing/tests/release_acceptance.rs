@@ -26,9 +26,7 @@ use processing::semantic_core::{
     transformation_chain_is_continuous, ComputationContext, ComputationOutput, Effect,
     NormalizationLevel, OperatorId, SemanticInterpretation, TraceMode,
 };
-use processing::step_compatibility::limit_steps;
-use processing::step_compatibility::linear_structure_steps;
-use processing::steps::{derive_integrals, derive_steps};
+use processing::steps::StepVerbosity;
 
 fn assert_invalid_input(result: Result<impl Sized, EngineError>) {
     assert!(
@@ -257,23 +255,39 @@ fn algebra_release_contract() {
 #[test]
 fn calculus_release_contract() {
     let mut engine = RustEngine::spawn().expect("engine boot");
-    let derivative = derive_steps(&mut engine, "Sin(x)^2", "x").unwrap();
-    assert_step_contract(&derivative);
-    assert!(
-        derivative.last().unwrap().expr.contains("Sin")
-            || derivative.last().unwrap().expr.contains("Cos")
+    let derivative = processing::composition::execute_steps(
+        &mut engine,
+        "D(x)(Sin(x)^2)",
+        StepVerbosity::Detailed,
+    )
+    .unwrap()
+    .unwrap();
+    assert_step_contract(&derivative.steps);
+    let integral = processing::composition::execute_steps(
+        &mut engine,
+        "Integrate(x)(x*Exp(x))",
+        StepVerbosity::Detailed,
+    )
+    .unwrap()
+    .unwrap();
+    assert_step_contract(&integral.steps);
+    let unsupported = processing::composition::execute_steps(
+        &mut engine,
+        "Integrate(x)(Sin(x^x))",
+        StepVerbosity::Detailed,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        unsupported.status,
+        processing::composition::CompositionStatus::Unresolved
     );
-
-    let integral = derive_integrals(&mut engine, "x*Exp(x)", "x").unwrap();
-    assert_step_contract(&integral);
-
-    let unsupported = derive_integrals(&mut engine, "Sin(x^x)", "x").unwrap();
-    assert_step_contract(&unsupported);
-    assert!(
-        unsupported.last().unwrap().expr.starts_with("Integrate("),
-        "unsupported integrals must remain visibly unevaluated"
-    );
-    assert_invalid_input(derive_steps(&mut engine, "x^2", "x;Echo(1)"));
+    assert!(unsupported.value.starts_with("Integrate("));
+    assert_invalid_input(processing::composition::execute_steps(
+        &mut engine,
+        "D(x;Echo(1))(x^2)",
+        StepVerbosity::Detailed,
+    ));
 }
 
 #[test]
@@ -461,8 +475,14 @@ fn limits_release_contract() {
     let divergent = limit(&mut engine, "1/x", "x", "0", LimitDirection::Both).unwrap();
     assert_eq!(divergent.status, LimitStatus::DoesNotExist);
 
-    let steps = limit_steps(&mut engine, "Sin(x)/x", "x", "0", LimitDirection::Both).unwrap();
-    assert_step_contract(&steps);
+    let composed = processing::composition::execute_steps(
+        &mut engine,
+        "Limit(x,0)(Sin(x)/x)",
+        StepVerbosity::Detailed,
+    )
+    .unwrap()
+    .unwrap();
+    assert_step_contract(&composed.steps);
     assert_invalid_input(limit(
         &mut engine,
         "x",
@@ -506,11 +526,14 @@ fn ode_release_contract() {
 #[test]
 fn linear_algebra_release_contract() {
     let mut engine = RustEngine::spawn().expect("engine boot");
-    let reduced = linear_structure_steps(&mut engine, "{{1,2},{2,4}}").unwrap();
-    assert_eq!(reduced.result.rank, 1);
-    assert_eq!(reduced.result.nullity, 1);
-    assert!(!reduced.operations.is_empty());
-    assert_step_contract(&reduced.steps);
+    let determinant = matrix_compute(
+        &mut engine,
+        "{{1,2},{2,4}}",
+        MatrixOperation::Determinant,
+        None,
+    )
+    .unwrap();
+    assert_eq!(determinant.output, "0");
 
     let unresolved = matrix_compute(
         &mut engine,

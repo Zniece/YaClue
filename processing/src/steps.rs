@@ -12,11 +12,13 @@ use std::collections::BTreeMap;
 use crate::semantic_core::{ExpressionPath, ObjectId};
 
 pub use crate::integrals::{antiderivative_family, AntiderivativeFamily};
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub use crate::step_compatibility::{
     derive_antiderivative_family_with_verbosity, derive_definite, derive_definite_with_options,
     derive_definite_with_verbosity, derive_integrals, derive_integrals_with_verbosity,
     AntiderivativeStepResult,
 };
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub use crate::step_compatibility::{
     derive_steps, derive_steps_order, derive_steps_order_with_verbosity,
     derive_steps_with_verbosity,
@@ -102,6 +104,7 @@ pub enum StepVerbosity {
 /// Internal semantic event shared by Rust-organized step domains. Mathematical
 /// classification remains in the owning domain; this type only centralizes
 /// verbosity filtering and rendering.
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub(crate) struct StepEvent {
     pub(crate) rule: String,
     pub(crate) expr: String,
@@ -109,6 +112,7 @@ pub(crate) struct StepEvent {
     pub(crate) importance: StepImportance,
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 impl StepEvent {
     pub(crate) fn new(rule: &str, expr: &str, why: &str, importance: StepImportance) -> Self {
         Self {
@@ -120,6 +124,7 @@ impl StepEvent {
     }
 }
 
+#[cfg(any(test, feature = "legacy-step-api"))]
 pub(crate) fn render_events(
     engine: &mut dyn Engine,
     mut events: Vec<StepEvent>,
