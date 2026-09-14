@@ -6,7 +6,6 @@ use processing::protocol::{OutcomeReason, ResultMetadata};
 use processing::semantic::{SemanticSummary, ValueKind};
 use processing::steps::{Step, StepVerbosity};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::sync::{Mutex, MutexGuard};
 use tauri::Manager;
 
@@ -101,10 +100,22 @@ pub struct ProcessExpressionResult {
     sampled_data: Option<processing::semantic_core::SampledTrajectory>,
     plot: Option<processing::plot::PlotEffect>,
     effect_only: bool,
-    analysis: Option<Value>,
-    details: Option<Value>,
+    analysis: Option<processing::semantic_core::ComputationAnalysis>,
+    details: Option<ProcessExpressionDetails>,
     semantic: SemanticSummary,
     outcome: ResultMetadata,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum ProcessExpressionDetails {
+    PartialApplication {
+        partial: processing::semantic_core::PartialApplication,
+    },
+    AmbiguousPartialApplication {
+        candidates: Vec<processing::semantic_core::PartialApplication>,
+        display_templates: Vec<String>,
+    },
 }
 
 struct DispatchExpressionResult {
@@ -121,7 +132,7 @@ struct DispatchExpressionResult {
     sampled_data: Option<processing::semantic_core::SampledTrajectory>,
     plot: Option<processing::plot::PlotEffect>,
     effect_only: bool,
-    analysis: Option<Value>,
+    analysis: Option<processing::semantic_core::ComputationAnalysis>,
     semantic: SemanticSummary,
     outcome: ResultMetadata,
 }
@@ -289,10 +300,9 @@ pub fn process_expression_with_engine(
             plot: None,
             effect_only: false,
             analysis: None,
-            details: Some(serde_json::json!({
-                "status": "partial_application",
-                "partial": partial,
-            })),
+            details: Some(ProcessExpressionDetails::PartialApplication {
+                partial: partial.clone(),
+            }),
             semantic,
             outcome,
         });
@@ -328,11 +338,10 @@ pub fn process_expression_with_engine(
             plot: None,
             effect_only: false,
             analysis: None,
-            details: Some(serde_json::json!({
-                "status": "ambiguous_partial_application",
-                "candidates": partials.candidates,
-                "display_templates": templates,
-            })),
+            details: Some(ProcessExpressionDetails::AmbiguousPartialApplication {
+                candidates: partials.candidates,
+                display_templates: templates,
+            }),
             semantic,
             outcome: ResultMetadata::unresolved(
                 analyzed.semantic.exactness,
@@ -780,7 +789,11 @@ mod tests {
         .unwrap();
         assert_eq!(gradient.kind, "multivariate");
         assert_eq!(gradient.expression.replace(' ', ""), "{2,-4}");
-        assert_eq!(gradient.analysis.as_ref().unwrap(), &serde_json::json!([2]));
+        assert!(matches!(
+            gradient.analysis.as_ref(),
+            Some(processing::semantic_core::ComputationAnalysis::MultivariateShape(shape))
+                if shape == &[2]
+        ));
         assert!(gradient
             .steps
             .iter()
@@ -810,7 +823,11 @@ mod tests {
         .unwrap();
         assert_eq!(line.kind, "line_integral");
         assert_eq!(line.expression, "1");
-        assert_eq!(line.analysis.as_ref().unwrap()["integrand_verified"], true);
+        assert!(matches!(
+            line.analysis.as_ref(),
+            Some(processing::semantic_core::ComputationAnalysis::LineIntegral(result))
+                if result.integrand_verified
+        ));
         assert!(line
             .steps
             .iter()
@@ -842,11 +859,11 @@ mod tests {
         .unwrap();
         assert_eq!(surface.kind, "surface_integral");
         assert_eq!(surface.expression, "-6");
-        assert_eq!(surface.analysis.as_ref().unwrap()["normal_verified"], true);
-        assert_eq!(
-            surface.analysis.as_ref().unwrap()["integrand_verified"],
-            true
-        );
+        assert!(matches!(
+            surface.analysis.as_ref(),
+            Some(processing::semantic_core::ComputationAnalysis::SurfaceIntegral(result))
+                if result.normal_verified && result.integrand_verified
+        ));
         assert!(surface
             .steps
             .iter()
@@ -1108,10 +1125,11 @@ mod tests {
             &mut engine,
         )
         .unwrap();
-        assert_eq!(
-            singular.analysis.as_ref().unwrap()["status"],
-            "singular_constraint"
-        );
+        assert!(matches!(
+            singular.analysis.as_ref(),
+            Some(processing::semantic_core::ComputationAnalysis::Lagrange(result))
+                if result.status == processing::extrema::LagrangeStatus::SingularConstraint
+        ));
         assert_eq!(
             singular.outcome.resolution,
             processing::protocol::ResolutionState::Unresolved
@@ -1303,20 +1321,28 @@ mod tests {
     #[test]
     fn unified_input_exposes_typed_partials_and_reclassifies_final_symbols() {
         let mut engine = RustEngineProxy::spawn().unwrap();
-        for (expression, operator) in [("D(x)", "derivative"), ("Integrate(x)", "integral")] {
+        for (expression, operator) in [
+            ("D(x)", processing::semantic_core::OperatorId::Derivative),
+            (
+                "Integrate(x)",
+                processing::semantic_core::OperatorId::Integral,
+            ),
+        ] {
             let result =
                 process_expression_with_engine(request(expression, false), &mut engine).unwrap();
             assert_eq!(result.kind, "partial_application", "{expression}");
             assert_eq!(result.expression, expression);
             assert_eq!(result.semantic.kind, ValueKind::Unevaluated);
             assert_eq!(result.semantic.bound_symbols, ["x"]);
+            let Some(ProcessExpressionDetails::PartialApplication { partial }) =
+                result.details.as_ref()
+            else {
+                panic!("expected typed partial application")
+            };
+            assert_eq!(partial.operator, operator);
             assert_eq!(
-                result.details.as_ref().unwrap()["partial"]["operator"].as_str(),
-                Some(operator)
-            );
-            assert_eq!(
-                result.details.as_ref().unwrap()["partial"]["missing"],
-                serde_json::json!(["operand"])
+                partial.missing,
+                [processing::semantic_core::Requirement::Operand]
             );
             assert_eq!(
                 result.outcome.resolution,
@@ -1327,20 +1353,15 @@ mod tests {
         let overloaded =
             process_expression_with_engine(request("Limit(t)", false), &mut engine).unwrap();
         assert_eq!(overloaded.kind, "partial_application");
-        assert_eq!(
-            overloaded.details.as_ref().unwrap()["status"],
-            "ambiguous_partial_application"
-        );
-        assert_eq!(
-            overloaded.details.as_ref().unwrap()["candidates"]
-                .as_array()
-                .unwrap()
-                .len(),
-            3
-        );
-        assert!(overloaded.details.as_ref().unwrap()["display_templates"]
-            .as_array()
-            .unwrap()
+        let Some(ProcessExpressionDetails::AmbiguousPartialApplication {
+            candidates,
+            display_templates,
+        }) = overloaded.details.as_ref()
+        else {
+            panic!("expected typed ambiguous partial application")
+        };
+        assert_eq!(candidates.len(), 3);
+        assert!(display_templates
             .iter()
             .any(|template| template == "Limit(t)(<approach_point>)(<operand>)"));
 
@@ -1672,15 +1693,20 @@ mod tests {
         .unwrap();
         assert_eq!(extrema.kind, "extrema");
         assert_eq!(extrema.semantic.kind, ValueKind::SolutionSet);
-        assert_eq!(extrema.analysis.as_ref().unwrap()["status"], "classified");
+        let Some(processing::semantic_core::ComputationAnalysis::Extrema(extrema_analysis)) =
+            extrema.analysis.as_ref()
+        else {
+            panic!("expected typed extrema analysis")
+        };
         assert_eq!(
-            extrema.analysis.as_ref().unwrap()["critical_points"][0]["kind"],
-            "local_minimum"
+            extrema_analysis.status,
+            processing::extrema::ExtremaStatus::Classified
         );
         assert_eq!(
-            extrema.analysis.as_ref().unwrap()["critical_points"][0]["gradient_verified"],
-            true
+            extrema_analysis.critical_points[0].kind,
+            processing::extrema::CriticalPointKind::LocalMinimum
         );
+        assert!(extrema_analysis.critical_points[0].gradient_verified);
         assert!(extrema.steps.iter().all(|step| {
             step.before_expr
                 .as_deref()
@@ -1695,16 +1721,20 @@ mod tests {
         .unwrap();
         assert_eq!(lagrange.kind, "lagrange");
         assert_eq!(lagrange.semantic.kind, ValueKind::SolutionSet);
-        assert_eq!(lagrange.analysis.as_ref().unwrap()["status"], "candidates");
-        assert!(lagrange.analysis.as_ref().unwrap()["candidates"]
-            .as_array()
-            .is_some_and(|candidates| !candidates.is_empty()));
-        assert!(lagrange.analysis.as_ref().unwrap()["candidates"]
-            .as_array()
-            .unwrap()
+        let Some(processing::semantic_core::ComputationAnalysis::Lagrange(lagrange_analysis)) =
+            lagrange.analysis.as_ref()
+        else {
+            panic!("expected typed Lagrange analysis")
+        };
+        assert_eq!(
+            lagrange_analysis.status,
+            processing::extrema::LagrangeStatus::Candidates
+        );
+        assert!(!lagrange_analysis.candidates.is_empty());
+        assert!(lagrange_analysis
+            .candidates
             .iter()
-            .all(|candidate| candidate["stationarity_verified"] == true
-                && candidate["constraint_verified"] == true));
+            .all(|candidate| candidate.stationarity_verified && candidate.constraint_verified));
 
         let absent =
             process_expression_with_engine(request("Extrema(x+y,x,y)", false), &mut engine)

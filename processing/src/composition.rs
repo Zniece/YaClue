@@ -42,7 +42,7 @@ pub struct CompositionResult {
     pub sampled_data: Option<crate::semantic_core::SampledTrajectory>,
     pub plot: Option<crate::plot::PlotEffect>,
     pub effect_only: bool,
-    pub analysis: Option<serde_json::Value>,
+    pub analysis: Option<crate::semantic_core::ComputationAnalysis>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -2727,6 +2727,20 @@ pub struct Certificate {
     pub evidence: CertificateEvidence,
 }
 
+/// Product-facing analysis facts. The enum is strongly typed inside Rust but
+/// remains untagged on the wire for compatibility with existing GUI and JSON
+/// Lines consumers. Consumers may render these fields, but mathematical state
+/// is determined by `SemanticState`/`ResultMetadata`, never by this projection.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ComputationAnalysis {
+    MultivariateShape(Vec<usize>),
+    LineIntegral(crate::line_integrals::LineIntegralResult),
+    SurfaceIntegral(crate::surface_integrals::SurfaceIntegralResult),
+    Extrema(crate::extrema::ExtremaResult),
+    Lagrange(crate::extrema::LagrangeResult),
+}
+
 impl Certificate {
     pub const CURRENT_VERSION: u32 = 1;
 
@@ -2737,13 +2751,23 @@ impl Certificate {
         }
     }
 
-    pub fn analysis(&self) -> Option<serde_json::Value> {
+    pub fn analysis(&self) -> Option<ComputationAnalysis> {
         match &self.evidence {
-            CertificateEvidence::MultivariateShape(shape) => serde_json::to_value(shape).ok(),
-            CertificateEvidence::LineIntegral(result) => serde_json::to_value(result).ok(),
-            CertificateEvidence::SurfaceIntegral(result) => serde_json::to_value(result).ok(),
-            CertificateEvidence::ExtremaAnalysis(result) => serde_json::to_value(result).ok(),
-            CertificateEvidence::LagrangeAnalysis(result) => serde_json::to_value(result).ok(),
+            CertificateEvidence::MultivariateShape(shape) => {
+                Some(ComputationAnalysis::MultivariateShape(shape.clone()))
+            }
+            CertificateEvidence::LineIntegral(result) => {
+                Some(ComputationAnalysis::LineIntegral(result.clone()))
+            }
+            CertificateEvidence::SurfaceIntegral(result) => {
+                Some(ComputationAnalysis::SurfaceIntegral(result.clone()))
+            }
+            CertificateEvidence::ExtremaAnalysis(result) => {
+                Some(ComputationAnalysis::Extrema(result.clone()))
+            }
+            CertificateEvidence::LagrangeAnalysis(result) => {
+                Some(ComputationAnalysis::Lagrange(result.clone()))
+            }
             _ => None,
         }
     }
