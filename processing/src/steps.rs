@@ -11,19 +11,6 @@ use std::collections::BTreeMap;
 
 use crate::semantic_core::{ExpressionPath, ObjectId};
 
-pub use crate::integrals::{antiderivative_family, AntiderivativeFamily};
-#[cfg(any(test, feature = "legacy-step-api"))]
-pub use crate::step_compatibility::{
-    derive_antiderivative_family_with_verbosity, derive_definite, derive_definite_with_options,
-    derive_definite_with_verbosity, derive_integrals, derive_integrals_with_verbosity,
-    AntiderivativeStepResult,
-};
-#[cfg(any(test, feature = "legacy-step-api"))]
-pub use crate::step_compatibility::{
-    derive_steps, derive_steps_order, derive_steps_order_with_verbosity,
-    derive_steps_with_verbosity,
-};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepImportance {
@@ -480,7 +467,13 @@ fn literal_tex(source: &str) -> String {
 mod tests {
     use super::*;
     use crate::engine::{ReplEngine, RustEngine};
+    use crate::integrals::antiderivative_family;
     use crate::quadrature::QuadratureOptions;
+    use crate::step_compatibility::{
+        derive_definite, derive_definite_with_options, derive_definite_with_verbosity,
+        derive_integrals, derive_steps, derive_steps_order, derive_steps_order_with_verbosity,
+        derive_steps_with_verbosity,
+    };
     use crate::test_support::CountingEngine;
 
     #[test]

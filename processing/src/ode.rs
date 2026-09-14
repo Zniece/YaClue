@@ -281,12 +281,13 @@ impl SemanticOperation<OdeSolveRequest> for OdeSolveOperation {
             })
         });
         transition_expressions.push(output.print_source());
-        let (output, events) = crate::semantic_core::materialize_rule_transitions(
-            input,
-            output,
-            sink.events,
-            &transition_expressions,
-        )?;
+        let (output, events) =
+            crate::semantic_core::materialize_rule_transitions_from_engine_source(
+                input,
+                output,
+                sink.events,
+                &transition_expressions,
+            )?;
         Ok(Computation {
             output: if solved {
                 ComputationOutput::Value(output)

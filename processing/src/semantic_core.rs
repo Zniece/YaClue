@@ -32,7 +32,7 @@ pub use operator_signature::{
 };
 pub use trace_computation::*;
 pub(crate) use trace_computation::{
-    materialize_rule_transitions, materialize_rule_transitions_from_ast,
+    materialize_rule_transitions_from_ast, materialize_rule_transitions_from_engine_source,
 };
 
 #[cfg(test)]

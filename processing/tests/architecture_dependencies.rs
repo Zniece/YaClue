@@ -26,6 +26,8 @@ const EQUIVALENCE: &str = include_str!("../src/equivalence.rs");
 const PROCESSING_LIB: &str = include_str!("../src/lib.rs");
 const INPUT: &str = include_str!("../src/input.rs");
 const APP_EXPRESSION: &str = include_str!("../../app/src-tauri/src/expression.rs");
+const STEPS: &str = include_str!("../src/steps.rs");
+const TRACE_COMPUTATION: &str = include_str!("../src/semantic_core/trace_computation.rs");
 
 fn production(source: &str) -> &str {
     source.split("#[cfg(test)]").next().unwrap_or(source)
@@ -130,6 +132,14 @@ fn removed_and_legacy_facades_cannot_reenter_the_default_product() {
     assert!(PROCESSING_LIB.contains(
         "#[cfg(any(test, feature = \"legacy-step-api\"))]\n#[doc(hidden)]\npub mod step_compatibility;"
     ));
+    assert_excludes(
+        production(STEPS),
+        "step product projection",
+        &[
+            "pub use crate::step_compatibility",
+            "pub use crate::integrals",
+        ],
+    );
 }
 
 #[test]
@@ -147,4 +157,11 @@ fn derivative_rule_revisions_consume_structured_ast_snapshots() {
         "derivative rule transition pipeline",
         &["parse_engine_expression"],
     );
+}
+
+#[test]
+fn transition_materializers_name_their_representation_boundary() {
+    assert!(TRACE_COMPUTATION.contains("materialize_rule_transitions_from_ast"));
+    assert!(TRACE_COMPUTATION.contains("materialize_rule_transitions_from_engine_source"));
+    assert!(!TRACE_COMPUTATION.contains("fn materialize_rule_transitions("));
 }

@@ -256,12 +256,13 @@ impl SemanticOperation<SumRequest> for SumOperation {
                 })
             });
         });
-        let (output, events) = crate::semantic_core::materialize_rule_transitions(
-            input,
-            output,
-            sink.events,
-            &transition_expressions,
-        )?;
+        let (output, events) =
+            crate::semantic_core::materialize_rule_transitions_from_engine_source(
+                input,
+                output,
+                sink.events,
+                &transition_expressions,
+            )?;
         Ok(Computation {
             output: if no_value {
                 ComputationOutput::NoValue(output)

@@ -22,7 +22,7 @@ use std::collections::BTreeSet;
 
 use processing::engine::{Engine, RustEngine};
 use processing::quadrature::QuadratureOptions;
-use processing::steps::{
+use processing::step_compatibility::{
     derive_definite, derive_definite_with_options, derive_integrals, derive_steps,
     derive_steps_order,
 };

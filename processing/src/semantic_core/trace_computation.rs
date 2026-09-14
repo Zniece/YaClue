@@ -102,7 +102,7 @@ impl RuleEvent {
 /// final semantic state. This boundary replays each emitted expression through
 /// `ObjectDelta`, then attaches the final semantics to the last transition so
 /// event references describe the versions that actually existed.
-pub(crate) fn materialize_rule_transitions(
+pub(crate) fn materialize_rule_transitions_from_engine_source(
     input: &MathematicalObject,
     final_output: MathematicalObject,
     events: Vec<RuleEvent>,

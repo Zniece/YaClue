@@ -9,7 +9,7 @@ use crate::input::{validate_expression, validate_symbol};
 use crate::limits::{limit_computation, LimitDirection};
 use crate::steps::{Step, StepVerbosity};
 
-pub fn derivative_steps_with_verbosity(
+fn derivative_steps_with_verbosity(
     engine: &mut dyn Engine,
     expression: &str,
     variable: &str,

@@ -8,7 +8,7 @@
 //! (C++ 引擎可用 YACAS_BIN 指定;RustEngine 用 YACAS_SCRIPTS 指定脚本库)
 
 use processing::engine::{Engine, ReplEngine, RustEngine};
-use processing::steps::derive_steps;
+use processing::step_compatibility::derive_steps;
 
 const CASES: [&str; 5] = [
     "Sin(x)^2",
