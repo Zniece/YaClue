@@ -19,8 +19,9 @@ fn lock_engine<'a>(
     state: &'a tauri::State<'_, Mutex<RustEngineProxy>>,
 ) -> Result<MutexGuard<'a, RustEngineProxy>, ErrorResponse> {
     state.lock().map_err(|error| {
-        ErrorResponse::new(
+        ErrorResponse::keyed(
             ErrorCode::Internal,
+            "errors.engine_state_unavailable",
             format!("引擎状态锁不可用: {error}"),
             true,
         )
@@ -28,11 +29,11 @@ fn lock_engine<'a>(
 }
 
 fn message(error: EngineError) -> ErrorResponse {
-    error.response()
-}
-
-fn invalid_input(message: impl Into<String>) -> ErrorResponse {
-    ErrorResponse::new(ErrorCode::InvalidInput, message, false)
+    let response = error.response();
+    if response.code != ErrorCode::InvalidInput {
+        eprintln!("[YaClue] backend diagnostic: {}", response.message);
+    }
+    response
 }
 
 fn parse_assumption_fact(value: &str) -> Result<AssumptionFact, ErrorResponse> {
@@ -42,7 +43,13 @@ fn parse_assumption_fact(value: &str) -> Result<AssumptionFact, ErrorResponse> {
         "positive" => Ok(AssumptionFact::Positive),
         "negative" => Ok(AssumptionFact::Negative),
         "non_zero" => Ok(AssumptionFact::NonZero),
-        _ => Err(invalid_input(format!("未知假设性质: {value}"))),
+        _ => Err(ErrorResponse::keyed(
+            ErrorCode::InvalidInput,
+            "errors.unknown_assumption_fact",
+            format!("未知假设性质: {value}"),
+            false,
+        )
+        .arg("value", value)),
     }
 }
 

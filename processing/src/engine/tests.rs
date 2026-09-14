@@ -311,11 +311,11 @@ fn errors_have_stable_codes_and_retry_policy() {
         assert_eq!(response.code, code);
         assert_eq!(response.retryable, retryable);
         assert!(response.message_ref.key.starts_with("errors."));
-        assert_eq!(
-            response.message_ref.fallback.as_deref(),
-            Some(response.message.as_str())
-        );
+        assert!(response.message_ref.fallback.is_none());
         assert!(!response.message.is_empty());
+        let wire = serde_json::to_value(&response).unwrap();
+        assert!(wire.get("message").is_none());
+        assert!(wire["message_ref"].get("fallback").is_none());
     }
 }
 

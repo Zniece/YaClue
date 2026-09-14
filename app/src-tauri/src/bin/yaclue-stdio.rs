@@ -29,7 +29,7 @@ fn write_json(output: &mut impl Write, value: &impl Serialize) -> io::Result<()>
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = RustEngineProxy::spawn()
-        .map_err(|error| io::Error::other(format!("引擎启动失败: {error}")))?;
+        .map_err(|error| io::Error::other(format!("engine startup failed: {error}")))?;
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
 
@@ -79,11 +79,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match serde_json::from_str(input) {
                 Ok(request) => request,
                 Err(error) => {
-                    let error = ErrorResponse::new(
+                    let error = ErrorResponse::keyed(
                         ErrorCode::InvalidInput,
+                        "errors.invalid_json",
                         format!("无效的 JSON 请求: {error}"),
                         false,
-                    );
+                    )
+                    .arg("detail", error.to_string());
                     write_json(&mut stdout, &StdioError { error: &error })?;
                     continue;
                 }

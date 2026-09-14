@@ -4,14 +4,20 @@ use processing::semantic::SemanticSummary;
 use processing::steps::{Step, StepVerbosity};
 
 use crate::expression_protocol::{ProcessExpressionRequest, ProcessExpressionResult};
-use crate::{invalid_input, message};
+use crate::message;
 
 fn parse_verbosity(value: &str) -> Result<StepVerbosity, ErrorResponse> {
     match value {
         "concise" => Ok(StepVerbosity::Concise),
         "standard" => Ok(StepVerbosity::Standard),
         "detailed" => Ok(StepVerbosity::Detailed),
-        _ => Err(invalid_input(format!("未知步骤粒度: {value}"))),
+        _ => Err(ErrorResponse::keyed(
+            ErrorCode::InvalidInput,
+            "errors.unknown_verbosity",
+            format!("未知步骤粒度: {value}"),
+            false,
+        )
+        .arg("value", value)),
     }
 }
 
@@ -70,8 +76,9 @@ fn dispatch_expression_with_engine(
     )
     .map_err(message)?
     else {
-        return Err(ErrorResponse::new(
+        return Err(ErrorResponse::keyed(
             ErrorCode::Internal,
+            "errors.missing_structured_result",
             "完整数学输入未产生结构化计算结果",
             false,
         ));

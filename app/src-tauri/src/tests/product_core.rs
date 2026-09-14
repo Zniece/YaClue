@@ -449,3 +449,34 @@ fn mathematical_message_wire_format_contains_only_keys_and_arguments() {
         }
     }
 }
+
+#[test]
+fn user_errors_are_keyed_and_do_not_serialize_backend_diagnostics() {
+    let mut engine = RustEngineProxy::spawn().unwrap();
+    let error = match process_expression_with_engine(
+        ProcessExpressionRequest {
+            expression: "x+1".into(),
+            steps: true,
+            verbosity: "exhaustive".into(),
+        },
+        &mut engine,
+    ) {
+        Ok(_) => panic!("unknown verbosity must be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.message_ref.key, "errors.unknown_verbosity");
+    assert_eq!(
+        error.message_ref.args.get("value").map(String::as_str),
+        Some("exhaustive")
+    );
+    let wire = serde_json::to_value(error).unwrap();
+    assert!(wire.get("message").is_none());
+    assert!(wire["message_ref"].get("fallback").is_none());
+
+    let assumption = parse_assumption_fact("complex").unwrap_err();
+    assert_eq!(assumption.message_ref.key, "errors.unknown_assumption_fact");
+    assert_eq!(
+        assumption.message_ref.args.get("value").map(String::as_str),
+        Some("complex")
+    );
+}

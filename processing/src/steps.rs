@@ -553,7 +553,10 @@ mod tests {
         let mut engine = RustEngine::spawn().expect("启动 RustEngine 失败");
         // 非法语法(D 的非法逗号形式)应报错而非静默
         let err = derive_steps(&mut engine, "D(x^2,x)", "x").unwrap_err();
-        assert!(err.to_string().contains("错误"), "应报告错误: {err}");
+        assert!(
+            err.to_string().contains("failed"),
+            "must report failure: {err}"
+        );
     }
 
     #[test]

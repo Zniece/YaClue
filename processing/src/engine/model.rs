@@ -228,6 +228,7 @@ pub enum ErrorCode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ErrorResponse {
     pub code: ErrorCode,
+    #[serde(skip_serializing)]
     pub message: String,
     pub message_ref: crate::messages::MessageRef,
     pub retryable: bool,
@@ -245,10 +246,29 @@ impl ErrorResponse {
         };
         Self {
             code,
-            message_ref: crate::messages::MessageRef::with_fallback(key, message.clone()),
+            message_ref: crate::messages::MessageRef::new(key),
             message,
             retryable,
         }
+    }
+
+    pub fn keyed(
+        code: ErrorCode,
+        key: impl Into<String>,
+        message: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            message_ref: crate::messages::MessageRef::new(key),
+            retryable,
+        }
+    }
+
+    pub fn arg(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.message_ref = self.message_ref.arg(name, value);
+        self
     }
 }
 
@@ -275,12 +295,12 @@ impl EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EngineError::InvalidInput(m) => write!(f, "输入错误: {m}"),
-            EngineError::Spawn(m) => write!(f, "引擎启动失败: {m}"),
-            EngineError::Io(m) => write!(f, "引擎 I/O 错误: {m}"),
-            EngineError::Eval(m) => write!(f, "命令错误: {m}"),
-            EngineError::Parse(m) => write!(f, "输出解析失败: {m}"),
-            EngineError::Timeout(m) => write!(f, "执行超时: {m}"),
+            EngineError::InvalidInput(m) => write!(f, "invalid input: {m}"),
+            EngineError::Spawn(m) => write!(f, "engine startup failed: {m}"),
+            EngineError::Io(m) => write!(f, "engine I/O failed: {m}"),
+            EngineError::Eval(m) => write!(f, "evaluation failed: {m}"),
+            EngineError::Parse(m) => write!(f, "engine output parsing failed: {m}"),
+            EngineError::Timeout(m) => write!(f, "evaluation timed out: {m}"),
         }
     }
 }
