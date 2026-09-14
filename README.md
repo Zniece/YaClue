@@ -2,15 +2,16 @@
 
 [![CI](https://github.com/Zniece/YaClue/actions/workflows/ci.yml/badge.svg)](https://github.com/Zniece/YaClue/actions/workflows/ci.yml)
 
-**Yet another clue** — an open-source, local-first, step-by-step math
-application. Enter a problem, watch the solution unfold step by step, and
-inspect *why* each step applies. Every step names the rule that produced it.
+**Yet another clue** — an open-source, local-first mathematics application.
+Enter a problem, inspect its structured result, and follow the transformations
+and analyses used to obtain it.
 
 Under the hood, YaClue is powered by **yacas-rs**, a general-purpose computer
 algebra engine written in Rust — a dialect fork of
 [Yacas](https://github.com/grzegorzmazur/yacas) (1.9.x): the script library is maintained locally while the engine itself is a fresh
-implementation. The step-generation layer and the desktop GUI live outside
-the kernel and are what make YaClue a product.
+implementation. YaClue's typed semantic layer turns engine expressions into
+composable mathematical objects and keeps equivalent transformations,
+auxiliary analyses, terminal conclusions, and UI effects distinct.
 
 ## Layout
 
@@ -20,14 +21,30 @@ yacas/                The CAS (yacas-rs), laid out like its upstream
 ├── scripts/          The standard script library
 ├── tests/            .yts behavior specs for the library
 ├── COPYING/AUTHORS   Upstream license and authors (LGPL-2.1+)
-processing/           YaClue's logic layer: engine traits, step generation,
-                      plotting support
+processing/           Typed semantic objects, operation registry, composition,
+                      domain solvers, structured traces, and product projection
 app/                  YaClue's GUI shell (Tauri + KaTeX)
 docs/                 English and Chinese Yacas scripting language documentation
 ```
 
 The kernel (`yacas/`) is self-contained and could be used by any application;
 YaClue is the first one.
+
+## Architecture
+
+Input is parsed and elaborated into one typed object tree. Operations execute
+inside-out through a shared registry, preserving AST identity and semantic
+state as results flow into later operations. Yacas-rs remains responsible for
+symbolic computation; `processing` owns mathematical types, capabilities,
+partial application, normalization, composition, and structured explanations.
+
+Product output separates four concepts instead of presenting every event as an
+equation step:
+
+- equivalent transformations of the complete expression;
+- mathematical analyses used to choose or verify a method;
+- terminal conclusions such as no value or an unresolved object;
+- effects such as a plot attached to the normal mathematical result.
 
 ## Symbol-safety boundary
 
@@ -159,11 +176,18 @@ standard library.
 
 ## Status
 
-Work in progress. The desktop experience playground exposes the current
-processing APIs for step-by-step derivatives, indefinite and definite
-integrals, algebraic transformations, equations and systems, limits,
-function plotting, assumptions, and direct engine evaluation. It is an
-integration prototype rather than the final GUI design.
+Version `0.1.0-alpha.4` is the first prerelease based on the typed semantic
+core. The backend and structured product contract are stable enough to serve
+as the baseline for subsequent development; the application remains a
+prerelease and its mathematical coverage and presentation will continue to
+evolve.
+
+Current product paths include arithmetic and algebraic transformations,
+limits, derivatives, symbolic and definite integrals, series, equations and
+systems, symbolic and numeric ODEs, numerical evaluation and root finding,
+linear algebra, multivariate calculus, and plotting. Supported results compose
+through the semantic object pipeline; unsupported or conditional results remain
+explicit rather than silently degrading to strings.
 
 This workspace uses the root `Cargo.lock`; Rust workspace members do not
 maintain separate lockfiles. The independently built Tauri application keeps
