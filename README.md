@@ -26,6 +26,11 @@ YaClue accepts compact mathematical expressions rather than a general-purpose
 script language. Operations compose directly, so the result of an inner
 operation remains a typed mathematical object for the outer operation.
 
+Enter one mathematical expression at a time. Definitions, assignments, script
+statements, and statement terminators are not part of this input field; use
+the Yacas scripting language and `.ys` files when writing or extending CAS
+scripts.
+
 ```text
 D(x)Sin(x)^2
 Integrate(x,0,Pi)Sin(x)

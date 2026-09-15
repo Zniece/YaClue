@@ -25,7 +25,7 @@ npm install
 npm run tauri dev
 ```
 
-`cargo build -p app` builds the Rust application member directly. The current interface is a backend integration test bench used before the final GUI design. Ordinary mathematical fields accept a single-expression Yacas subset, and equation systems are split by line. The direct Yacas evaluation entry uses the persistent engine session and is intended for trusted development use.
+`cargo build -p app` builds the Rust application member directly. The current interface is a backend integration test bench used before the final GUI design. Ordinary mathematical fields accept one YaClue mathematical expression; they do not accept Yacas definitions, assignments, or multi-statement scripts. Equation systems are split by line. Write or test those forms with the Yacas scripting language and `.ys` files instead.
 
 ## Initialize standard scripts
 
