@@ -228,7 +228,7 @@ function renderAnalyses(analyses) {
 function renderPlot(data) {
   const points = data.kind === "numeric_ode"
     ? (data.sampled_data?.points || [])
-        .map((point) => ({ x: point.independent, y: point.state[0] }))
+        .map((point) => ({ x: Number(point.independent), y: Number(point.state[0]) }))
     : (data.plot?.sampled?.points || []);
   plotEl.hidden = false;
   const ratio = window.devicePixelRatio || 1;
@@ -238,7 +238,7 @@ function renderPlot(data) {
   plotEl.height = height * ratio;
   const ctx = plotEl.getContext("2d");
   ctx.scale(ratio, ratio);
-  const finite = points.filter((point) => Number.isFinite(point.y));
+  const finite = points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
   if (!finite.length) throw new Error(t("finitePlotError"));
   const xs = points.map((point) => point.x);
   const ys = finite.map((point) => point.y).sort((a, b) => a - b);
