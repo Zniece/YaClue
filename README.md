@@ -15,8 +15,6 @@ implementation. YaClue's typed semantic layer turns engine expressions into
 composable mathematical objects and keeps equivalent transformations,
 auxiliary analyses, terminal conclusions, and UI effects distinct.
 
-Download the current prerelease from
-[YaClue 0.1.0-alpha.4](https://github.com/Zniece/YaClue/releases/tag/v0.1.0-alpha.4).
 The desktop interface is available in English and Simplified Chinese; it uses
 the system language initially and can be switched in the application.
 
@@ -30,6 +28,9 @@ Enter one mathematical expression at a time. Definitions, assignments, script
 statements, and statement terminators are not part of this input field; use
 the Yacas scripting language and `.ys` files when writing or extending CAS
 scripts.
+
+See the [YaClue mathematical input guide](docs/yaclue-input.md) for complete
+input rules, composition, binding, partial applications, and result states.
 
 ```text
 D(x)Sin(x)^2

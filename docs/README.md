@@ -1,5 +1,7 @@
 # Documentation
 
+- [YaClue mathematical input](yaclue-input.md) documents the product expression
+  field, composition, partial input, and outcomes. [简体中文](yaclue-input-zh.md)
 - [Yacas scripting language documentation](yacas-language/README.md) is the
   authoritative English reference.
 - [Yacas 脚本语言文档](yacas-language-zh/README.md) contains the maintained
