@@ -35,6 +35,22 @@ Integrate(x)Taylor(Exp(x),0,2)
 N(Determinant({{1,2},{3,4}}))
 ```
 
+## 基础函数、特殊函数与向量
+
+除下文的产品运算外，数学表达式还可以调用随计算引擎提供的纯数学函数。下列常用形式属于计算器输入范围，名称均区分大小写：
+
+| 类别 | 形式 |
+|---|---|
+| 初等函数 | `Sin(x)`、`Cos(x)`、`Tan(x)`、`ArcSin(x)`、`ArcCos(x)`、`ArcTan(x)`、`Exp(x)`、`Ln(x)`、`Sqrt(x)`、`Abs(x)`、`Sign(x)` |
+| 整数与标量运算 | `Div(a,b)`、`Mod(a,b)`、`Gcd(a,b)`、`Lcm(a,b)`、`Floor(x)`、`Ceil(x)`、`Round(x)`、`Min(a,b)`、`Max(a,b)`、`Numer(expr)`、`Denom(expr)` |
+| 特殊函数 | `Gamma(x)`、`Zeta(x)`、`Bernoulli(n)`、`Euler(n)`、`LambertW(x)` |
+| 向量 | `Norm(v)`、`PNorm(v,p)`、`Normalize(v)`、`Dot(u,v)`、`CrossProduct(u,v)`、`Outer(u,v)` |
+| 常用矩阵辅助函数 | `Trace(matrix)`、`MatrixPower(matrix,n)`、`Diagonal(matrix)`、`DiagonalMatrix(vector)`、`Identity(n)`、`ZeroMatrix(n)` |
+
+向量使用列表记法。例如 `Norm({3,4})` 的结果为 `5`，`Norm({x,y})` 的结果为 `Sqrt(x^2+y^2)`。`Norm(v)` 表示欧几里得（二）范数，`PNorm(v,p)` 表示 p 范数；`Abs(x)` 表示绝对值。计算器数学输入以这些函数名为准，而不是将视觉上的绝对值竖线或范数双竖线直接当作独立、可执行的源码语法。
+
+随计算引擎提供的脚本库还有更宽的 API 范围；某个函数可被脚本库调用，并不等于它已成为 YaClue 有专门结构化结果或逐步解释承诺的产品运算。
+
 ## 运算符形式与参数约定
 
 下表中 `expr` 表示一个数学表达式，`var` 表示符号变量，`a`/`b` 表示边界或点，`n` 表示非负整数阶数，`dir` 表示方向，`p` 表示数值精度。只有表内列出的参数个数是该产品运算的完整形式。

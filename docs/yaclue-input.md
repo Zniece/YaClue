@@ -18,6 +18,30 @@ Integrate(x)Taylor(Exp(x),0,2)
 N(Determinant({{1,2},{3,4}}))
 ```
 
+## Elementary, special, and vector functions
+
+In addition to the product operations below, a mathematical expression may call
+the bundled evaluator's pure mathematical functions. The following common
+forms are part of the calculator input surface (names are case-sensitive):
+
+| Family | Forms |
+|---|---|
+| Elementary functions | `Sin(x)`, `Cos(x)`, `Tan(x)`, `ArcSin(x)`, `ArcCos(x)`, `ArcTan(x)`, `Exp(x)`, `Ln(x)`, `Sqrt(x)`, `Abs(x)`, `Sign(x)` |
+| Integer and scalar arithmetic | `Div(a,b)`, `Mod(a,b)`, `Gcd(a,b)`, `Lcm(a,b)`, `Floor(x)`, `Ceil(x)`, `Round(x)`, `Min(a,b)`, `Max(a,b)`, `Numer(expr)`, `Denom(expr)` |
+| Special functions | `Gamma(x)`, `Zeta(x)`, `Bernoulli(n)`, `Euler(n)`, `LambertW(x)` |
+| Vectors | `Norm(v)`, `PNorm(v,p)`, `Normalize(v)`, `Dot(u,v)`, `CrossProduct(u,v)`, `Outer(u,v)` |
+| Common matrix helpers | `Trace(matrix)`, `MatrixPower(matrix,n)`, `Diagonal(matrix)`, `DiagonalMatrix(vector)`, `Identity(n)`, `ZeroMatrix(n)` |
+
+Vectors use list notation, for example `Norm({3,4})` evaluates to `5` and
+`Norm({x,y})` to `Sqrt(x^2+y^2)`. `Norm(v)` is the Euclidean (2-)norm;
+`PNorm(v,p)` is the p-norm. `Abs(x)` is absolute value. The calculator's
+mathematical input uses these function names, rather than treating visual
+absolute-value or norm bars as independently executable source syntax.
+
+The bundled evaluator contains a broader script-library API. A function being
+available to that library does not automatically make it a documented
+YaClue-specific structured operation or guarantee step-by-step explanation.
+
 ## Core operator forms
 
 Here `expr` is an expression, `var` a symbol, `a` and `b` points or bounds, `n` a non-negative integer order, and `dir` a direction.
