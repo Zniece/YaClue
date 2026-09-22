@@ -4,12 +4,16 @@
   "version": "0.1.0-alpha.4",
   "type": "module",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
     "tauri": "tauri"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "vite": "^7.1.7"
   },
   "dependencies": {
-    "katex": "^0.18.4"
+    "katex": "0.18.4",
+    "mathlive": "file:vendor/mathlive"
   }
 }

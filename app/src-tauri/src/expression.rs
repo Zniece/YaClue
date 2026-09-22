@@ -1,4 +1,4 @@
-use processing::engine::{ErrorCode, ErrorResponse, RustEngineProxy};
+use processing::engine::{Engine, ErrorCode, ErrorResponse, RustEngineProxy};
 use processing::protocol::ResultMetadata;
 use processing::semantic::SemanticSummary;
 use processing::steps::{Step, StepVerbosity};
@@ -113,7 +113,7 @@ fn dispatch_expression_with_engine(
     unified_result(classification.kind, result)
 }
 
-pub fn process_expression_with_engine(
+fn process_expression_unscoped(
     request: ProcessExpressionRequest,
     engine: &mut RustEngineProxy,
 ) -> Result<ProcessExpressionResult, ErrorResponse> {
@@ -162,4 +162,29 @@ pub fn process_expression_with_engine(
         semantic: result.semantic,
         outcome: result.outcome,
     }))
+}
+
+pub fn process_expression_with_engine(
+    request: ProcessExpressionRequest,
+    engine: &mut RustEngineProxy,
+) -> Result<ProcessExpressionResult, ErrorResponse> {
+    if request.assumptions.is_empty() {
+        return process_expression_unscoped(request, engine);
+    }
+
+    let assumptions = request.assumptions.clone();
+    engine.eval("PushAssumptions()").map_err(message)?;
+    let result = (|| {
+        for assumption in assumptions {
+            processing::assumptions::assume(engine, &assumption.symbol, assumption.fact)
+                .map_err(message)?;
+        }
+        process_expression_unscoped(request, engine)
+    })();
+    let restore = engine.eval("PopAssumptions()").map_err(message);
+    match (result, restore) {
+        (Ok(value), Ok(_)) => Ok(value),
+        (Err(error), Ok(_)) => Err(error),
+        (_, Err(error)) => Err(error),
+    }
 }

@@ -491,6 +491,7 @@ fn user_errors_are_keyed_and_do_not_serialize_backend_diagnostics() {
             expression: "x+1".into(),
             steps: true,
             verbosity: "exhaustive".into(),
+            assumptions: Vec::new(),
         },
         &mut engine,
     ) {

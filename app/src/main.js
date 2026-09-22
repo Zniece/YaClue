@@ -1,393 +1,203 @@
-import { applyTranslations, getLocale, hasTranslation, setLocale, t } from "./i18n.js";
+import "mathlive";
+import "mathlive/fonts.css";
+import { yaclueKeyboardLayouts } from "./keyboard.js";
+import { hasTranslation, t } from "./i18n.js";
+import { clearCalculationRows, renderAnswer, renderSteps } from "./math-rows.js";
 
-const { invoke } = window.__TAURI__.core;
 const $ = (selector) => document.querySelector(selector);
-const exprEl = $("#expr");
-const errorEl = $("#error");
-const summaryEl = $("#summary");
-const stepsEl = $("#steps-list");
-const plotEl = $("#plot");
-const rawBoxEl = $("#raw-box");
-const rawEl = $("#raw");
-const emptyEl = $("#empty-result");
-const stateEl = $("#engine-state");
-const timingEl = $("#timing");
-const semanticEl = $("#semantic-summary");
-const assumptions = new Map();
-let calculating = false;
-let inputHelpTimer;
-let lastResult;
-let lastError;
+const app = $("#app");
+const calculatorView = $("#calculator-view");
+const workspace = $(".workspace");
+const field = $("#math-input");
+const steps = $("#steps");
+const answer = $("#answer");
+const keyboardToggle = $("#keyboard-toggle");
+let keyboardExpanded = true;
+let keyboardRequest = 0;
+let lastSubmissionResult = null;
+let calculationRequest = 0;
+let lastCalculationResult = null;
+let lastCalculationError = null;
 
-const TEMPLATES = [
-  ["derivative", "D(x)x^3*Sin(x)"], ["indefiniteIntegral", "Integrate(x)x*Exp(x)"],
-  ["definiteIntegral", "Integrate(x,0,Pi)Sin(x)"], ["limit", "Limit(Sin(x)/x,0)"],
-  ["taylor", "Taylor(Exp(x),0,6)"], ["doubleIntegral", "DoubleIntegral(x*y,y,0,x,x,0,1)"],
-  ["polarIntegral", "PolarIntegral(x^2+y^2,x,y,r,t,0,1,0,2*Pi)"],
-  ["solveEquation", "Solve(x^2-5*x+6==0,x)"], ["equationSystem", "Solve({x+y==3,x-y==1},{x,y})"],
-  ["ode", "OdeSolve(y''+4*y==Sin(x))"], ["numericOde", "OdeSolveNumeric(y'==y,x,y,0,1,2)"],
-  ["factor", "Factor(x^4-1)"], ["expand", "Expand((x+1)^4)"],
-  ["simplify", "Simplify((x^2-1)/(x-1))"], ["tidy", "Tidy((x+x)/2+x^2-x^2)"],
-  ["apart", "Apart(1/(x^2-1),x)"], ["extrema", "Extrema(x^2+y^2-2*x+4*y,x,y)"],
-  ["lagrange", "Lagrange(x+y,x^2+y^2-1,x,y)"], ["matrixMultiply", "{{1,2},{3,4}}*{{5,6},{7,8}}"],
-  ["determinant", "Determinant({{1,2},{3,4}})"], ["inverse", "Inverse({{1,2},{3,4}})"],
-  ["transpose", "Transpose({{1,2,3},{4,5,6}})"], ["eigenvalues", "EigenValues({{2,1},{1,2}})"],
-  ["matrixSolve", "MatrixSolve({{2,1},{1,-1}},{5,1})"], ["numeric", "N(Pi,30)"],
-  ["findRoot", "FindRoot(Cos(x)-x,x,1)"], ["plot", "Plot(Sin(x)+Cos(2*x)/2,x,-6.28,6.28)"],
-];
+const diagnosticMessages = {
+  "empty-expression": "请输入需要计算的表达式",
+  "mathlive-error": "输入中含有无法解析的数学结构",
+  "missing-slot": "请补全尚未填写的输入框",
+  "ambiguous-semantics": "这个符号存在多种含义，请使用键盘中的明确形式",
+  "unsupported-atom": "当前尚不支持这种数学结构",
+  "unsupported-command": "当前尚不支持这个数学命令",
+  "invalid-argument": "函数或运算符的参数无效",
+  "invalid-assumption": "分号后的假设条件无效",
+  "lossy-conversion": "该输入无法无损转换为 YaClue 表达式",
+};
 
-function hideInputHelp() {
-  clearTimeout(inputHelpTimer);
-  inputHelpTimer = undefined;
-  $("#input-help").hidden = true;
+const keyboardElement = () => Array.from(calculatorView.children).find((element) => element.classList.contains("ML__keyboard"));
+
+function syncKeyboardHeight() {
+  if (!keyboardExpanded) return;
+  const plate = keyboardElement()?.querySelector(".MLK__plate");
+  const apiHeight = Math.ceil(window.mathVirtualKeyboard?.boundingRect?.height || 0);
+  const elementHeight = Math.ceil(plate?.getBoundingClientRect().height || 0);
+  const height = Math.max(apiHeight, elementHeight);
+  if (height > 0) app.style.setProperty("--keyboard-height", `${height}px`);
 }
 
-function showInputHelp(message) {
-  const helpEl = $("#input-help");
-  clearTimeout(inputHelpTimer);
-  helpEl.textContent = message;
-  helpEl.hidden = false;
-  inputHelpTimer = setTimeout(hideInputHelp, 4000);
+function syncAnswerHeight() {
+  const height = answer.classList.contains("visible") ? Math.ceil(answer.getBoundingClientRect().height) : 0;
+  workspace.style.setProperty("--answer-height", `${height}px`);
 }
 
-function insertTemplate(textarea, markedTemplate) {
-  const marker = markedTemplate.indexOf("|");
-  const template = markedTemplate.replace("|", "");
-  const start = textarea.selectionStart ?? textarea.value.length;
-  const end = textarea.selectionEnd ?? start;
-  textarea.setRangeText(template, start, end, "end");
-  const caret = start + (marker === -1 ? template.length : marker);
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+function ensureKeyboard(request, attempt = 0) {
+  if (request !== keyboardRequest || !keyboardExpanded || calculatorView.hidden) return;
+  const keyboard = window.mathVirtualKeyboard;
+  if (!keyboard) return;
+  let element = keyboardElement();
+  if (keyboard.visible && !element) keyboard.hide({ animate: false });
+  keyboard.show({ animate: false });
+  element = keyboardElement();
+  const height = element?.querySelector(".MLK__plate")?.getBoundingClientRect().height || 0;
+  if (element?.isConnected && height > 0) {
+    element.classList.add("is-visible");
+    syncKeyboardHeight();
+    return;
+  }
+  if (attempt >= 8) return;
+  if (attempt > 1 && keyboard.visible) keyboard.hide({ animate: false });
+  const delays = [0, 40, 100, 180, 300, 500, 800, 1200, 1800];
+  setTimeout(() => ensureKeyboard(request, attempt + 1), delays[attempt + 1]);
 }
 
-function renderTemplates() {
-  const target = $("#template-list");
-  target.innerHTML = "";
-  TEMPLATES.forEach(([key, expression]) => {
-    const label = t(`template.${key}.label`);
-    const help = t(`template.${key}.help`);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "shortcut";
-    button.textContent = label;
-    button.title = help;
-    button.addEventListener("click", () => {
-      insertTemplate(exprEl, expression);
-      showInputHelp(help);
-      exprEl.focus();
-    });
-    target.appendChild(button);
-  });
+function setKeyboardExpanded(expanded) {
+  keyboardExpanded = expanded;
+  const request = ++keyboardRequest;
+  app.classList.toggle("keyboard-collapsed", !expanded);
+  keyboardToggle.setAttribute("aria-expanded", String(expanded));
+  keyboardToggle.setAttribute("aria-label", expanded ? "收起数学键盘" : "展开数学键盘");
+  if (expanded && !calculatorView.hidden) {
+    field.focus({ preventScroll: true });
+    requestAnimationFrame(() => ensureKeyboard(request));
+  } else window.mathVirtualKeyboard?.hide({ animate: false });
 }
 
-function setBusy(busy) {
-  $("#go").disabled = busy;
-  stateEl.textContent = t(busy ? "engineBusy" : "engineReady");
-  stateEl.classList.toggle("busy", busy);
+function setView(name) {
+  for (const view of document.querySelectorAll(".view")) view.hidden = view.id !== `${name}-view`;
+  const calculating = name === "calculator";
+  $("#calculate-tab").classList.toggle("active", calculating);
+  $("#menu-tab").classList.toggle("active", !calculating);
+  $("#calculate-tab").toggleAttribute("aria-current", calculating);
+  if (calculating) setKeyboardExpanded(keyboardExpanded);
+  else window.mathVirtualKeyboard?.hide({ animate: false });
 }
 
-function resetOutput() {
-  errorEl.hidden = true;
-  errorEl.textContent = "";
-  summaryEl.hidden = true;
-  summaryEl.innerHTML = "";
-  stepsEl.innerHTML = "";
-  plotEl.hidden = true;
-  rawBoxEl.hidden = true;
-  rawEl.textContent = "";
-  emptyEl.hidden = true;
-  semanticEl.hidden = true;
-  semanticEl.innerHTML = "";
-  $("#result-kind").textContent = "";
+function localizedMessage(reference, fallback) {
+  if (!reference?.key) return fallback || "";
+  if (hasTranslation(reference.key)) return t(reference.key, reference.args);
+  return reference.fallback || fallback || reference.key;
 }
 
-function localizedMessage(messageRef, fallback = "") {
-  if (!messageRef) return fallback;
-  if (!hasTranslation(messageRef.key)) return t("missingTranslation", { key: messageRef.key });
-  return t(messageRef.key, messageRef.args || {});
+function renderCalculationError(error) {
+  lastCalculationResult = null;
+  lastCalculationError = error;
+  const explanation = localizedMessage(error?.message_ref, error?.message || "计算失败");
+  renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
+  renderAnswer(answer, "\\mathrm{Calculation\\ failed}");
+  requestAnimationFrame(syncAnswerHeight);
 }
 
-function showError(error) {
-  lastError = error;
-  const message = error && typeof error === "object" && (error.message_ref || error.message)
-    ? localizedMessage(error.message_ref, error.message)
-    : typeof error === "string" ? error : JSON.stringify(error);
-  const retry = error?.code === "timeout" || error?.retryable ? t("retry") : "";
-  errorEl.textContent = `${message}${retry}`;
-  errorEl.hidden = false;
+function renderCalculation(result) {
+  lastCalculationResult = result;
+  lastCalculationError = null;
+  const analyses = (result.analyses || []).map((analysis) => ({
+    explanation: localizedMessage(analysis.message_ref, analysis.rule),
+    latex: analysis.tex,
+  }));
+  const calculationSteps = (result.steps || []).map((step) => ({
+    explanation: localizedMessage(step.message_ref, step.rule),
+    latex: step.tex,
+  }));
+  const conclusions = (result.conclusions || []).map((conclusion) => ({
+    explanation: localizedMessage(conclusion.message_ref, conclusion.kind),
+    latex: conclusion.tex,
+  }));
+  renderSteps(steps, [...analyses, ...calculationSteps, ...conclusions]);
+  renderAnswer(answer, result.tex || result.expression);
+  requestAnimationFrame(syncAnswerHeight);
 }
 
-function renderMath(tex, target, displayMode = true) {
-  window.katex.render(tex || "", target, { throwOnError: false, displayMode });
-}
+async function showSubmissionResult() {
+  const request = ++calculationRequest;
+  lastCalculationResult = null;
+  lastCalculationError = null;
+  clearCalculationRows(steps, answer);
 
-function renderSummary(result) {
-  summaryEl.hidden = false;
-  const math = document.createElement("div");
-  math.className = "summary-math";
-  summaryEl.appendChild(math);
-  if (result.tex) renderMath(result.tex, math);
-  else math.textContent = result.expression || t("completed");
-}
+  if (typeof field.getYaClueSubmissionResult !== "function") {
+    lastSubmissionResult = {
+      ok: false,
+      diagnostics: [{ severity: "error", code: "adapter-unavailable", message: "YaClue input adapter is unavailable" }],
+    };
+  } else {
+    lastSubmissionResult = field.getYaClueSubmissionResult();
+  }
+  document.dispatchEvent(new CustomEvent("yaclue-submission", { detail: lastSubmissionResult }));
 
-function localizedResultLabel(result) {
-  return hasTranslation(result.title_key) ? t(result.title_key) : t("result");
-}
+  if (!lastSubmissionResult.ok) {
+    const diagnostic = lastSubmissionResult.diagnostics[0];
+    const explanation = diagnosticMessages[diagnostic?.code] || diagnostic?.message || "输入无法转换";
+    steps.dataset.diagnosticCode = diagnostic?.code || "unknown";
+    renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
+    renderAnswer(answer, "\\mathrm{Invalid\\ input}");
+    requestAnimationFrame(syncAnswerHeight);
+    return;
+  }
 
-function renderSemantic(semantic, outcome) {
-  if (!semantic) return;
-  const kindNames = {
-    scalar: t("kind_scalar"), expression: t("kind_expression"), equation: t("kind_equation"),
-    matrix: t("kind_matrix"), solution_set: t("kind_solution_set"),
-    function_family: t("kind_function_family"), unevaluated: t("kind_unevaluated"),
-  };
-  const exactnessNames = {
-    exact: t("exact_exact"), symbolic: t("exact_symbolic"), approximate: t("exact_approximate"), unknown: t("exact_unknown"),
-  };
-  const items = [kindNames[semantic.kind] || semantic.kind];
-  if (semantic.shape) items.push(`${semantic.shape.rows} × ${semantic.shape.columns}`);
-  items.push(exactnessNames[semantic.exactness] || semantic.exactness);
-  if (semantic.symbols?.length) items.push(t("symbols", { value: semantic.symbols.join(", ") }));
-  if (semantic.bound_symbols?.length) items.push(t("boundSymbols", { value: semantic.bound_symbols.join(", ") }));
-  if (semantic.constants?.length) items.push(t("constants", { value: semantic.constants.join(", ") }));
-  const reasonNames = {
-    condition_insufficient: t("reason.condition_insufficient"),
-    algorithm_uncovered: t("reason.algorithm_uncovered"),
-    mathematical_absence: t("reason.mathematical_absence"),
-    divergent: t("reason.divergent"),
-    unsupported_operation: t("reason.unsupported_operation"),
-  };
-  if (outcome?.conditionality === "conditional") items.push(t("conditional"));
-  if (outcome?.completeness === "representative") items.push(t("representative"));
-  if (outcome?.reason) items.push(reasonNames[outcome.reason] || outcome.reason);
-  items.forEach((text) => {
-    const chip = document.createElement("span");
-    chip.textContent = text;
-    semanticEl.appendChild(chip);
-  });
-  semanticEl.hidden = false;
-}
+  delete steps.dataset.diagnosticCode;
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (typeof invoke !== "function") {
+    renderCalculationError({ message: "当前环境无法连接计算引擎" });
+    return;
+  }
 
-function renderSteps(steps) {
-  steps.forEach((step, index) => {
-    const item = document.createElement("article");
-    item.className = `step importance-${step.importance}`;
-    const heading = document.createElement("div");
-    heading.className = "step-heading";
-    heading.innerHTML = `<span>${index + 1}</span><div><strong></strong><small></small></div>`;
-    heading.querySelector("strong").textContent = localizedMessage(step.message_ref, step.why) || t("computation");
-    heading.querySelector("small").textContent = step.rule;
-    const math = document.createElement("div");
-    math.className = "math";
-    item.append(heading, math);
-    stepsEl.appendChild(item);
-    const transformation = step.before_tex
-      ? `${step.before_tex}\\;\\Longrightarrow\\;${step.tex}`
-      : step.tex;
-    renderMath(transformation, math);
-  });
-}
-
-function renderConclusions(conclusions) {
-  conclusions.forEach((conclusion) => {
-    const item = document.createElement("article");
-    item.className = "step conclusion";
-    const heading = document.createElement("div");
-    heading.className = "step-heading";
-    const label = document.createElement("strong");
-    label.textContent = localizedMessage(conclusion.message_ref, conclusion.message);
-    const math = document.createElement("div");
-    math.className = "math";
-    heading.appendChild(label);
-    item.append(heading, math);
-    stepsEl.appendChild(item);
-    renderMath(conclusion.tex, math);
-  });
-}
-
-function renderAnalyses(analyses) {
-  analyses.forEach((analysis) => {
-    const item = document.createElement("article");
-    item.className = `step analysis importance-${analysis.importance}`;
-    const heading = document.createElement("div");
-    heading.className = "step-heading";
-    const label = document.createElement("strong");
-    label.textContent = localizedMessage(analysis.message_ref, analysis.message) || t("analysisBasis");
-    const detail = document.createElement("small");
-    detail.textContent = analysis.rule;
-    const math = document.createElement("div");
-    math.className = "math";
-    heading.append(label, detail);
-    item.append(heading, math);
-    stepsEl.appendChild(item);
-    renderMath(analysis.tex, math);
-  });
-}
-
-function renderPlot(data) {
-  const points = data.kind === "numeric_ode"
-    ? (data.sampled_data?.points || [])
-        .map((point) => ({ x: Number(point.independent), y: Number(point.state[0]) }))
-    : (data.plot?.sampled?.points || []);
-  plotEl.hidden = false;
-  const ratio = window.devicePixelRatio || 1;
-  const width = plotEl.clientWidth || 800;
-  const height = Math.min(390, Math.max(280, width * 0.48));
-  plotEl.width = width * ratio;
-  plotEl.height = height * ratio;
-  const ctx = plotEl.getContext("2d");
-  ctx.scale(ratio, ratio);
-  const finite = points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
-  if (!finite.length) throw new Error(t("finitePlotError"));
-  const xs = points.map((point) => point.x);
-  const ys = finite.map((point) => point.y).sort((a, b) => a - b);
-  const xMin = Math.min(...xs), xMax = Math.max(...xs);
-  const low = ys[Math.floor(ys.length * 0.02)], high = ys[Math.min(ys.length - 1, Math.ceil(ys.length * 0.98))];
-  const span = Math.max(high - low, 1e-9), yMin = low - span * 0.08, yMax = high + span * 0.08;
-  const xSpan = Math.max(xMax - xMin, 1e-9);
-  const px = (x) => 34 + ((x - xMin) / xSpan) * (width - 52);
-  const py = (y) => height - 24 - ((y - yMin) / (yMax - yMin)) * (height - 48);
-  ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = "#d7deea";
-  ctx.beginPath();
-  if (xMin <= 0 && xMax >= 0) { ctx.moveTo(px(0), 12); ctx.lineTo(px(0), height - 18); }
-  if (yMin <= 0 && yMax >= 0) { ctx.moveTo(26, py(0)); ctx.lineTo(width - 10, py(0)); }
-  ctx.stroke();
-  ctx.strokeStyle = "#315fc5";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  let drawing = false;
-  points.forEach((point) => {
-    if (!Number.isFinite(point.y) || point.y < yMin || point.y > yMax) drawing = false;
-    else if (drawing) ctx.lineTo(px(point.x), py(point.y));
-    else { ctx.moveTo(px(point.x), py(point.y)); drawing = true; }
-  });
-  ctx.stroke();
-}
-
-function renderResult(result) {
-  resetOutput();
-  $("#result-title").textContent = localizedResultLabel(result);
-  $("#result-kind").textContent = localizedResultLabel(result);
-  renderSemantic(result.semantic, result.outcome);
-  if (result.kind === "plot") {
-    renderSummary(result);
-    renderPlot(result);
-  } else if (result.kind === "numeric_ode") renderPlot(result);
-  else renderSummary(result);
-  renderAnalyses(result.analyses || []);
-  renderSteps(result.steps || []);
-  renderConclusions(result.conclusions || []);
-  rawEl.textContent = JSON.stringify(result, null, 2);
-  rawBoxEl.hidden = false;
-}
-
-async function calculate() {
-  hideInputHelp();
-  if (calculating) return;
-  const expression = exprEl.value.trim();
-  if (!expression) return;
-  calculating = true;
-  lastResult = undefined;
-  lastError = undefined;
-  resetOutput();
-  setBusy(true);
-  const started = performance.now();
+  renderAnswer(answer, "\\mathrm{Calculating}\\ldots");
+  requestAnimationFrame(syncAnswerHeight);
   try {
     const result = await invoke("process_expression", {
       request: {
-        expression,
-        steps: $("#output-mode").value === "steps",
-        verbosity: $("#verbosity").value,
+        expression: lastSubmissionResult.expression,
+        steps: true,
+        verbosity: "standard",
+        assumptions: lastSubmissionResult.assumptions || [],
       },
     });
-    lastResult = result;
-    renderResult(result);
+    if (request === calculationRequest) renderCalculation(result);
   } catch (error) {
-    showError(error);
-  } finally {
-    timingEl.textContent = `${Math.round(performance.now() - started)} ms`;
-    setBusy(false);
-    calculating = false;
+    if (request === calculationRequest) renderCalculationError(error);
   }
 }
 
-async function runStdio() {
-  const input = $("#stdio-input").value;
-  const output = $("#stdio-output");
-  const button = $("#stdio-run");
-  button.disabled = true;
-  output.textContent = "";
-  const lines = input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  for (const line of lines) {
-    try {
-      const parsed = /^\{\s*"/.test(line) ? JSON.parse(line) : { expression: line };
-      const result = await invoke("process_expression", {
-        request: {
-          expression: parsed.expression,
-          steps: parsed.steps ?? true,
-          verbosity: parsed.verbosity ?? "standard",
-        },
-      });
-      output.textContent += `${JSON.stringify(result)}\n`;
-    } catch (error) {
-      output.textContent += `${JSON.stringify({ error })}\n`;
-    }
-  }
-  button.disabled = false;
-}
-
-function renderAssumptions() {
-  const list = $("#assumption-list");
-  list.innerHTML = "";
-  if (!assumptions.size) list.innerHTML = `<span class="empty">${t("noneYet")}</span>`;
-  assumptions.forEach(({ fact, symbol }) => {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = `${symbol}: ${t(`fact.${fact}`)}`;
-    list.appendChild(chip);
-  });
-  $("#assumption-summary").textContent = assumptions.size ? t("assumptionCount", { count: assumptions.size }) : t("noAssumptions");
-}
-
-async function refreshAssumptions() {
-  const states = await invoke("get_assumptions");
-  assumptions.clear();
-  states.forEach((state) => assumptions.set(`${state.symbol}:${state.fact}`, state));
-  renderAssumptions();
-}
-
-async function addAssumption() {
-  try {
-    await invoke("set_assumption", { symbol: $("#assumption-symbol").value.trim(), fact: $("#assumption-fact").value });
-    await refreshAssumptions();
-  } catch (error) { resetOutput(); showError(error); }
-}
-
-async function clearAssumptions() {
-  try { await invoke("clear_assumptions"); await refreshAssumptions(); }
-  catch (error) { resetOutput(); showError(error); }
-}
-
-$("#output-mode").addEventListener("change", () => { $("#verbosity-field").hidden = $("#output-mode").value !== "steps"; });
-$("#clear-expression").addEventListener("click", () => { exprEl.value = ""; hideInputHelp(); exprEl.focus(); });
-$("#go").addEventListener("click", calculate);
-$("#add-assumption").addEventListener("click", addAssumption);
-$("#clear-assumptions").addEventListener("click", clearAssumptions);
-$("#stdio-run").addEventListener("click", runStdio);
-$("#stdio-clear").addEventListener("click", () => { $("#stdio-output").textContent = ""; });
-$("#locale").value = getLocale();
-$("#locale").addEventListener("change", (event) => setLocale(event.target.value));
-document.addEventListener("localechange", () => {
-  renderTemplates();
-  renderAssumptions();
-  setBusy(calculating);
-  if (lastResult) renderResult(lastResult);
-  else if (lastError) showError(lastError);
+customElements.whenDefined("math-field").then(() => {
+  const keyboard = window.mathVirtualKeyboard;
+  keyboard.container = calculatorView;
+  keyboard.layouts = yaclueKeyboardLayouts;
+  keyboard.editToolbar = "none";
+  field.mathVirtualKeyboardPolicy = "manual";
+  field.value = "0";
+  field.focus({ preventScroll: true });
+  setKeyboardExpanded(true);
+  keyboard.addEventListener("geometrychange", syncKeyboardHeight);
+  new ResizeObserver(syncAnswerHeight).observe(answer);
 });
-exprEl.addEventListener("keydown", (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") calculate(); });
-exprEl.addEventListener("input", hideInputHelp);
-applyTranslations();
-renderTemplates();
-refreshAssumptions().catch(showError);
+
+keyboardToggle.addEventListener("pointerdown", (event) => event.preventDefault());
+keyboardToggle.addEventListener("click", () => setKeyboardExpanded(!keyboardExpanded));
+field.addEventListener("focus", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
+field.addEventListener("input", () => { calculationRequest += 1; });
+field.addEventListener("beforeinput", (event) => { if (event.inputType === "insertLineBreak") { event.preventDefault(); showSubmissionResult(); } });
+$("#calculate-tab").addEventListener("click", () => setView("calculator"));
+$("#menu-tab").addEventListener("click", () => setView("menu"));
+document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+window.addEventListener("pageshow", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
+document.addEventListener("visibilitychange", () => { if (!document.hidden && keyboardExpanded && !calculatorView.hidden) ensureKeyboard(++keyboardRequest); });
+document.addEventListener("localechange", () => {
+  if (lastCalculationResult) renderCalculation(lastCalculationResult);
+  else if (lastCalculationError) renderCalculationError(lastCalculationError);
+});

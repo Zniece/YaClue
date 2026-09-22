@@ -1,30 +1,28 @@
 #[test]
-fn gui_renders_analysis_without_an_equivalence_arrow() {
+fn gui_keeps_analyses_steps_and_conclusions_semantically_separate() {
     let source = include_str!("../../../src/main.js");
-    let analysis_renderer = source
-        .split("function renderAnalyses")
-        .nth(1)
-        .unwrap()
-        .split("function renderPlot")
-        .next()
-        .unwrap();
-    assert!(!analysis_renderer.contains("Longrightarrow"));
-    assert!(source.contains("renderAnalyses(result.analyses || [])"));
-    assert!(source.contains("renderSteps(result.steps || [])"));
-    assert!(source.contains("localizedMessage(step.message_ref, step.why)"));
-    assert!(source.contains("localizedMessage(analysis.message_ref, analysis.message)"));
-    assert!(source.contains("localizedMessage(conclusion.message_ref, conclusion.message)"));
+    let rows = include_str!("../../../src/math-rows.js");
+
+    assert!(source.contains("(result.analyses || []).map"));
+    assert!(source.contains("(result.steps || []).map"));
+    assert!(source.contains("(result.conclusions || []).map"));
+    assert!(source.contains("[...analyses, ...calculationSteps, ...conclusions]"));
+    assert!(source.contains("localizedMessage(analysis.message_ref, analysis.rule)"));
+    assert!(source.contains("localizedMessage(step.message_ref, step.rule)"));
+    assert!(source.contains("localizedMessage(conclusion.message_ref, conclusion.kind)"));
+    assert!(!source.contains("Longrightarrow"));
+    assert!(!rows.contains("Longrightarrow"));
 }
 
 #[test]
-fn gui_examples_distinguish_equations_from_solving_them() {
-    let javascript = include_str!("../../../src/main.js");
-    let html = include_str!("../../../src/index.html");
+fn gui_keyboard_distinguishes_equations_from_solving_them() {
+    let keyboard = include_str!("../../../src/keyboard.js");
     let i18n = include_str!("../../../src/i18n.js");
-    assert!(javascript.contains("Solve(x^2-5*x+6==0,x)"));
-    assert!(!javascript.contains("[\"代数方程\", \"x^2-5*x+6==0\""));
-    assert!(html.contains("data-i18n=\"constructEquation\""));
-    assert!(html.contains("data-i18n=\"equationHelp\""));
+
+    assert!(keyboard.contains("equation:"));
+    assert!(keyboard.contains("\\\\yaclueEquation{#@}{#0}"));
+    assert!(keyboard.contains("solve:"));
+    assert!(keyboard.contains("\\\\operatorname{Solve}\\\\left(#0,x\\\\right)"));
     assert!(i18n.contains("显式使用 Solve 或 OdeSolve"));
 }
 
@@ -32,18 +30,12 @@ fn gui_examples_distinguish_equations_from_solving_them() {
 fn gui_uses_stable_locale_keys() {
     let javascript = include_str!("../../../src/main.js");
     let i18n = include_str!("../../../src/i18n.js");
-    let html = include_str!("../../../src/index.html");
 
-    assert!(javascript.contains("hasTranslation(result.title_key)"));
+    assert!(javascript.contains("hasTranslation(reference.key)"));
+    assert!(javascript.contains("t(reference.key, reference.args)"));
     assert!(i18n.contains("\"zh-CN\""));
     assert!(i18n.contains("\"en-US\""));
-    assert!(html.contains("id=\"locale\""));
-    assert!(html.contains("data-i18n=\"tagline\""));
     assert!(i18n.contains("inconsistent keys"));
-    assert!(javascript.contains("t(\"missingTranslation\", { key: messageRef.key })"));
-    assert!(!javascript
-        .chars()
-        .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)));
 }
 
 #[test]
@@ -52,23 +44,13 @@ fn changing_locale_renders_the_complete_existing_result_again() {
     let locale_handler = javascript
         .split("document.addEventListener(\"localechange\"")
         .nth(1)
-        .unwrap()
-        .split("exprEl.addEventListener")
-        .next()
-        .unwrap();
-    let result_renderer = javascript
-        .split("function renderResult(result)")
-        .nth(1)
-        .unwrap()
-        .split("async function calculate")
-        .next()
         .unwrap();
 
-    assert!(locale_handler.contains("renderResult(lastResult)"));
-    assert!(locale_handler.contains("showError(lastError)"));
-    assert!(result_renderer.contains("renderAnalyses(result.analyses || [])"));
-    assert!(result_renderer.contains("renderSteps(result.steps || [])"));
-    assert!(result_renderer.contains("renderConclusions(result.conclusions || [])"));
+    assert!(locale_handler.contains("renderCalculation(lastCalculationResult)"));
+    assert!(locale_handler.contains("renderCalculationError(lastCalculationError)"));
+    assert!(javascript.contains("(result.analyses || []).map"));
+    assert!(javascript.contains("(result.steps || []).map"));
+    assert!(javascript.contains("(result.conclusions || []).map"));
 }
 
 #[test]
@@ -76,8 +58,9 @@ fn gui_foundation_exposes_status_focus_and_reduced_motion_contracts() {
     let html = include_str!("../../../src/index.html");
     let css = include_str!("../../../src/styles.css");
 
-    assert!(html.contains("class=\"header-tools\""));
-    assert!(html.contains("role=\"status\" aria-live=\"polite\""));
+    assert!(html.contains("class=\"topbar\""));
+    assert!(html.contains("id=\"math-input\""));
+    assert!(html.contains("id=\"answer\" class=\"math-row answer-row\" aria-live=\"polite\""));
     assert!(css.contains("button:focus-visible"));
     assert!(css.contains("@media (prefers-reduced-motion: reduce)"));
 }

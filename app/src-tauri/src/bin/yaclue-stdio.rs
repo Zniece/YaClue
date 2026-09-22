@@ -95,6 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 expression: input.to_string(),
                 steps: true,
                 verbosity: "standard".into(),
+                assumptions: Vec::new(),
             }
         };
         match process_expression_with_engine(request, &mut engine) {

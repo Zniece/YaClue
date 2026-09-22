@@ -1,3 +1,4 @@
+use processing::assumptions::AssumptionFact;
 use processing::protocol::ResultMetadata;
 use processing::semantic::SemanticSummary;
 use processing::steps::Step;
@@ -5,11 +6,19 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) type ProcessExpressionDetails = processing::composition::PartialProductDetails;
 
+#[derive(Clone, Deserialize)]
+pub struct ProcessExpressionAssumption {
+    pub symbol: String,
+    pub fact: AssumptionFact,
+}
+
 #[derive(Deserialize)]
 pub struct ProcessExpressionRequest {
     pub expression: String,
     pub steps: bool,
     pub verbosity: String,
+    #[serde(default)]
+    pub assumptions: Vec<ProcessExpressionAssumption>,
 }
 
 #[derive(Serialize)]

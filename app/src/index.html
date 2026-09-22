@@ -2,80 +2,26 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f2e9cf" />
     <title>YaClue</title>
-    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="app-header">
-      <div class="brand"><span class="brand-mark">Y</span><div><h1>YaClue</h1><p data-i18n="tagline">可解释的符号计算器</p></div></div>
-      <div class="header-tools">
-        <label class="locale-control"><span data-i18n="language">语言</span><select id="locale"><option value="zh-CN">中文</option><option value="en-US">English</option></select></label>
-        <span id="engine-state" class="state" role="status" aria-live="polite" data-i18n="engineReady">引擎就绪</span>
-      </div>
-    </header>
-    <main>
-      <section class="composer card">
-        <div class="intro">
-          <div><p class="eyebrow" data-i18n="calculateEyebrow">计算</p><h2 data-i18n="prompt">你想计算什么？</h2></div>
-          <div class="output-controls">
-            <label><span data-i18n="outputMode">输出方式</span><select id="output-mode"><option value="steps" data-i18n="showSteps">显示步骤</option><option value="result" data-i18n="resultOnly">只看结果</option></select></label>
-            <label id="verbosity-field"><span data-i18n="verbosity">步骤粒度</span><select id="verbosity"><option value="concise" data-i18n="concise">简洁</option><option value="standard" selected data-i18n="standard">标准</option><option value="detailed" data-i18n="detailed">详细</option></select></label>
-          </div>
-        </div>
-        <div class="shortcut-header"><span data-i18n="shortcuts">快捷输入</span><small data-i18n="shortcutHelp">在光标处插入表达式模板</small></div>
-        <div id="template-list" class="shortcut-list" data-i18n-aria-label="shortcuts" aria-label="Templates"></div>
-        <label class="expression-label" for="expr" data-i18n="expression">数学表达式</label>
-        <div class="expression-box">
-          <textarea id="expr" rows="4" spellcheck="false" aria-describedby="input-help">D(x)Sin(x)^2</textarea>
-          <button id="clear-expression" class="icon-button" data-i18n-title="clearInput" data-i18n-aria-label="clearInput" title="清空输入" aria-label="清空输入">×</button>
-        </div>
-        <div class="input-footer"><p id="input-help" role="status" aria-live="polite" hidden></p><span><kbd>⌘</kbd><kbd>Enter</kbd> <span data-i18n="calculate">Calculate</span></span></div>
-        <details class="context-panel">
-          <summary><span data-i18n="context">计算上下文与输入帮助</span> <span id="assumption-summary">无假设</span></summary>
-          <div class="context-grid">
-            <section>
-              <h3 data-i18n="currentAssumptions">当前假设</h3>
-              <div class="assumption-form">
-                <input id="assumption-symbol" value="n" data-i18n-aria-label="assumptionSymbol" aria-label="假设符号" />
-                <select id="assumption-fact" data-i18n-aria-label="assumptionFact" aria-label="假设性质"><option value="real" data-i18n="real">实数</option><option value="integer" data-i18n="integer">整数</option><option value="positive" data-i18n="positive">正数</option><option value="negative" data-i18n="negative">负数</option><option value="non_zero" data-i18n="nonZero">非零</option></select>
-                <button id="add-assumption" data-i18n="add">添加</button>
-              </div>
-              <div id="assumption-list" class="chips"><span class="empty">暂无假设</span></div>
-              <button id="clear-assumptions" class="text-button" data-i18n="clearAll">清除全部假设</button>
-            </section>
-            <section class="syntax-help">
-              <h3 data-i18n="commonInput">常用输入</h3>
-              <p><code>*</code> <span data-i18n="multiplication">multiply</span>　<code>^</code> <span data-i18n="power">power</span>　<code>==</code> <span data-i18n="constructEquation">construct equation</span></p>
-              <p><code>Pi</code> <span data-i18n="pi">pi</span>　<code>Infinity</code> <span data-i18n="infinity">infinity</span></p>
-              <p><code>Sin(x)</code>　<code>Exp(x)</code>　<code>Ln(x)</code>　<code>Sqrt(x)</code></p>
-              <p class="muted" data-i18n="equationHelp">An equation is a mathematical object. Use Solve or OdeSolve explicitly to solve it.</p>
-            </section>
-          </div>
-        </details>
-        <div class="actions"><button id="go" class="primary" data-i18n="calculate">计算</button><span id="timing"></span></div>
+    <main class="app" id="app">
+      <nav class="topbar" aria-label="主导航"><button id="calculate-tab" class="active" type="button" aria-current="page">计算</button><button id="menu-tab" type="button">菜单</button></nav>
+      <section id="calculator-view" class="view calculator-view">
+        <section class="workspace" aria-label="计算区域">
+          <div class="math-row input-row"><math-field id="math-input" aria-label="数学表达式"></math-field></div>
+          <section id="steps" class="steps" aria-label="计算步骤"></section>
+          <output id="answer" class="math-row answer-row" aria-live="polite"></output>
+        </section>
+        <div class="keyboard-dock" aria-label="数学键盘控制"><button id="keyboard-toggle" class="keyboard-toggle" type="button" aria-label="收起数学键盘" aria-expanded="true"></button></div>
       </section>
-      <section class="result card">
-        <div class="result-header"><div><p class="eyebrow" data-i18n="resultEyebrow">结果</p><h2 id="result-title" data-i18n="result">计算结果</h2></div><span id="result-kind"></span></div>
-        <div id="semantic-summary" class="semantic-summary" hidden></div>
-        <p id="error" class="error" hidden></p><div id="summary" hidden></div><div id="steps-list"></div>
-        <canvas id="plot" hidden></canvas>
-        <details id="raw-box" hidden><summary data-i18n="structuredResult">结构化结果</summary><pre id="raw"></pre></details>
-        <div id="empty-result" class="empty-result" data-i18n="emptyResult">输入表达式后开始计算。</div>
-      </section>
-      <details class="stdio-panel card">
-        <summary><span data-i18n="devConsole">命令行测试组件</span> <span data-i18n="devOnly">仅用于开发测试 · JSON Lines</span></summary>
-        <p class="muted" data-i18n="devHelp">每行输入一个表达式，结果逐行输出为 JSON。也可输入含 expression、steps、verbosity 的 JSON 请求。</p>
-        <textarea id="stdio-input" rows="4" spellcheck="false">Limit(x,0)
-Limit(Sin(x)/x,0)</textarea>
-        <div class="stdio-actions">
-          <button id="stdio-run" class="primary" data-i18n="run">运行</button>
-          <button id="stdio-clear" class="text-button" data-i18n="clearOutput">清空输出</button>
-        </div>
-        <pre id="stdio-output" aria-live="polite"></pre>
-      </details>
+      <section id="menu-view" class="view menu-view" hidden><button class="menu-item" type="button" data-view="help">帮助</button><button class="menu-item" type="button" data-view="settings">设置</button></section>
+      <section id="help-view" class="view content-view" hidden><button class="back" type="button" data-view="menu">‹ 返回菜单</button><p>我是帮助</p></section>
+      <section id="settings-view" class="view content-view" hidden><button class="back" type="button" data-view="menu">‹ 返回菜单</button><p>我是设置</p></section>
     </main>
-    <script src="vendor/katex/katex.min.js"></script><script type="module" src="main.js"></script>
+    <script type="module" src="main.js"></script>
   </body>
 </html>

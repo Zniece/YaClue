@@ -8,7 +8,11 @@ Input must contain one non-empty expression. YaClue input does not accept statem
 
 ## Basic notation and composition
 
-Numbers, symbols, function calls, parentheses, lists, matrices, and ordinary mathematical operators are accepted: `2*x^2-3*x+1`, `Sin(x)^2+Cos(x)^2`, `f(x+1)`, `{1,2,3}`, `{{1,2},{3,4}}`, and `x^2-5*x+6==0`. `==` constructs an equation; use `Solve` to solve it. Names are case-sensitive.
+Numbers, symbols, function calls, parentheses, lists, matrices, and ordinary mathematical operators are accepted: `2*x^2-3*x+1`, `Sin(x)^2+Cos(x)^2`, `f(x+1)`, `{1,2,3}`, `{{1,2},{3,4}}`, and `x^2-5*x+6==0`. `==` constructs an equation; use `Solve` to solve it. Names begin with an ASCII letter and may continue with ASCII letters or digits. Names are case-sensitive: `mass` and `Mass`, or `foo(x)` and `Foo(x)`, are distinct.
+
+## One-shot assumptions
+
+A single top-level semicolon may attach assumptions to one calculation, as in `Sqrt(x^2);x>0`. Separate multiple assumptions with commas: `x/y;x>0,y!=0`. The accepted forms are `var>0`, `var<0`, `var!=0`, and their equivalent reversed comparisons. The UI renders `!=` as `≠`. These assumptions are scoped to that calculation and are restored after either success or failure; they do not become session state.
 
 Expressions compose inside-out, preserving the structured inner result:
 
@@ -56,7 +60,7 @@ Here `expr` is an expression, `var` a symbol, `a` and `b` points or bounds, `n` 
 | Equations | `Solve(equation,var)`, `Solve({equation,...},{var,...})`. |
 | Algebra | `Factor(expr)`, `Expand(expr)`, `Simplify(expr)`, `Tidy(expr)`, `Apart(expr,var)`. |
 | Approximation | `N(expr)`, `N(expr,precision)`, `Approximate(expr[,precision])`. |
-| Series / ODE / plot | `Sum(var,a,b)expr`, `OdeSolve(equation)`, `Plot(expr,var,a,b)`. |
+| Series / ODE / plot | `Sum(var,a,b,expr)`, `OdeSolve(equation)`, `Plot(expr,var,a,b)`. `Sum(var,a,b)` is a valid partial input. |
 
 The first variable in the bodied derivative, integral, variable-form limit or Taylor, and sum forms is bound in the trailing operand. For example, `x` is local in `D(x)(x*y)`, while `y` remains a free parameter.
 

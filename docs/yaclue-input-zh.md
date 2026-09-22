@@ -25,7 +25,11 @@ f(x+1)
 x^2-5*x+6==0
 ```
 
-`==` 构造方程，不会自动求解；使用 `Solve` 才会求解。列表用 `{...}`，矩阵是等长行的列表。函数名和符号区分大小写；例如 `Sin`、`Pi` 是惯用的标准拼写。
+`==` 构造方程，不会自动求解；使用 `Solve` 才会求解。列表用 `{...}`，矩阵是等长行的列表。名称以 ASCII 字母开头，后面可跟 ASCII 字母或数字。函数名和符号区分大小写；例如 `mass` 与 `Mass`、`foo(x)` 与 `Foo(x)` 是不同名称，`Sin`、`Pi` 是惯用的标准拼写。
+
+## 单次计算假设
+
+可在表达式后使用一个顶层分号附加本次计算的假设，例如 `Sqrt(x^2);x>0`。多个假设以逗号分隔，例如 `x/y;x>0,y!=0`。当前接受 `var>0`、`var<0`、`var!=0` 及左右对调的等价形式；界面中的 `≠` 对应这里的 `!=`。假设只对这一次计算生效，计算结束或失败后均恢复原状态，不进入后续计算的会话状态。
 
 表达式可嵌套。YaClue 从内到外计算，并将内层的结构化结果传给外层运算：
 
@@ -67,7 +71,7 @@ N(Determinant({{1,2},{3,4}}))
 | 方程 | `Solve(equation,var)`；`Solve({equation,...},{var,...})` | 变量参数给出待解未知量。 |
 | 代数变换 | `Factor(expr)`、`Expand(expr)`、`Simplify(expr)`、`Tidy(expr)`、`Apart(expr,var)` | 变换的输出仍可嵌套为其他运算的输入。 |
 | 数值近似 | `N(expr)`；`N(expr,p)`；`Approximate(expr[,p])` | `N` 与 `Approximate` 是别名。 |
-| 求和 | `Sum(var,a,b)expr` | `var` 在 `expr` 中绑定。 |
+| 求和 | `Sum(var,a,b,expr)` | `var` 在 `expr` 中绑定。省略求和项的 `Sum(var,a,b)` 是合法部分输入。 |
 | 常微分方程 | `OdeSolve(equation)` | 例如 `OdeSolve(y'==y+2*x)`。 |
 | 绘图 | `Plot(expr,var,a,b)` | 产生绘图 effect，并可附带正常数学结果。 |
 
