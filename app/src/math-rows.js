@@ -7,6 +7,8 @@ const makeMathField = (latex) => {
 
 const rowCleanup = new WeakMap();
 const answerFrames = new WeakMap();
+const stepRenderState = new WeakMap();
+const STEP_BATCH_SIZE = 24;
 
 const syncHorizontalOverflow = (element) => {
   const scrollable = element.scrollWidth > element.clientWidth + 1;
@@ -57,12 +59,49 @@ export function createStepRow(step, index) {
 }
 
 export function renderSteps(container, items) {
+  const previous = stepRenderState.get(container);
+  if (previous) {
+    container.removeEventListener("scroll", previous.onScroll);
+    previous.observer.disconnect();
+    if (previous.frame !== undefined) cancelAnimationFrame(previous.frame);
+    stepRenderState.delete(container);
+  }
   for (const row of container.children) {
     rowCleanup.get(row)?.();
     rowCleanup.delete(row);
   }
-  container.replaceChildren(...items.map(createStepRow));
+  container.replaceChildren();
+  container.scrollTop = 0;
   container.classList.toggle("visible", items.length > 0);
+  if (items.length === 0) return;
+
+  const state = { items, next: 0, frame: undefined, onScroll: undefined, observer: undefined };
+  const appendBatch = () => {
+    const end = Math.min(state.next + STEP_BATCH_SIZE, state.items.length);
+    const rows = [];
+    for (let index = state.next; index < end; index++)
+      rows.push(createStepRow(state.items[index], index));
+    container.append(...rows);
+    state.next = end;
+  };
+  const loadIfNearEnd = () => {
+    state.frame = undefined;
+    if (stepRenderState.get(container) !== state || state.next >= state.items.length) return;
+    if (container.clientHeight <= 0) return;
+    if (container.scrollHeight - container.scrollTop - container.clientHeight > Math.max(container.clientHeight, 200)) return;
+    appendBatch();
+    if (state.next < state.items.length) scheduleCheck();
+  };
+  const scheduleCheck = () => {
+    if (state.frame === undefined) state.frame = requestAnimationFrame(loadIfNearEnd);
+  };
+  state.onScroll = scheduleCheck;
+  state.observer = new ResizeObserver(scheduleCheck);
+  stepRenderState.set(container, state);
+  container.addEventListener("scroll", state.onScroll, { passive: true });
+  state.observer.observe(container);
+  appendBatch();
+  scheduleCheck();
 }
 
 export function renderAnswer(container, latex) {
