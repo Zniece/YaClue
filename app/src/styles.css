@@ -12,19 +12,19 @@ button:focus-visible, math-field:focus-visible, .steps:focus-visible, .math-row.
 .topbar .active { font-weight: 700; }
 .view[hidden] { display: none !important; }
 .calculator-view { position: relative; height: calc(100% - var(--topbar-height)); min-height: 0; overflow: hidden; }
-.workspace { --answer-height: 0px; height: calc(100% - var(--keyboard-space) - var(--keyboard-bar-height)); min-height: 0; overflow: hidden; padding-bottom: var(--answer-height); transition: height 220ms ease; }
+.workspace { --answer-height: 0px; display: flex; flex-direction: column; height: calc(100% - var(--keyboard-space) - var(--keyboard-bar-height)); min-height: 0; overflow: hidden; padding-bottom: var(--answer-height); transition: height 220ms ease; }
 .math-row { --math-row-size: 18px; --math-row-leading: 1.35; width: 100%; overflow-x: hidden; overflow-y: visible; color: #302d26; font-family: "STIX Two Math", "Cambria Math", "Times New Roman", serif; font-size: var(--math-row-size); line-height: var(--math-row-leading); white-space: nowrap; scrollbar-width: none; }
 .math-row.can-scroll-x { overflow-x: auto; overscroll-behavior-x: contain; }
 .can-scroll-x:not(.at-scroll-start):not(.at-scroll-end) { mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent); }
 .can-scroll-x.at-scroll-start:not(.at-scroll-end) { mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent); }
 .can-scroll-x.at-scroll-end:not(.at-scroll-start) { mask-image: linear-gradient(to right, transparent, #000 16px, #000 100%); }
 .math-row::-webkit-scrollbar, .steps::-webkit-scrollbar { display: none; }
-.input-row { min-height: 68px; border-bottom: 1px solid #d8d0bd; }
+.input-row { flex: none; min-height: 68px; border-bottom: 1px solid #d8d0bd; }
 .math-row math-field { display: block; width: max-content; min-width: 0; border: 0; background: transparent; color: inherit; font-family: inherit; font-size: inherit; line-height: inherit; white-space: nowrap; }
 .input-row { --math-row-size: clamp(30px, 8vw, 43px); --math-row-leading: 1.2; }
 .input-row math-field { min-width: 100%; min-height: 68px; padding: 0 16px; }
 math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { display: none !important; }
-.steps { display: none; height: calc(100% - 68px); overflow-y: auto; overscroll-behavior-y: contain; padding-bottom: 12px; scrollbar-width: none; }
+.steps { display: none; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; padding-bottom: 12px; scrollbar-width: none; }
 .steps.visible { display: grid; align-content: start; }
 .step-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); min-height: 54px; border-bottom: 1px solid #d8d0bd; }
 .step-meta { min-width: 0; overflow: hidden; padding: 8px 9px; border-right: 1px solid #aaa18f; color: #5e584b; }
