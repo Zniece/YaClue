@@ -14,6 +14,7 @@ const answer = $("#answer");
 const keyboardToggle = $("#keyboard-toggle");
 let keyboardExpanded = true;
 let keyboardRequest = 0;
+let keyboardMenuScrollLeft = 0;
 let lastSubmissionResult = null;
 let calculationRequest = 0;
 let lastCalculationResult = null;
@@ -32,6 +33,11 @@ const diagnosticMessages = {
 };
 
 const keyboardElement = () => Array.from(calculatorView.children).find((element) => element.classList.contains("ML__keyboard"));
+
+function restoreKeyboardMenuScroll() {
+  const scroller = keyboardElement()?.querySelector(".MLK__layer.is-visible .MLK__toolbar > .left");
+  if (scroller) scroller.scrollLeft = keyboardMenuScrollLeft;
+}
 
 function syncKeyboardHeight() {
   if (!keyboardExpanded) return;
@@ -58,6 +64,7 @@ function ensureKeyboard(request, attempt = 0) {
   const height = element?.querySelector(".MLK__plate")?.getBoundingClientRect().height || 0;
   if (element?.isConnected && height > 0) {
     element.classList.add("is-visible");
+    restoreKeyboardMenuScroll();
     syncKeyboardHeight();
     return;
   }
@@ -189,6 +196,19 @@ customElements.whenDefined("math-field").then(() => {
 
 keyboardToggle.addEventListener("pointerdown", (event) => event.preventDefault());
 keyboardToggle.addEventListener("click", () => setKeyboardExpanded(!keyboardExpanded));
+calculatorView.addEventListener("scroll", (event) => {
+  const scroller = event.target;
+  if (scroller instanceof Element && scroller.matches(".MLK__toolbar > .left")) {
+    keyboardMenuScrollLeft = scroller.scrollLeft;
+  }
+}, { capture: true, passive: true });
+calculatorView.addEventListener("pointerdown", (event) => {
+  const switcher = event.target instanceof Element ? event.target.closest("[data-layer]") : null;
+  if (!switcher) return;
+  const scroller = switcher.closest(".MLK__toolbar > .left");
+  if (scroller) keyboardMenuScrollLeft = scroller.scrollLeft;
+  requestAnimationFrame(restoreKeyboardMenuScroll);
+}, { capture: true });
 field.addEventListener("focus", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
 field.addEventListener("input", () => { calculationRequest += 1; });
 field.addEventListener("beforeinput", (event) => { if (event.inputType === "insertLineBreak") { event.preventDefault(); showSubmissionResult(); } });

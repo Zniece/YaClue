@@ -42,6 +42,10 @@ math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { displ
 .keyboard-toggle[aria-expanded="false"]::before { transform: translate(-50%, -30%) rotate(225deg); }
 .calculator-view > .ML__keyboard { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; }
 .calculator-view > .ML__keyboard { --keycap-font-size: clamp(15px, 3.8cqw, 21px); --keycap-small-font-size: clamp(12px, 3.1cqw, 16px); }
+.calculator-view > .ML__keyboard .MLK__toolbar { overflow: hidden; }
+.calculator-view > .ML__keyboard .MLK__toolbar > .left { width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; touch-action: pan-x; -webkit-overflow-scrolling: touch; }
+.calculator-view > .ML__keyboard .MLK__toolbar > .left::-webkit-scrollbar { display: none; }
+.calculator-view > .ML__keyboard .MLK__toolbar > .left > div { flex: 0 0 auto; }
 .calculator-view > .ML__keyboard .MLK__keycap.integral-key { overflow: hidden; font-size: clamp(15px, 3.6cqw, 20px) !important; }
 .calculator-view > .ML__keyboard .MLK__keycap.text-key { overflow: hidden; padding-inline: 2px; font-family: KaTeX_Main, KaTeX_Math, "Cambria Math", "STIX Two Math", serif !important; font-size: clamp(10px, 2.75cqw, 13px) !important; font-style: normal !important; font-weight: 400; letter-spacing: -.015em; white-space: nowrap; }
 .calculator-view > .ML__keyboard .MLK__keycap.text-key small { font-size: inherit; }

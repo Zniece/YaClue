@@ -66,6 +66,40 @@ fn gui_foundation_exposes_status_focus_and_reduced_motion_contracts() {
 }
 
 #[test]
+fn keyboard_menu_scrolls_horizontally_and_survives_layer_switches() {
+    let javascript = include_str!("../../../src/main.js");
+    let css = include_str!("../../../src/styles.css");
+
+    assert!(css.contains(".MLK__toolbar > .left"));
+    assert!(css.contains("overflow-x: auto"));
+    assert!(css.contains("touch-action: pan-x"));
+    assert!(javascript.contains("keyboardMenuScrollLeft = scroller.scrollLeft"));
+    assert!(javascript.contains("requestAnimationFrame(restoreKeyboardMenuScroll)"));
+}
+
+#[test]
+fn bodied_operators_take_the_existing_expression_as_their_operand() {
+    let keyboard = include_str!("../../../src/keyboard.js");
+    let mathlive = include_str!("../../../vendor/mathlive/mathlive-static.css");
+
+    assert!(keyboard.contains("derivative:"));
+    assert!(keyboard.contains("latex: '\\\\frac{\\\\mathrm{d}}{\\\\mathrm{d}x}'"));
+    for template in [
+        "\\\\yaclueNthDerivative{x}{#0}{#@}",
+        "\\\\yaclueIntegral{x}{#@}",
+        "\\\\yaclueDefiniteIntegral{x}{#0}{#0}{#@}",
+        "\\\\yaclueLimit{x}{#0}{#@}",
+        "\\\\yaclueSum{k}{#0}{#0}{#@}",
+        "\\\\yaclueTaylor{x}{#0}{#0}{#@}",
+        "\\\\yaclueSubstitute{x}{#0}{#@}",
+    ] {
+        assert!(keyboard.contains(template), "missing implicit operand: {template}");
+    }
+    assert!(mathlive.contains(".ML__yaclue-operand-slot.ML__placeholder"));
+    assert!(mathlive.contains(".ML__yaclue-operand-slot .ML__placeholder"));
+}
+
+#[test]
 fn core_branch_step_keys_exist_in_every_locale() {
     let i18n = include_str!("../../../src/i18n.js");
     for key in [
