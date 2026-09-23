@@ -31,6 +31,7 @@ const diagnosticMessages = {
   "invalid-argument": "函数或运算符的参数无效",
   "invalid-assumption": "分号后的假设条件无效",
   "lossy-conversion": "该输入无法无损转换为 YaClue 表达式",
+  "adapter-failure": "数学输入解析失败，请调整表达式后重试",
 };
 
 const keyboardElement = () => Array.from(calculatorView.children).find((element) => element.classList.contains("ML__keyboard"));
@@ -147,7 +148,18 @@ async function showSubmissionResult() {
       diagnostics: [{ severity: "error", code: "adapter-unavailable", message: "YaClue input adapter is unavailable" }],
     };
   } else {
-    lastSubmissionResult = field.getYaClueSubmissionResult();
+    try {
+      lastSubmissionResult = field.getYaClueSubmissionResult();
+    } catch (_error) {
+      lastSubmissionResult = {
+        ok: false,
+        diagnostics: [{
+          severity: "error",
+          code: "adapter-failure",
+          message: "The mathematical input adapter failed",
+        }],
+      };
+    }
   }
   document.dispatchEvent(new CustomEvent("yaclue-submission", { detail: lastSubmissionResult }));
 

@@ -88,6 +88,19 @@ fn editing_during_calculation_clears_the_stale_pending_state() {
 }
 
 #[test]
+fn input_adapter_exceptions_become_recoverable_diagnostics() {
+    let javascript = include_str!("../../../src/main.js");
+
+    let adapter_call = javascript
+        .split_once("field.getYaClueSubmissionResult()")
+        .map(|(_, suffix)| suffix)
+        .unwrap();
+    assert!(javascript.contains("try {\n      lastSubmissionResult = field.getYaClueSubmissionResult()"));
+    assert!(adapter_call.contains("code: \"adapter-failure\""));
+    assert!(javascript.contains("\"adapter-failure\": \"数学输入解析失败，请调整表达式后重试\""));
+}
+
+#[test]
 fn bodied_operators_take_the_existing_expression_as_their_operand() {
     let keyboard = include_str!("../../../src/keyboard.js");
     let mathlive = include_str!("../../../vendor/mathlive/mathlive-static.css");
