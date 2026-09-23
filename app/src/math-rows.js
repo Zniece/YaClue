@@ -5,6 +5,9 @@ const makeMathField = (latex) => {
   return field;
 };
 
+const rowCleanup = new WeakMap();
+const answerFrames = new WeakMap();
+
 const syncHorizontalOverflow = (element) => {
   const scrollable = element.scrollWidth > element.clientWidth + 1;
   element.classList.toggle("can-scroll-x", scrollable);
@@ -14,9 +17,15 @@ const syncHorizontalOverflow = (element) => {
 
 const observeHorizontalOverflow = (element) => {
   const sync = () => syncHorizontalOverflow(element);
+  const observer = new ResizeObserver(sync);
   element.addEventListener("scroll", sync, { passive: true });
-  new ResizeObserver(sync).observe(element);
-  requestAnimationFrame(sync);
+  observer.observe(element);
+  const frame = requestAnimationFrame(sync);
+  return () => {
+    observer.disconnect();
+    element.removeEventListener("scroll", sync);
+    cancelAnimationFrame(frame);
+  };
 };
 
 export function createStepRow(step, index) {
@@ -38,25 +47,40 @@ export function createStepRow(step, index) {
   formula.appendChild(makeMathField(step.latex));
   row.append(meta, formula);
 
-  observeHorizontalOverflow(explanation);
-  observeHorizontalOverflow(formula);
+  const stopExplanation = observeHorizontalOverflow(explanation);
+  const stopFormula = observeHorizontalOverflow(formula);
+  rowCleanup.set(row, () => {
+    stopExplanation();
+    stopFormula();
+  });
   return row;
 }
 
 export function renderSteps(container, items) {
+  for (const row of container.children) {
+    rowCleanup.get(row)?.();
+    rowCleanup.delete(row);
+  }
   container.replaceChildren(...items.map(createStepRow));
   container.classList.toggle("visible", items.length > 0);
 }
 
 export function renderAnswer(container, latex) {
+  const previousFrame = answerFrames.get(container);
+  if (previousFrame !== undefined) cancelAnimationFrame(previousFrame);
   container.replaceChildren(makeMathField(latex));
   container.classList.toggle("visible", Boolean(latex));
-  requestAnimationFrame(() => syncHorizontalOverflow(container));
+  answerFrames.set(container, requestAnimationFrame(() => {
+    answerFrames.delete(container);
+    syncHorizontalOverflow(container);
+  }));
 }
 
 export function clearCalculationRows(steps, answer) {
-  steps.replaceChildren();
-  steps.classList.remove("visible");
+  renderSteps(steps, []);
+  const previousFrame = answerFrames.get(answer);
+  if (previousFrame !== undefined) cancelAnimationFrame(previousFrame);
+  answerFrames.delete(answer);
   answer.replaceChildren();
   answer.classList.remove("visible");
 }
