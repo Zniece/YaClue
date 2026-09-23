@@ -1,7 +1,7 @@
 import "mathlive";
 import "mathlive/fonts.css";
 import { yaclueKeyboardLayouts } from "./keyboard.js";
-import { hasTranslation, t } from "./i18n.js";
+import { applyTranslations, getLocale, hasTranslation, setLocale, t } from "./i18n.js";
 import { clearCalculationRows, renderAnswer, renderSteps } from "./math-rows.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -21,18 +21,28 @@ let calculationPending = false;
 let lastCalculationResult = null;
 let lastCalculationError = null;
 
-const diagnosticMessages = {
-  "empty-expression": "请输入需要计算的表达式",
-  "mathlive-error": "输入中含有无法解析的数学结构",
-  "missing-slot": "请补全尚未填写的输入框",
-  "ambiguous-semantics": "这个符号存在多种含义，请使用键盘中的明确形式",
-  "unsupported-atom": "当前尚不支持这种数学结构",
-  "unsupported-command": "当前尚不支持这个数学命令",
-  "invalid-argument": "函数或运算符的参数无效",
-  "invalid-assumption": "分号后的假设条件无效",
-  "lossy-conversion": "该输入无法无损转换为 YaClue 表达式",
-  "adapter-failure": "数学输入解析失败，请调整表达式后重试",
-};
+const statusLatex = (key) => `\\text{${t(key)}}`;
+const localizedKeyboardLayouts = () => yaclueKeyboardLayouts.map((layout) => ({
+  ...layout,
+  tooltip: t(`keyboard.${layout.id.slice("yaclue-".length)}`),
+}));
+
+function updateLocaleControls() {
+  for (const button of document.querySelectorAll("[data-locale]"))
+    button.setAttribute("aria-pressed", String(button.dataset.locale === getLocale()));
+}
+
+function renderInputDiagnostic() {
+  const diagnostic = lastSubmissionResult?.diagnostics?.[0];
+  const key = `input.${diagnostic?.code}`;
+  const explanation = hasTranslation(key)
+    ? t(key)
+    : diagnostic?.message || t("ui.inputConversionFailed");
+  steps.dataset.diagnosticCode = diagnostic?.code || "unknown";
+  renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
+  renderAnswer(answer, statusLatex("ui.invalidInput"));
+  requestAnimationFrame(syncAnswerHeight);
+}
 
 const keyboardElement = () => Array.from(calculatorView.children).find((element) => element.classList.contains("ML__keyboard"));
 
@@ -46,13 +56,8 @@ function setKeyboardUiState(state) {
   const expanded = state === "opening" || state === "open";
   app.classList.toggle("keyboard-collapsed", !expanded);
   keyboardToggle.setAttribute("aria-expanded", String(expanded));
-  const labels = {
-    opening: "数学键盘正在展开",
-    open: "收起数学键盘",
-    closed: "展开数学键盘",
-    failed: "数学键盘加载失败，点击重试",
-  };
-  keyboardToggle.setAttribute("aria-label", labels[state]);
+  const labels = { opening: "ui.keyboardOpening", open: "ui.keyboardOpen", closed: "ui.keyboardClosed", failed: "ui.keyboardFailed" };
+  keyboardToggle.setAttribute("aria-label", t(labels[state]));
 }
 
 function failKeyboardRequest(request) {
@@ -142,9 +147,9 @@ function renderCalculationError(error) {
   calculationPending = false;
   lastCalculationResult = null;
   lastCalculationError = error;
-  const explanation = localizedMessage(error?.message_ref, error?.message || "计算失败");
+  const explanation = localizedMessage(error?.message_ref, error?.message || t("ui.calculationFailed"));
   renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
-  renderAnswer(answer, "\\mathrm{Calculation\\ failed}");
+  renderAnswer(answer, statusLatex("ui.calculationFailed"));
   requestAnimationFrame(syncAnswerHeight);
 }
 
@@ -198,23 +203,18 @@ async function showSubmissionResult() {
   document.dispatchEvent(new CustomEvent("yaclue-submission", { detail: lastSubmissionResult }));
 
   if (!lastSubmissionResult.ok) {
-    const diagnostic = lastSubmissionResult.diagnostics[0];
-    const explanation = diagnosticMessages[diagnostic?.code] || diagnostic?.message || "输入无法转换";
-    steps.dataset.diagnosticCode = diagnostic?.code || "unknown";
-    renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
-    renderAnswer(answer, "\\mathrm{Invalid\\ input}");
-    requestAnimationFrame(syncAnswerHeight);
+    renderInputDiagnostic();
     return;
   }
 
   delete steps.dataset.diagnosticCode;
   const invoke = window.__TAURI__?.core?.invoke;
   if (typeof invoke !== "function") {
-    renderCalculationError({ message: "当前环境无法连接计算引擎" });
+    renderCalculationError({ message_ref: { key: "ui.engineUnavailable" } });
     return;
   }
 
-  renderAnswer(answer, "\\mathrm{Calculating}\\ldots");
+  renderAnswer(answer, statusLatex("ui.calculating"));
   calculationPending = true;
   requestAnimationFrame(syncAnswerHeight);
   try {
@@ -232,10 +232,13 @@ async function showSubmissionResult() {
   }
 }
 
+applyTranslations();
+updateLocaleControls();
+
 customElements.whenDefined("math-field").then(() => {
   const keyboard = window.mathVirtualKeyboard;
   keyboard.container = calculatorView;
-  keyboard.layouts = yaclueKeyboardLayouts;
+  keyboard.layouts = localizedKeyboardLayouts();
   keyboard.editToolbar = "none";
   field.mathVirtualKeyboardPolicy = "manual";
   field.value = "0";
@@ -268,6 +271,12 @@ calculatorView.addEventListener("pointerdown", (event) => {
 field.addEventListener("focus", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
 field.addEventListener("input", () => {
   calculationRequest += 1;
+  lastSubmissionResult = null;
+  if (steps.dataset.diagnosticCode) {
+    delete steps.dataset.diagnosticCode;
+    clearCalculationRows(steps, answer);
+    syncAnswerHeight();
+  }
   if (!calculationPending) return;
   calculationPending = false;
   clearCalculationRows(steps, answer);
@@ -277,9 +286,18 @@ field.addEventListener("beforeinput", (event) => { if (event.inputType === "inse
 $("#calculate-tab").addEventListener("click", () => setView("calculator"));
 $("#menu-tab").addEventListener("click", () => setView("menu"));
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => setLocale(button.dataset.locale)));
 window.addEventListener("pageshow", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
 document.addEventListener("visibilitychange", () => { if (!document.hidden && keyboardExpanded && !calculatorView.hidden) ensureKeyboard(++keyboardRequest); });
 document.addEventListener("localechange", () => {
+  updateLocaleControls();
+  setKeyboardUiState(app.dataset.keyboardState || "closed");
+  if (window.mathVirtualKeyboard) {
+    window.mathVirtualKeyboard.layouts = localizedKeyboardLayouts();
+    if (keyboardExpanded && !calculatorView.hidden) ensureKeyboard(++keyboardRequest);
+  }
   if (lastCalculationResult) renderCalculation(lastCalculationResult);
   else if (lastCalculationError) renderCalculationError(lastCalculationError);
+  else if (lastSubmissionResult && !lastSubmissionResult.ok) renderInputDiagnostic();
+  else if (calculationPending) renderAnswer(answer, statusLatex("ui.calculating"));
 });

@@ -103,6 +103,7 @@ fn editing_during_calculation_clears_the_stale_pending_state() {
 #[test]
 fn input_adapter_exceptions_become_recoverable_diagnostics() {
     let javascript = include_str!("../../../src/main.js");
+    let i18n = include_str!("../../../src/i18n.js");
 
     let adapter_call = javascript
         .split_once("field.getYaClueSubmissionResult()")
@@ -110,7 +111,8 @@ fn input_adapter_exceptions_become_recoverable_diagnostics() {
         .unwrap();
     assert!(javascript.contains("try {\n      lastSubmissionResult = field.getYaClueSubmissionResult()"));
     assert!(adapter_call.contains("code: \"adapter-failure\""));
-    assert!(javascript.contains("\"adapter-failure\": \"数学输入解析失败，请调整表达式后重试\""));
+    assert!(javascript.contains("const key = `input.${diagnostic?.code}`"));
+    assert_eq!(i18n.matches("\"input.adapter-failure\"").count(), 2);
 }
 
 #[test]

@@ -55,5 +55,10 @@ math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { displ
 .menu-item { display: flex; justify-content: space-between; align-items: center; width: 100%; min-height: 58px; border-bottom: 1px solid #c9c0ac; font-size: 17px; }
 .menu-item::after { content: "›"; color: #817868; font-size: 25px; }
 .back { padding: 8px 0; color: #665d4d; font-size: 14px; }
+.content-view h2 { margin: 24px 0 12px; font-size: 17px; font-weight: 600; }
+.language-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid #aaa18f; }
+.language-options button { min-height: 46px; }
+.language-options button + button { border-left: 1px solid #aaa18f; }
+.language-options button[aria-pressed="true"] { background: #f2e9cf; font-weight: 700; }
 @media (min-width: 700px) { .app { right: auto; left: 50%; width: min(100%, 430px); transform: translateX(-50%); border-inline: 1px solid #ddd6c6; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0ms !important; } }

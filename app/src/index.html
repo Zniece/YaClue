@@ -9,18 +9,18 @@
   </head>
   <body>
     <main class="app" id="app">
-      <nav class="topbar" aria-label="主导航"><button id="calculate-tab" class="active" type="button" aria-current="page">计算</button><button id="menu-tab" type="button">菜单</button></nav>
+      <nav class="topbar" aria-label="主导航" data-i18n-aria-label="ui.mainNavigation"><button id="calculate-tab" class="active" type="button" aria-current="page" data-i18n="ui.calculatorTab">计算</button><button id="menu-tab" type="button" data-i18n="ui.menuTab">菜单</button></nav>
       <section id="calculator-view" class="view calculator-view">
-        <section class="workspace" aria-label="计算区域">
-          <div class="math-row input-row"><math-field id="math-input" aria-label="数学表达式"></math-field></div>
-          <section id="steps" class="steps" aria-label="计算步骤"></section>
+        <section class="workspace" aria-label="计算区域" data-i18n-aria-label="ui.calculationArea">
+          <div class="math-row input-row"><math-field id="math-input" aria-label="数学表达式" data-i18n-aria-label="ui.mathExpression"></math-field></div>
+          <section id="steps" class="steps" aria-label="计算步骤" data-i18n-aria-label="ui.calculationSteps"></section>
           <output id="answer" class="math-row answer-row" aria-live="polite"></output>
         </section>
-        <div class="keyboard-dock" aria-label="数学键盘控制"><button id="keyboard-toggle" class="keyboard-toggle" type="button" aria-label="收起数学键盘" aria-expanded="true"></button></div>
+        <div class="keyboard-dock" aria-label="数学键盘控制" data-i18n-aria-label="ui.keyboardControls"><button id="keyboard-toggle" class="keyboard-toggle" type="button" aria-label="收起数学键盘" aria-expanded="true"></button></div>
       </section>
-      <section id="menu-view" class="view menu-view" hidden><button class="menu-item" type="button" data-view="help">帮助</button><button class="menu-item" type="button" data-view="settings">设置</button></section>
-      <section id="help-view" class="view content-view" hidden><button class="back" type="button" data-view="menu">‹ 返回菜单</button><p>我是帮助</p></section>
-      <section id="settings-view" class="view content-view" hidden><button class="back" type="button" data-view="menu">‹ 返回菜单</button><p>我是设置</p></section>
+      <section id="menu-view" class="view menu-view" hidden><button class="menu-item" type="button" data-view="help" data-i18n="ui.help">帮助</button><button class="menu-item" type="button" data-view="settings" data-i18n="ui.settings">设置</button></section>
+      <section id="help-view" class="view content-view" hidden><button class="back" type="button" data-view="menu" data-i18n="ui.backToMenu">返回菜单</button><p data-i18n="ui.helpPlaceholder">我是帮助</p></section>
+      <section id="settings-view" class="view content-view" hidden><button class="back" type="button" data-view="menu" data-i18n="ui.backToMenu">返回菜单</button><h2 data-i18n="ui.language">语言</h2><div class="language-options" role="group" aria-label="语言" data-i18n-aria-label="ui.language"><button type="button" data-locale="zh-CN" lang="zh-CN" aria-pressed="true">中文</button><button type="button" data-locale="en-US" lang="en-US" aria-pressed="false">English</button></div></section>
     </main>
     <script type="module" src="main.js"></script>
   </body>
