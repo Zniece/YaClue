@@ -60,7 +60,9 @@ fn gui_foundation_exposes_status_focus_and_reduced_motion_contracts() {
 
     assert!(html.contains("class=\"topbar\""));
     assert!(html.contains("id=\"math-input\""));
-    assert!(html.contains("id=\"calculation-status\" class=\"sr-only\" role=\"status\" aria-live=\"polite\""));
+    assert!(html.contains(
+        "id=\"calculation-status\" class=\"sr-only\" role=\"status\" aria-live=\"polite\""
+    ));
     assert!(html.contains("id=\"answer\" class=\"math-row answer-row\" aria-label=\"计算结果\""));
     assert!(css.contains(".steps:focus-visible"));
     assert!(css.contains("button:focus-visible"));
@@ -84,7 +86,10 @@ fn keyboard_lifecycle_reports_failure_and_remains_retryable() {
     let javascript = include_str!("../../../src/main.js");
 
     for state in ["opening", "open", "closed", "failed"] {
-        assert!(javascript.contains(&format!("{state}: \"")), "missing {state} state");
+        assert!(
+            javascript.contains(&format!("{state}: \"")),
+            "missing {state} state"
+        );
     }
     assert!(javascript.contains("if (attempt >= 8) failKeyboardRequest(request)"));
     assert!(javascript.contains("keyboardExpanded = false"));
@@ -111,7 +116,8 @@ fn input_adapter_exceptions_become_recoverable_diagnostics() {
         .split_once("field.getYaClueSubmissionResult()")
         .map(|(_, suffix)| suffix)
         .unwrap();
-    assert!(javascript.contains("try {\n      lastSubmissionResult = field.getYaClueSubmissionResult()"));
+    assert!(javascript
+        .contains("try {\n      lastSubmissionResult = field.getYaClueSubmissionResult()"));
     assert!(adapter_call.contains("code: \"adapter-failure\""));
     assert!(javascript.contains("const key = `input.${diagnostic?.code}`"));
     assert_eq!(i18n.matches("\"input.adapter-failure\"").count(), 2);
@@ -124,7 +130,9 @@ fn common_calculus_keys_insert_visible_notation_without_operand_slots() {
 
     assert!(keyboard.contains("derivative:"));
     assert!(keyboard.contains("latex: '\\\\frac{\\\\mathrm{d}}{\\\\mathrm{d}x}'"));
-    assert!(keyboard.contains("integral: { keycap: '\\\\int', class: 'integral-key', latex: '\\\\int'"));
+    assert!(
+        keyboard.contains("integral: { keycap: '\\\\int', class: 'integral-key', latex: '\\\\int'")
+    );
     assert!(keyboard.contains("limit: { keycap: '\\\\lim', latex: '\\\\lim_{x\\\\to #0}'"));
     assert!(keyboard.contains("sum: { keycap: '\\\\sum', latex: '\\\\sum_{k=#0}^{#0}'"));
     assert!(mathlive.contains(".ML__yaclue-operand-slot.ML__placeholder"));
