@@ -122,3 +122,27 @@ test("a hidden calculation view pauses batches until it becomes visible", () => 
   assert.equal(steps.children.length, 48);
   clearCalculationRows(steps, answer);
 });
+
+test("read-only math fields stay out of Tab order while scroll areas remain reachable", () => {
+  const steps = new ElementStub();
+  const answer = new ElementStub();
+  renderSteps(steps, [{ explanation: "A long explanation", latex: "x+1" }]);
+  const formula = steps.children[0].children[1];
+  const explanation = steps.children[0].children[0].children[1];
+  assert.equal(steps.tabIndex, 0);
+  assert.equal(formula.children[0].tabIndex, -1);
+
+  formula.scrollWidth = 500;
+  explanation.scrollWidth = 500;
+  for (const observer of observers.filter((candidate) => candidate.element === formula || candidate.element === explanation))
+    observer.callback();
+  assert.equal(formula.tabIndex, 0);
+  assert.equal(explanation.tabIndex, 0);
+
+  renderAnswer(answer, "x+1");
+  assert.equal(answer.tabIndex, 0);
+  assert.equal(answer.children[0].tabIndex, -1);
+  clearCalculationRows(steps, answer);
+  assert.equal(steps.tabIndex, -1);
+  assert.equal(answer.tabIndex, -1);
+});

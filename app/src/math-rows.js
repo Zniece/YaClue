@@ -1,6 +1,7 @@
 const makeMathField = (latex) => {
   const field = document.createElement("math-field");
   field.readOnly = true;
+  field.tabIndex = -1;
   field.value = latex || "";
   return field;
 };
@@ -10,8 +11,9 @@ const answerFrames = new WeakMap();
 const stepRenderState = new WeakMap();
 const STEP_BATCH_SIZE = 24;
 
-const syncHorizontalOverflow = (element) => {
+const syncHorizontalOverflow = (element, focusWhenFits = false) => {
   const scrollable = element.scrollWidth > element.clientWidth + 1;
+  element.tabIndex = scrollable || focusWhenFits ? 0 : -1;
   element.classList.toggle("can-scroll-x", scrollable);
   element.classList.toggle("at-scroll-start", element.scrollLeft <= 1);
   element.classList.toggle("at-scroll-end", element.scrollLeft + element.clientWidth >= element.scrollWidth - 1);
@@ -73,6 +75,7 @@ export function renderSteps(container, items) {
   container.replaceChildren();
   container.scrollTop = 0;
   container.classList.toggle("visible", items.length > 0);
+  container.tabIndex = items.length > 0 ? 0 : -1;
   if (items.length === 0) return;
 
   const state = { items, next: 0, frame: undefined, onScroll: undefined, observer: undefined };
@@ -109,9 +112,10 @@ export function renderAnswer(container, latex) {
   if (previousFrame !== undefined) cancelAnimationFrame(previousFrame);
   container.replaceChildren(makeMathField(latex));
   container.classList.toggle("visible", Boolean(latex));
+  container.tabIndex = latex ? 0 : -1;
   answerFrames.set(container, requestAnimationFrame(() => {
     answerFrames.delete(container);
-    syncHorizontalOverflow(container);
+    syncHorizontalOverflow(container, Boolean(latex));
   }));
 }
 
@@ -122,4 +126,5 @@ export function clearCalculationRows(steps, answer) {
   answerFrames.delete(answer);
   answer.replaceChildren();
   answer.classList.remove("visible");
+  answer.tabIndex = -1;
 }

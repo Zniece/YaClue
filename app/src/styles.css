@@ -3,7 +3,8 @@
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; }
 body { position: fixed; inset: 0; background: #faf9ee; }
 button { border: 0; border-radius: 0; background: none; color: inherit; font: inherit; -webkit-tap-highlight-color: transparent; }
-button:focus-visible, math-field:focus-visible { outline: 2px solid #71664f; outline-offset: -2px; }
+button:focus-visible, math-field:focus-visible, .steps:focus-visible, .math-row.can-scroll-x:focus-visible, .step-explanation.can-scroll-x:focus-visible, .answer-row:focus-visible { outline: 2px solid #71664f; outline-offset: -2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .app { --topbar-height: calc(52px + env(safe-area-inset-top)); --keyboard-height: min(42dvh, 340px); --keyboard-space: var(--keyboard-height); --keyboard-bar-height: calc(36px + env(safe-area-inset-bottom)); position: fixed; inset: 0; width: 100%; height: 100dvh; overflow: hidden; background: #faf9ee; }
 .topbar { height: var(--topbar-height); display: flex; padding-top: env(safe-area-inset-top); border-bottom: 1px solid #aaa18f; background: #f2e9cf; }
 .topbar button { flex: 1; display: grid; place-items: center; color: #4b463c; font-size: 15px; letter-spacing: .04em; }

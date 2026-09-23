@@ -13,9 +13,10 @@
       <section id="calculator-view" class="view calculator-view">
         <section class="workspace" aria-label="计算区域" data-i18n-aria-label="ui.calculationArea">
           <div class="math-row input-row"><math-field id="math-input" aria-label="数学表达式" data-i18n-aria-label="ui.mathExpression"></math-field></div>
-          <section id="steps" class="steps" aria-label="计算步骤" data-i18n-aria-label="ui.calculationSteps"></section>
-          <output id="answer" class="math-row answer-row" aria-live="polite"></output>
+          <section id="steps" class="steps" aria-label="计算步骤" data-i18n-aria-label="ui.calculationSteps" tabindex="-1"></section>
+          <output id="answer" class="math-row answer-row" aria-label="计算结果" data-i18n-aria-label="ui.answer" tabindex="-1"></output>
         </section>
+        <div id="calculation-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         <div class="keyboard-dock" aria-label="数学键盘控制" data-i18n-aria-label="ui.keyboardControls"><button id="keyboard-toggle" class="keyboard-toggle" type="button" aria-label="收起数学键盘" aria-expanded="true"></button></div>
       </section>
       <section id="menu-view" class="view menu-view" hidden><button class="menu-item" type="button" data-view="help" data-i18n="ui.help">帮助</button><button class="menu-item" type="button" data-view="settings" data-i18n="ui.settings">设置</button></section>

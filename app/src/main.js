@@ -11,6 +11,7 @@ const workspace = $(".workspace");
 const field = $("#math-input");
 const steps = $("#steps");
 const answer = $("#answer");
+const calculationStatus = $("#calculation-status");
 const keyboardToggle = $("#keyboard-toggle");
 let keyboardExpanded = true;
 let keyboardRequest = 0;
@@ -22,6 +23,7 @@ let lastCalculationResult = null;
 let lastCalculationError = null;
 
 const statusLatex = (key) => `\\text{${t(key)}}`;
+const announce = (message) => { calculationStatus.textContent = message; };
 const localizedKeyboardLayouts = () => yaclueKeyboardLayouts.map((layout) => ({
   ...layout,
   tooltip: t(`keyboard.${layout.id.slice("yaclue-".length)}`),
@@ -41,6 +43,7 @@ function renderInputDiagnostic() {
   steps.dataset.diagnosticCode = diagnostic?.code || "unknown";
   renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
   renderAnswer(answer, statusLatex("ui.invalidInput"));
+  announce(explanation);
   requestAnimationFrame(syncAnswerHeight);
 }
 
@@ -58,6 +61,7 @@ function setKeyboardUiState(state) {
   keyboardToggle.setAttribute("aria-expanded", String(expanded));
   const labels = { opening: "ui.keyboardOpening", open: "ui.keyboardOpen", closed: "ui.keyboardClosed", failed: "ui.keyboardFailed" };
   keyboardToggle.setAttribute("aria-label", t(labels[state]));
+  if (state === "failed") announce(t("ui.keyboardFailed"));
 }
 
 function failKeyboardRequest(request) {
@@ -132,9 +136,17 @@ function setView(name) {
   const calculating = name === "calculator";
   $("#calculate-tab").classList.toggle("active", calculating);
   $("#menu-tab").classList.toggle("active", !calculating);
-  $("#calculate-tab").toggleAttribute("aria-current", calculating);
-  if (calculating) setKeyboardExpanded(keyboardExpanded);
-  else window.mathVirtualKeyboard?.hide({ animate: false });
+  for (const [tab, current] of [["#calculate-tab", calculating], ["#menu-tab", !calculating]]) {
+    if (current) $(tab).setAttribute("aria-current", "page");
+    else $(tab).removeAttribute("aria-current");
+  }
+  if (calculating) {
+    setKeyboardExpanded(keyboardExpanded);
+    if (!keyboardExpanded) field.focus({ preventScroll: true });
+  } else {
+    window.mathVirtualKeyboard?.hide({ animate: false });
+    document.querySelector(`#${name}-view button`)?.focus({ preventScroll: true });
+  }
 }
 
 function localizedMessage(reference, fallback) {
@@ -150,6 +162,7 @@ function renderCalculationError(error) {
   const explanation = localizedMessage(error?.message_ref, error?.message || t("ui.calculationFailed"));
   renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
   renderAnswer(answer, statusLatex("ui.calculationFailed"));
+  announce(explanation);
   requestAnimationFrame(syncAnswerHeight);
 }
 
@@ -171,6 +184,7 @@ function renderCalculation(result) {
   }));
   renderSteps(steps, [...analyses, ...calculationSteps, ...conclusions]);
   renderAnswer(answer, result.tex || result.expression);
+  announce(t("ui.calculationComplete"));
   requestAnimationFrame(syncAnswerHeight);
 }
 
@@ -180,6 +194,7 @@ async function showSubmissionResult() {
   lastCalculationResult = null;
   lastCalculationError = null;
   clearCalculationRows(steps, answer);
+  announce("");
 
   if (typeof field.getYaClueSubmissionResult !== "function") {
     lastSubmissionResult = {
@@ -215,6 +230,7 @@ async function showSubmissionResult() {
   }
 
   renderAnswer(answer, statusLatex("ui.calculating"));
+  announce(t("ui.calculating"));
   calculationPending = true;
   requestAnimationFrame(syncAnswerHeight);
   try {
@@ -276,11 +292,13 @@ field.addEventListener("input", () => {
     delete steps.dataset.diagnosticCode;
     clearCalculationRows(steps, answer);
     syncAnswerHeight();
+    announce("");
   }
   if (!calculationPending) return;
   calculationPending = false;
   clearCalculationRows(steps, answer);
   syncAnswerHeight();
+  announce("");
 });
 field.addEventListener("beforeinput", (event) => { if (event.inputType === "insertLineBreak") { event.preventDefault(); showSubmissionResult(); } });
 $("#calculate-tab").addEventListener("click", () => setView("calculator"));
@@ -299,5 +317,8 @@ document.addEventListener("localechange", () => {
   if (lastCalculationResult) renderCalculation(lastCalculationResult);
   else if (lastCalculationError) renderCalculationError(lastCalculationError);
   else if (lastSubmissionResult && !lastSubmissionResult.ok) renderInputDiagnostic();
-  else if (calculationPending) renderAnswer(answer, statusLatex("ui.calculating"));
+  else if (calculationPending) {
+    renderAnswer(answer, statusLatex("ui.calculating"));
+    announce(t("ui.calculating"));
+  }
 });

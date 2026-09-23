@@ -60,7 +60,9 @@ fn gui_foundation_exposes_status_focus_and_reduced_motion_contracts() {
 
     assert!(html.contains("class=\"topbar\""));
     assert!(html.contains("id=\"math-input\""));
-    assert!(html.contains("id=\"answer\" class=\"math-row answer-row\" aria-live=\"polite\""));
+    assert!(html.contains("id=\"calculation-status\" class=\"sr-only\" role=\"status\" aria-live=\"polite\""));
+    assert!(html.contains("id=\"answer\" class=\"math-row answer-row\" aria-label=\"计算结果\""));
+    assert!(css.contains(".steps:focus-visible"));
     assert!(css.contains("button:focus-visible"));
     assert!(css.contains("@media (prefers-reduced-motion: reduce)"));
 }
