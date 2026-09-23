@@ -78,6 +78,19 @@ fn keyboard_menu_scrolls_horizontally_and_survives_layer_switches() {
 }
 
 #[test]
+fn keyboard_lifecycle_reports_failure_and_remains_retryable() {
+    let javascript = include_str!("../../../src/main.js");
+
+    for state in ["opening", "open", "closed", "failed"] {
+        assert!(javascript.contains(&format!("{state}: \"")), "missing {state} state");
+    }
+    assert!(javascript.contains("if (attempt >= 8) failKeyboardRequest(request)"));
+    assert!(javascript.contains("keyboardExpanded = false"));
+    assert!(javascript.contains("setKeyboardUiState(\"failed\")"));
+    assert!(javascript.contains("setKeyboardExpanded(!keyboardExpanded)"));
+}
+
+#[test]
 fn editing_during_calculation_clears_the_stale_pending_state() {
     let javascript = include_str!("../../../src/main.js");
 

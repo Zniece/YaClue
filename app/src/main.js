@@ -41,6 +41,27 @@ function restoreKeyboardMenuScroll() {
   if (scroller) scroller.scrollLeft = keyboardMenuScrollLeft;
 }
 
+function setKeyboardUiState(state) {
+  app.dataset.keyboardState = state;
+  const expanded = state === "opening" || state === "open";
+  app.classList.toggle("keyboard-collapsed", !expanded);
+  keyboardToggle.setAttribute("aria-expanded", String(expanded));
+  const labels = {
+    opening: "数学键盘正在展开",
+    open: "收起数学键盘",
+    closed: "展开数学键盘",
+    failed: "数学键盘加载失败，点击重试",
+  };
+  keyboardToggle.setAttribute("aria-label", labels[state]);
+}
+
+function failKeyboardRequest(request) {
+  if (request !== keyboardRequest) return;
+  keyboardExpanded = false;
+  window.mathVirtualKeyboard?.hide({ animate: false });
+  setKeyboardUiState("failed");
+}
+
 function syncKeyboardHeight() {
   if (!keyboardExpanded) return;
   const plate = keyboardElement()?.querySelector(".MLK__plate");
@@ -58,7 +79,11 @@ function syncAnswerHeight() {
 function ensureKeyboard(request, attempt = 0) {
   if (request !== keyboardRequest || !keyboardExpanded || calculatorView.hidden) return;
   const keyboard = window.mathVirtualKeyboard;
-  if (!keyboard) return;
+  if (!keyboard) {
+    if (attempt >= 8) failKeyboardRequest(request);
+    else scheduleKeyboardRetry(request, attempt);
+    return;
+  }
   let element = keyboardElement();
   if (keyboard.visible && !element) keyboard.hide({ animate: false });
   keyboard.show({ animate: false });
@@ -66,12 +91,20 @@ function ensureKeyboard(request, attempt = 0) {
   const height = element?.querySelector(".MLK__plate")?.getBoundingClientRect().height || 0;
   if (element?.isConnected && height > 0) {
     element.classList.add("is-visible");
+    setKeyboardUiState("open");
     restoreKeyboardMenuScroll();
     syncKeyboardHeight();
     return;
   }
-  if (attempt >= 8) return;
+  if (attempt >= 8) {
+    failKeyboardRequest(request);
+    return;
+  }
   if (attempt > 1 && keyboard.visible) keyboard.hide({ animate: false });
+  scheduleKeyboardRetry(request, attempt);
+}
+
+function scheduleKeyboardRetry(request, attempt) {
   const delays = [0, 40, 100, 180, 300, 500, 800, 1200, 1800];
   setTimeout(() => ensureKeyboard(request, attempt + 1), delays[attempt + 1]);
 }
@@ -79,13 +112,14 @@ function ensureKeyboard(request, attempt = 0) {
 function setKeyboardExpanded(expanded) {
   keyboardExpanded = expanded;
   const request = ++keyboardRequest;
-  app.classList.toggle("keyboard-collapsed", !expanded);
-  keyboardToggle.setAttribute("aria-expanded", String(expanded));
-  keyboardToggle.setAttribute("aria-label", expanded ? "收起数学键盘" : "展开数学键盘");
   if (expanded && !calculatorView.hidden) {
+    setKeyboardUiState("opening");
     field.focus({ preventScroll: true });
     requestAnimationFrame(() => ensureKeyboard(request));
-  } else window.mathVirtualKeyboard?.hide({ animate: false });
+  } else {
+    setKeyboardUiState("closed");
+    window.mathVirtualKeyboard?.hide({ animate: false });
+  }
 }
 
 function setView(name) {
@@ -207,7 +241,12 @@ customElements.whenDefined("math-field").then(() => {
   field.value = "0";
   field.focus({ preventScroll: true });
   setKeyboardExpanded(true);
-  keyboard.addEventListener("geometrychange", syncKeyboardHeight);
+  keyboard.addEventListener("geometrychange", () => {
+    const plate = keyboardElement()?.querySelector(".MLK__plate");
+    if (keyboardExpanded && plate?.getBoundingClientRect().height > 0)
+      setKeyboardUiState("open");
+    syncKeyboardHeight();
+  });
   new ResizeObserver(syncAnswerHeight).observe(answer);
 });
 
