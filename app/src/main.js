@@ -17,6 +17,7 @@ let keyboardRequest = 0;
 let keyboardMenuScrollLeft = 0;
 let lastSubmissionResult = null;
 let calculationRequest = 0;
+let calculationPending = false;
 let lastCalculationResult = null;
 let lastCalculationError = null;
 
@@ -103,6 +104,7 @@ function localizedMessage(reference, fallback) {
 }
 
 function renderCalculationError(error) {
+  calculationPending = false;
   lastCalculationResult = null;
   lastCalculationError = error;
   const explanation = localizedMessage(error?.message_ref, error?.message || "计算失败");
@@ -112,6 +114,7 @@ function renderCalculationError(error) {
 }
 
 function renderCalculation(result) {
+  calculationPending = false;
   lastCalculationResult = result;
   lastCalculationError = null;
   const analyses = (result.analyses || []).map((analysis) => ({
@@ -133,6 +136,7 @@ function renderCalculation(result) {
 
 async function showSubmissionResult() {
   const request = ++calculationRequest;
+  calculationPending = false;
   lastCalculationResult = null;
   lastCalculationError = null;
   clearCalculationRows(steps, answer);
@@ -165,6 +169,7 @@ async function showSubmissionResult() {
   }
 
   renderAnswer(answer, "\\mathrm{Calculating}\\ldots");
+  calculationPending = true;
   requestAnimationFrame(syncAnswerHeight);
   try {
     const result = await invoke("process_expression", {
@@ -210,7 +215,13 @@ calculatorView.addEventListener("pointerdown", (event) => {
   requestAnimationFrame(restoreKeyboardMenuScroll);
 }, { capture: true });
 field.addEventListener("focus", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
-field.addEventListener("input", () => { calculationRequest += 1; });
+field.addEventListener("input", () => {
+  calculationRequest += 1;
+  if (!calculationPending) return;
+  calculationPending = false;
+  clearCalculationRows(steps, answer);
+  syncAnswerHeight();
+});
 field.addEventListener("beforeinput", (event) => { if (event.inputType === "insertLineBreak") { event.preventDefault(); showSubmissionResult(); } });
 $("#calculate-tab").addEventListener("click", () => setView("calculator"));
 $("#menu-tab").addEventListener("click", () => setView("menu"));

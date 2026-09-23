@@ -78,6 +78,16 @@ fn keyboard_menu_scrolls_horizontally_and_survives_layer_switches() {
 }
 
 #[test]
+fn editing_during_calculation_clears_the_stale_pending_state() {
+    let javascript = include_str!("../../../src/main.js");
+
+    assert!(javascript.contains("let calculationPending = false"));
+    assert!(javascript.contains("if (!calculationPending) return"));
+    assert!(javascript.contains("clearCalculationRows(steps, answer)"));
+    assert!(javascript.contains("if (request === calculationRequest) renderCalculation(result)"));
+}
+
+#[test]
 fn bodied_operators_take_the_existing_expression_as_their_operand() {
     let keyboard = include_str!("../../../src/keyboard.js");
     let mathlive = include_str!("../../../vendor/mathlive/mathlive-static.css");
