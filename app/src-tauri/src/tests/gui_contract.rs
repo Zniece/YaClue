@@ -114,23 +114,15 @@ fn input_adapter_exceptions_become_recoverable_diagnostics() {
 }
 
 #[test]
-fn bodied_operators_take_the_existing_expression_as_their_operand() {
+fn common_calculus_keys_insert_visible_notation_without_operand_slots() {
     let keyboard = include_str!("../../../src/keyboard.js");
     let mathlive = include_str!("../../../vendor/mathlive/mathlive-static.css");
 
     assert!(keyboard.contains("derivative:"));
     assert!(keyboard.contains("latex: '\\\\frac{\\\\mathrm{d}}{\\\\mathrm{d}x}'"));
-    for template in [
-        "\\\\yaclueNthDerivative{x}{#0}{#@}",
-        "\\\\yaclueIntegral{x}{#@}",
-        "\\\\yaclueDefiniteIntegral{x}{#0}{#0}{#@}",
-        "\\\\yaclueLimit{x}{#0}{#@}",
-        "\\\\yaclueSum{k}{#0}{#0}{#@}",
-        "\\\\yaclueTaylor{x}{#0}{#0}{#@}",
-        "\\\\yaclueSubstitute{x}{#0}{#@}",
-    ] {
-        assert!(keyboard.contains(template), "missing implicit operand: {template}");
-    }
+    assert!(keyboard.contains("integral: { keycap: '\\\\int', class: 'integral-key', latex: '\\\\int'"));
+    assert!(keyboard.contains("limit: { keycap: '\\\\lim', latex: '\\\\lim_{x\\\\to #0}'"));
+    assert!(keyboard.contains("sum: { keycap: '\\\\sum', latex: '\\\\sum_{k=#0}^{#0}'"));
     assert!(mathlive.contains(".ML__yaclue-operand-slot.ML__placeholder"));
     assert!(mathlive.contains(".ML__yaclue-operand-slot .ML__placeholder"));
 }

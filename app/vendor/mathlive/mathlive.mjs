@@ -38677,8 +38677,9 @@ var Serializer = class {
       (atom) => atom.type !== "first" && !IGNORED_COMMANDS.has(atom.command)
     );
     if (first >= 0) {
-      const variable = this.derivativeVariable(atoms[first]);
-      if (variable) {
+      const head = atoms[first];
+      const derivative = this.derivativeHead(head);
+      if (derivative) {
         const operand = atoms.slice(first + 1);
         if (operand.every((atom) => atom.type === "first" || IGNORED_COMMANDS.has(atom.command))) {
           this.diagnostic(
@@ -38690,8 +38691,18 @@ var Serializer = class {
           return "";
         }
         const value = this.serialize(operand, [...path, "derivative-operand"]);
-        return value ? `D(${variable})(${value})` : "";
+        return value ? `D(${derivative})(${value})` : "";
       }
+      if (this.looksLikeDerivativeHead(head)) {
+        this.diagnostic("invalid-argument", "The derivative notation has mismatched or incomplete order and variable", head, [...path, first]);
+        return "";
+      }
+      if (head.command === "\\int")
+        return this.serializeConventionalIntegral(atoms.slice(first), [...path, first]);
+      if (head.command === "\\lim")
+        return this.serializeConventionalLimit(atoms.slice(first), [...path, first]);
+      if (head.command === "\\sum")
+        return this.serializeConventionalSum(atoms.slice(first), [...path, first]);
     }
     const pieces = [];
     for (let i = 0; i < atoms.length; i++) {
@@ -38836,15 +38847,89 @@ var Serializer = class {
       );
     return result;
   }
-  derivativeVariable(atom) {
+  derivativeHead(atom) {
+    var _a3;
     if (atom.type !== "genfrac") return void 0;
     const fraction = atom;
     if (!fraction.hasBarLine) return void 0;
-    const compact = (branch) => Atom.serialize(branch != null ? branch : [], { defaultMode: "math" }).replace(/\\(?:mathrm|operatorname)\{d\}/g, "d").replace(/\s+/g, "");
-    if (compact(fraction.above) !== "d") return void 0;
+    const compact = (branch) => Atom.serialize(branch != null ? branch : [], { defaultMode: "math" }).replace(/\\(?:mathrm|operatorname)\{([a-zA-Z]+)\}/g, "$1").replace(/\s+/g, "");
+    const numerator = compact(fraction.above);
     const denominator = compact(fraction.below);
-    if (!/^d[A-Za-z][A-Za-z0-9]*$/.test(denominator)) return void 0;
-    return denominator.slice(1);
+    const differential = numerator.startsWith("\\partial") ? "\\partial" : "d";
+    if (numerator !== differential && !new RegExp(`^${differential === "d" ? "d" : "\\\\partial"}\\^\\{?[1-9][0-9]*\\}?$`).test(numerator))
+      return void 0;
+    const variable = denominator.match(differential === "d" ? /^d([A-Za-z][A-Za-z0-9]*)(?:\^\{?([1-9][0-9]*)\}?)?$/ : /^\\partial([A-Za-z][A-Za-z0-9]*)(?:\^\{?([1-9][0-9]*)\}?)?$/);
+    if (!variable) return void 0;
+    const order = (_a3 = numerator.match(/\^\{?([1-9][0-9]*)\}?$/)) == null ? void 0 : _a3[1];
+    if (order !== variable[2]) return void 0;
+    return order ? `${variable[1]},${order}` : variable[1];
+  }
+  looksLikeDerivativeHead(atom) {
+    var _a3, _b3;
+    if (atom.type !== "genfrac") return false;
+    const fraction = atom;
+    const numerator = Atom.serialize((_a3 = fraction.above) != null ? _a3 : [], { defaultMode: "math" });
+    const denominator = Atom.serialize((_b3 = fraction.below) != null ? _b3 : [], { defaultMode: "math" });
+    return /^(?:d|\\mathrm\{d\}|\\partial)(?:\^|$)/.test(numerator) && /^(?:d|\\mathrm\{d\}|\\partial)/.test(denominator);
+  }
+  serializeConventionalIntegral(atoms, path) {
+    const head = atoms[0];
+    const body = atoms.slice(1).filter((atom) => !IGNORED_COMMANDS.has(atom.command));
+    const differential = body[body.length - 2];
+    const variableAtom = body[body.length - 1];
+    const variable = (variableAtom == null ? void 0 : variableAtom.value) || (variableAtom == null ? void 0 : variableAtom.command);
+    const differentialLatex = differential ? Atom.serialize([differential], { defaultMode: "math" }) : "";
+    if (differentialLatex !== "\\mathrm{d}" || !variable || !/^[A-Za-z]$/.test(variable)) {
+      this.diagnostic("invalid-argument", "An integral must end with a differential such as dx", head, path);
+      return "";
+    }
+    if (body.length <= 2) {
+      this.diagnostic("missing-slot", "The integral requires an integrand", head, path);
+      return "";
+    }
+    const lower = head.branch("subscript");
+    const upper = head.branch("superscript");
+    if (this.isEmptySlot(lower) !== this.isEmptySlot(upper)) {
+      this.diagnostic("missing-slot", "A definite integral needs both bounds", head, path);
+      return "";
+    }
+    const integrand = this.serialize(body.slice(0, -2), [...path, "integrand"]);
+    if (!integrand) return "";
+    if (this.isEmptySlot(lower)) return `Integrate(${variable})(${integrand})`;
+    const from = this.serialize(lower, [...path, "lower"]);
+    const to = this.serialize(upper, [...path, "upper"]);
+    return from && to ? `Integrate(${variable},${from},${to})(${integrand})` : "";
+  }
+  serializeConventionalLimit(atoms, path) {
+    var _a3;
+    const head = atoms[0];
+    const subscript = head.branch("subscript");
+    const relation = (_a3 = subscript == null ? void 0 : subscript.findIndex((atom) => atom.command === "\\to")) != null ? _a3 : -1;
+    if (relation < 1 || !subscript || relation >= subscript.length - 1) {
+      this.diagnostic("invalid-argument", "A limit needs a variable and approach point", head, path);
+      return "";
+    }
+    const variable = this.serialize(subscript.slice(0, relation), [...path, "variable"]);
+    const point = this.serialize(subscript.slice(relation + 1), [...path, "point"]);
+    const expression = atoms.length > 1 ? this.serialize(atoms.slice(1), [...path, "operand"]) : "";
+    if (!expression) this.diagnostic("missing-slot", "The limit requires an expression", head, path);
+    return variable && point && expression ? `Limit(${variable},${point})(${expression})` : "";
+  }
+  serializeConventionalSum(atoms, path) {
+    var _a3;
+    const head = atoms[0];
+    const subscript = head.branch("subscript");
+    const equals = (_a3 = subscript == null ? void 0 : subscript.findIndex((atom) => atom.command === "=" || atom.value === "=")) != null ? _a3 : -1;
+    if (equals < 1 || !subscript || equals >= subscript.length - 1 || this.isEmptySlot(head.branch("superscript"))) {
+      this.diagnostic("missing-slot", "A sum needs an index and both bounds", head, path);
+      return "";
+    }
+    const index = this.serialize(subscript.slice(0, equals), [...path, "index"]);
+    const lower = this.serialize(subscript.slice(equals + 1), [...path, "lower"]);
+    const upper = this.serialize(head.branch("superscript"), [...path, "upper"]);
+    const expression = atoms.length > 1 ? this.serialize(atoms.slice(1), [...path, "operand"]) : "";
+    if (!expression) this.diagnostic("missing-slot", "The sum requires an expression", head, path);
+    return index && lower && upper && expression ? `Sum(${index},${lower},${upper},${expression})` : "";
   }
   needsImplicitMultiplication(left, right) {
     if (left.kind === "operator" || right.kind === "operator") return false;
