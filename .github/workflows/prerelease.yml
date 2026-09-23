@@ -90,9 +90,9 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "YaClue ${{ github.ref_name }}"
           releaseBody: |
-            Alpha 4 introduces the typed semantic core and structured mathematical-object pipeline. Limits, derivatives, equations, ODEs, algebra, numerical operations, plots, and other migrated capabilities now compose through one typed execution model.
+            Alpha 5 introduces the MathLive calculator interface, a customized math keyboard, localized input help, and more resilient input handling on top of YaClue's typed semantic core.
 
-            Desktop packages are available for Linux, macOS, and Windows. The Android arm64 APK is test-signed for direct evaluation and is not an app-store package. See docs/releases/v0.1.0-alpha.4.md for capabilities, validation, and known distribution constraints.
+            Desktop packages are available for Linux, macOS, and Windows. The Android arm64 APK is test-signed for direct evaluation and is not an app-store package. See https://github.com/Zniece/YaClue/blob/v0.1.0-alpha.5/docs/releases/v0.1.0-alpha.5.md for details and installation notes.
           releaseDraft: false
           prerelease: true
 

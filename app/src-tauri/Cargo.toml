@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 default-run = "app"
 autobins = false
 description = "A step-by-step computer algebra calculator"

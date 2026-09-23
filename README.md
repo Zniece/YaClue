@@ -57,7 +57,7 @@ yacas/                The CAS (yacas-rs), laid out like its upstream
 ├── COPYING/AUTHORS   Upstream license and authors (LGPL-2.1+)
 processing/           Typed semantic objects, operation registry, composition,
                       domain solvers, structured traces, and product projection
-app/                  YaClue's GUI shell (Tauri + KaTeX)
+app/                  YaClue's GUI shell (Tauri + MathLive)
 docs/                 English and Chinese Yacas scripting language documentation
 ```
 
@@ -216,11 +216,10 @@ standard library.
 
 ## Status
 
-Version `0.1.0-alpha.4` is the first prerelease based on the typed semantic
-core. The backend and structured product contract are stable enough to serve
-as the baseline for subsequent development; the application remains a
-prerelease and its mathematical coverage and presentation will continue to
-evolve.
+Version `0.1.0-alpha.5` adds the MathLive calculator interface, localized
+input help, and more resilient keyboard and input handling to the typed
+semantic core. This is still a prerelease; mathematical coverage and
+presentation will continue to evolve.
 
 Current product paths include arithmetic and algebraic transformations,
 limits, derivatives, symbolic and definite integrals, series, equations and
