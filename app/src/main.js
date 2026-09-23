@@ -1,6 +1,7 @@
 import "mathlive";
 import "mathlive/fonts.css";
 import { yaclueKeyboardLayouts } from "./keyboard.js";
+import { renderHelp } from "./help.js";
 import { applyTranslations, getLocale, hasTranslation, setLocale, t } from "./i18n.js";
 import { clearCalculationRows, renderAnswer, renderSteps } from "./math-rows.js";
 
@@ -250,6 +251,7 @@ async function showSubmissionResult() {
 
 applyTranslations();
 updateLocaleControls();
+renderHelp($("#help-content"), getLocale());
 
 customElements.whenDefined("math-field").then(() => {
   const keyboard = window.mathVirtualKeyboard;
@@ -309,6 +311,7 @@ window.addEventListener("pageshow", () => keyboardExpanded && !calculatorView.hi
 document.addEventListener("visibilitychange", () => { if (!document.hidden && keyboardExpanded && !calculatorView.hidden) ensureKeyboard(++keyboardRequest); });
 document.addEventListener("localechange", () => {
   updateLocaleControls();
+  renderHelp($("#help-content"), getLocale());
   setKeyboardUiState(app.dataset.keyboardState || "closed");
   if (window.mathVirtualKeyboard) {
     window.mathVirtualKeyboard.layouts = localizedKeyboardLayouts();

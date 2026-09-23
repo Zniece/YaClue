@@ -4,7 +4,7 @@ This page explains the **mathematical input expressions** used in YaClue's expre
 
 ## One expression per request
 
-Input must contain one non-empty expression. YaClue input does not accept statement terminators (`;`), newlines or multi-statement programs, definitions or assignments such as `f(x):=x^2`, strings, or colon-led script constructs. Write those forms in Yacas `.ys` scripts; the calculator field is not a script console.
+Input must contain one non-empty expression. A top-level semicolon is reserved for one-shot assumptions, as described below; it is not a statement terminator. YaClue input does not accept newlines or multi-statement programs, definitions or assignments such as `f(x):=x^2`, strings, or colon-led script constructs. Write those forms in Yacas `.ys` scripts; the calculator field is not a script console.
 
 ## Basic notation and composition
 
