@@ -28,6 +28,7 @@ let sourcePending = false;
 let keyboardExpanded = true;
 let keyboardRequest = 0;
 let keyboardMenuScrollLeft = 0;
+let touchedKeyboardTab = null;
 let lastSubmissionResult = null;
 let calculationRequest = 0;
 let calculationPending = false;
@@ -61,9 +62,27 @@ function renderInputDiagnostic() {
 
 const keyboardElement = () => Array.from(calculatorView.children).find((element) => element.classList.contains("ML__keyboard"));
 
+function syncKeyboardMenuOverflow(scroller) {
+  if (!scroller) return;
+  scroller.classList.toggle("can-scroll-x", scroller.scrollWidth > scroller.clientWidth + 1);
+  scroller.classList.toggle("at-scroll-start", scroller.scrollLeft <= 1);
+  scroller.classList.toggle("at-scroll-end", scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1);
+}
+
 function restoreKeyboardMenuScroll() {
+  if (!keyboardExpanded || calculatorView.hidden) return;
   const scroller = keyboardElement()?.querySelector(".MLK__layer.is-visible .MLK__toolbar > .left");
-  if (scroller) scroller.scrollLeft = keyboardMenuScrollLeft;
+  if (!scroller) return;
+  scroller.scrollLeft = keyboardMenuScrollLeft;
+  const selected = scroller.querySelector(".selected");
+  if (selected) {
+    const tab = selected.getBoundingClientRect();
+    const viewport = scroller.getBoundingClientRect();
+    if (tab.left < viewport.left + 12 || tab.right > viewport.right - 12)
+      selected.scrollIntoView({ block: "nearest", inline: "center" });
+  }
+  keyboardMenuScrollLeft = scroller.scrollLeft;
+  syncKeyboardMenuOverflow(scroller);
 }
 
 function setKeyboardUiState(state) {
@@ -156,6 +175,7 @@ function setView(name) {
     setKeyboardExpanded(keyboardExpanded);
     if (!keyboardExpanded) field.focus({ preventScroll: true });
   } else {
+    touchedKeyboardTab = null;
     window.mathVirtualKeyboard?.hide({ animate: false });
     document.querySelector(`#${name}-view button`)?.focus({ preventScroll: true });
   }
@@ -340,8 +360,9 @@ keyboardToggle.addEventListener("pointerdown", (event) => event.preventDefault()
 keyboardToggle.addEventListener("click", () => setKeyboardExpanded(!keyboardExpanded));
 calculatorView.addEventListener("scroll", (event) => {
   const scroller = event.target;
-  if (scroller instanceof Element && scroller.matches(".MLK__toolbar > .left")) {
+  if (scroller instanceof Element && scroller.matches(".MLK__layer.is-visible .MLK__toolbar > .left")) {
     keyboardMenuScrollLeft = scroller.scrollLeft;
+    syncKeyboardMenuOverflow(scroller);
   }
 }, { capture: true, passive: true });
 calculatorView.addEventListener("pointerdown", (event) => {
@@ -349,7 +370,37 @@ calculatorView.addEventListener("pointerdown", (event) => {
   if (!switcher) return;
   const scroller = switcher.closest(".MLK__toolbar > .left");
   if (scroller) keyboardMenuScrollLeft = scroller.scrollLeft;
-  requestAnimationFrame(restoreKeyboardMenuScroll);
+  if (event.pointerType === "touch") {
+    touchedKeyboardTab = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      layer: switcher.dataset.layer,
+      moved: false,
+    };
+    event.stopPropagation();
+    return;
+  }
+  requestAnimationFrame(() => requestAnimationFrame(restoreKeyboardMenuScroll));
+}, { capture: true });
+calculatorView.addEventListener("pointermove", (event) => {
+  const tab = touchedKeyboardTab;
+  if (tab?.pointerId !== event.pointerId) return;
+  if (Math.hypot(event.clientX - tab.x, event.clientY - tab.y) > 10) tab.moved = true;
+}, { capture: true, passive: true });
+calculatorView.addEventListener("pointerup", (event) => {
+  const tab = touchedKeyboardTab;
+  if (tab?.pointerId !== event.pointerId) return;
+  touchedKeyboardTab = null;
+  event.stopPropagation();
+  if (tab.moved) return;
+  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-layer]");
+  if (target?.dataset.layer !== tab.layer) return;
+  if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.currentLayer = tab.layer;
+  requestAnimationFrame(() => requestAnimationFrame(restoreKeyboardMenuScroll));
+}, { capture: true });
+calculatorView.addEventListener("pointercancel", (event) => {
+  if (touchedKeyboardTab?.pointerId === event.pointerId) touchedKeyboardTab = null;
 }, { capture: true });
 field.addEventListener("focus", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
 field.addEventListener("input", () => {
@@ -397,6 +448,7 @@ sourceInput.addEventListener("keydown", (event) => {
 });
 document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => setLocale(button.dataset.locale)));
 window.addEventListener("pageshow", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
+window.addEventListener("resize", restoreKeyboardMenuScroll);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && keyboardExpanded && !calculatorView.hidden) ensureKeyboard(++keyboardRequest); });
 document.addEventListener("localechange", () => {
   updateLocaleControls();

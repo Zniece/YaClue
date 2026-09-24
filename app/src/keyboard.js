@@ -123,228 +123,113 @@ const semanticKey = (name, options = {}) => {
     ...options,
   };
 };
-// Both keyboard pages share these exact five right-hand columns.
-// Keeping one source of truth prevents keys from jumping between pages.
+// Every page shares the same four right-hand columns. An extra row makes the
+// touch targets wider without dropping any of the twenty page-specific keys.
 const commonRightRows = [
-  ['[7]', '[8]', '[9]', semanticKey('multiply'), { label: '[backspace]', width: 1 }],
-  ['[4]', '[5]', '[6]', semanticKey('add'), '[left]'],
-  ['[1]', '[2]', '[3]', semanticKey('subtract'), '[right]'],
-  [{ label: '[0]', width: 2 }, semanticKey('decimal'), semanticKey('equation'), { label: '[action]', width: 1 }],
+  ['[7]', '[8]', '[9]', { label: '[backspace]', width: 1 }],
+  ['[4]', '[5]', '[6]', semanticKey('multiply')],
+  ['[1]', '[2]', '[3]', semanticKey('add')],
+  ['[left]', '[0]', '[right]', semanticKey('subtract')],
+  [semanticKey('comma'), semanticKey('decimal'), semanticKey('equation'), { label: '[action]', width: 1 }],
 ];
-const yaclueKeyboard = {
-  id: 'yaclue-core',
-  label: 'Basic',
-  tooltip: 'Basic input',
-  displayEditToolbar: false,
-  rows: [
-    [
-      semanticKey('fraction'),
-      semanticKey('root'),
-      semanticKey('power'),
-      semanticKey('square'),
-      '\\pi',
-      ...commonRightRows[0],
-    ],
-    [
-      semanticKey('absolute'),
-      semanticKey('norm'),
-      semanticKey('sin'),
-      semanticKey('cos'),
-      semanticKey('tan'),
-      ...commonRightRows[1],
-    ],
-    [
-      semanticKey('ln'),
-      semanticKey('exp'),
-      '(', ')',
-      { latex: 'x', tooltip: 'Variable x' },
-      ...commonRightRows[2],
-    ],
-    [
-      { latex: 'y', tooltip: 'Variable y' },
-      { latex: 'z', tooltip: 'Variable z' },
-      { latex: 't', tooltip: 'Variable t' },
-      { latex: 'n', tooltip: 'Variable n' },
-      { class: 'separator', width: 1 },
-      ...commonRightRows[3],
-    ],
-  ],
-};
-const yaclueCalculusKeyboard = {
-  id: 'yaclue-calculus',
-  label: 'Calculus',
-  tooltip: 'Derivatives, integrals, limits and sums',
-  displayEditToolbar: false,
-  rows: [
-    [
-      semanticKey('fraction'),
-      semanticKey('root'),
-      semanticKey('power'),
-      semanticKey('square'),
-      '\\pi',
-      ...commonRightRows[0],
-    ],
-    [
-      semanticKey('absolute'),
-      semanticKey('differential'),
-      semanticKey('derivative'),
-      semanticKey('nthDerivative'),
-      semanticKey('integral'),
-      ...commonRightRows[1],
-    ],
-    [
-      semanticKey('definiteIntegral'),
-      semanticKey('limit'),
-      '(', ')',
-      { latex: 'x', tooltip: 'Variable x' },
-      ...commonRightRows[2],
-    ],
-    [
-      { latex: 'y', tooltip: 'Variable y' },
-      { latex: 'z', tooltip: 'Variable z' },
-      { latex: 't', tooltip: 'Variable t' },
-      { latex: 'n', tooltip: 'Variable n' },
-      semanticKey('sum'),
-      ...commonRightRows[3],
-    ],
-  ],
-};
-const yaclueFunctionKeyboard = {
-  id: 'yaclue-functions',
-  label: 'Func',
-  tooltip: 'Inverse trigonometric and special functions',
-  displayEditToolbar: false,
-  rows: [
-    [
-      semanticKey('fraction'),
-      semanticKey('root'),
-      semanticKey('power'),
-      semanticKey('square'),
-      '\\pi',
-      ...commonRightRows[0],
-    ],
-    [
-      semanticKey('arcsin'),
-      semanticKey('arccos'),
-      semanticKey('arctan'),
-      semanticKey('gamma'),
-      semanticKey('zeta'),
-      ...commonRightRows[1],
-    ],
-    [
-      semanticKey('floor'),
-      semanticKey('ceil'),
-      '(', ')',
-      { latex: 'x', tooltip: 'Variable x' },
-      ...commonRightRows[2],
-    ],
-    [
-      { latex: 'y', tooltip: 'Variable y' },
-      { latex: 'z', tooltip: 'Variable z' },
-      { latex: 't', tooltip: 'Variable t' },
-      { latex: 'n', tooltip: 'Variable n' },
-      semanticKey('lambertW'),
-      ...commonRightRows[3],
-    ],
-  ],
-};
-const yaclueStructureKeyboard = {
-  id: 'yaclue-structure',
-  label: 'Struct',
-  tooltip: 'Lists, vectors and matrices',
-  displayEditToolbar: false,
-  rows: [
-    [
-      semanticKey('fraction'),
-      semanticKey('root'),
-      semanticKey('power'),
-      semanticKey('square'),
-      '\\pi',
-      ...commonRightRows[0],
-    ],
-    [
-      semanticKey('absolute'),
-      semanticKey('norm'),
-      semanticKey('matrix'),
-      { label: '<small>+Row</small>', class: 'text-key', command: 'performWithFeedback(addRowAfter)', tooltip: 'Add matrix row' },
-      {
-        label: '<small>+Col</small>',
-        class: 'text-key',
-        command: ['typedText', '&?', { focus: true, feedback: true, simulateKeystroke: true }],
-        tooltip: 'Add matrix column',
-      },
-      ...commonRightRows[1],
-    ],
-    [
-      semanticKey('vector'),
-      semanticKey('list'),
-      '(', ')',
-      { latex: 'x', tooltip: 'Variable x' },
-      ...commonRightRows[2],
-    ],
-    [
-      { latex: 'y', tooltip: 'Variable y' },
-      { latex: 'z', tooltip: 'Variable z' },
-      { latex: 't', tooltip: 'Variable t' },
-      { latex: 'n', tooltip: 'Variable n' },
-      semanticKey('comma'),
-      ...commonRightRows[3],
-    ],
-  ],
-};
-
 const compactKey = (name) => typeof name === 'string' && YACLUE_KEY_SEMANTICS[name]
   ? semanticKey(name)
   : name;
 const makeKeyboard = (id, label, tooltip, keys) => ({
-  id: `yaclue-${id}`,
+  id: 'yaclue-' + id,
   label,
   tooltip,
   displayEditToolbar: false,
   rows: commonRightRows.map((right, row) => [
-    ...keys.slice(row * 5, row * 5 + 5).map(compactKey),
+    ...keys.slice(row * 4, row * 4 + 4).map(compactKey),
     ...right,
   ]),
 });
+const yaclueKeyboard = makeKeyboard('core', 'Basic', 'Basic input', [
+  'fraction', 'root', 'power', 'square',
+  'sin', 'cos', 'tan', 'absolute',
+  'ln', 'exp', 'norm', '\\pi',
+  '(', ')', { latex: 'x', tooltip: 'Variable x' }, { latex: 'y', tooltip: 'Variable y' },
+  { latex: 'z', tooltip: 'Variable z' }, { latex: 't', tooltip: 'Variable t' },
+  { latex: 'n', tooltip: 'Variable n' }, 'infinity',
+]);
+const yaclueCalculusKeyboard = makeKeyboard('calculus', 'Calculus', 'Derivatives, integrals, limits and sums', [
+  'fraction', 'root', 'power', 'square',
+  'derivative', 'nthDerivative', 'integral', 'definiteIntegral',
+  'differential', 'limit', 'sum', 'absolute',
+  '(', ')', { latex: 'x', tooltip: 'Variable x' }, { latex: 'y', tooltip: 'Variable y' },
+  { latex: 'z', tooltip: 'Variable z' }, { latex: 't', tooltip: 'Variable t' },
+  { latex: 'n', tooltip: 'Variable n' }, '\\pi',
+]);
+const yaclueFunctionKeyboard = makeKeyboard('functions', 'Func', 'Inverse trigonometric and special functions', [
+  'fraction', 'root', 'power', 'square',
+  'arcsin', 'arccos', 'arctan', 'gamma',
+  'zeta', 'lambertW', 'floor', 'ceil',
+  '(', ')', { latex: 'x', tooltip: 'Variable x' }, { latex: 'y', tooltip: 'Variable y' },
+  { latex: 'z', tooltip: 'Variable z' }, { latex: 't', tooltip: 'Variable t' },
+  { latex: 'n', tooltip: 'Variable n' }, '\\pi',
+]);
+const yaclueStructureKeyboard = makeKeyboard('structure', 'Struct', 'Lists, vectors and matrices', [
+  'fraction', 'root', 'power', 'square',
+  'matrix',
+  { label: '<small>+Row</small>', class: 'text-key', command: 'performWithFeedback(addRowAfter)', tooltip: 'Add matrix row' },
+  {
+    label: '<small>+Col</small>',
+    class: 'text-key',
+    command: ['typedText', '&?', { focus: true, feedback: true, simulateKeystroke: true }],
+    tooltip: 'Add matrix column',
+  },
+  'vector',
+  'list', 'absolute', 'norm', '\\pi',
+  '(', ')', { latex: 'x', tooltip: 'Variable x' }, { latex: 'y', tooltip: 'Variable y' },
+  { latex: 'z', tooltip: 'Variable z' }, { latex: 't', tooltip: 'Variable t' },
+  { latex: 'n', tooltip: 'Variable n' }, 'transpose',
+]);
+
 const yaclueFunctionPlusKeyboard = makeKeyboard('functions-plus', 'Func+', 'More scalar and integer functions', [
-  'sign', 'round', 'min', 'max', 'div',
-  'mod', 'gcd', 'lcm', 'numer', 'denom',
-  'bernoulli', 'euler', semanticKey('gamma'), semanticKey('zeta'), semanticKey('lambertW'),
-  '(', ')', { latex: 'x' }, { latex: 'n' }, semanticKey('comma'),
+  'sign', 'round', 'min', 'max',
+  'div', 'mod', 'gcd', 'lcm',
+  'numer', 'denom', 'bernoulli', 'euler',
+  'gamma', 'zeta', 'lambertW', { latex: 'x' },
+  { latex: 'n' }, '(', ')', '\\pi',
 ]);
 const yaclueCalculusPlusKeyboard = makeKeyboard('calculus-plus', 'Calc+', 'Advanced calculus', [
-  'partial', 'leftLimit', 'rightLimit', 'taylor', 'substitute',
-  'doubleIntegral', 'polarIntegral', 'infinity', 'principalValue', semanticKey('differential'),
-  semanticKey('integral'), semanticKey('definiteIntegral'), semanticKey('derivative'), semanticKey('nthDerivative'), semanticKey('limit'),
-  { latex: 'x' }, { latex: 'y' }, { latex: 'r' }, { latex: '\\theta' }, semanticKey('comma'),
+  'partial', 'leftLimit', 'rightLimit', 'taylor',
+  'substitute', 'doubleIntegral', 'polarIntegral', 'infinity',
+  'principalValue', 'differential', 'integral', 'definiteIntegral',
+  'derivative', 'nthDerivative', 'limit', { latex: 'x' },
+  { latex: 'y' }, { latex: 'r' }, { latex: '\\theta' }, '\\pi',
 ]);
 const yaclueMultivariableKeyboard = makeKeyboard('multivariable', 'Multi', 'Multivariable and geometric calculus', [
-  'gradient', 'jacobian', 'hessian', 'divergence', 'curl',
-  'directional', 'scalarLine', 'vectorLine', 'scalarSurface', 'vectorSurface',
-  semanticKey('vector'), semanticKey('list'), semanticKey('matrix'), semanticKey('norm'), semanticKey('comma'),
-  { latex: 'x' }, { latex: 'y' }, { latex: 'z' }, { latex: 'u' }, { latex: 'v' },
+  'gradient', 'jacobian', 'hessian', 'divergence',
+  'curl', 'directional', 'scalarLine', 'vectorLine',
+  'scalarSurface', 'vectorSurface', 'vector', 'list',
+  'matrix', 'norm', { latex: 'x' }, { latex: 'y' },
+  { latex: 'z' }, { latex: 'u' }, { latex: 'v' }, '(',
 ]);
 const yaclueLinearKeyboard = makeKeyboard('linear', 'Linear', 'Vectors and linear algebra', [
-  'dot', 'cross', 'outer', 'normalize', 'pnorm',
-  'transpose', 'determinant', 'inverse', 'rank', 'rref',
-  'trace', 'eigen', 'nullSpace', 'columnSpace', 'matrixSolve',
-  'rowReduce', 'pldu', 'cholesky', 'gramSchmidt', 'orthonormal',
+  'dot', 'cross', 'outer', 'normalize',
+  'pnorm', 'transpose', 'determinant', 'inverse',
+  'rank', 'rref', 'trace', 'eigen',
+  'nullSpace', 'columnSpace', 'matrixSolve', 'rowReduce',
+  'pldu', 'cholesky', 'gramSchmidt', 'orthonormal',
 ]);
 const yaclueActionsKeyboard = makeKeyboard('actions', 'Actions', 'Solve, transform and analyze', [
-  'solve', 'factor', 'expand', 'simplify', 'tidy',
-  'apart', 'numeric', 'findRoot', 'ode', 'plot',
-  'extrema', 'lagrange', 'matrixPower', 'diagonal', 'identity',
-  semanticKey('list'), semanticKey('matrix'), '(', ')', semanticKey('comma'),
+  'solve', 'factor', 'expand', 'simplify',
+  'tidy', 'apart', 'numeric', 'findRoot',
+  'ode', 'plot', 'extrema', 'lagrange',
+  'matrixPower', 'diagonal', 'identity', 'list',
+  'matrix', '(', ')', '\\pi',
 ]);
 const yaclueAlphabetKeyboard = makeKeyboard('alphabet', 'ABC', 'ASCII variable names', [
-  ...'abcdefghijklmopqrsw'.split('').map((latex) => ({ latex, tooltip: `Variable ${latex}` })),
-  { class: 'separator', width: 1 },
+  ...'abcdefghijklmopqrsuw'.split('').map((latex) => ({ latex, tooltip: `Variable ${latex}` })),
 ]);
 const yaclueAssumptionKeyboard = makeKeyboard('assumptions', 'Given', 'One-shot assumptions', [
-  'assumptionSeparator', 'assumptionPositive', 'assumptionNegative', 'assumptionNonZero', semanticKey('comma'),
-  { latex: 'x' }, { latex: 'y' }, { latex: 'z' }, { latex: 'n' }, { latex: 't' },
-  semanticKey('fraction'), semanticKey('root'), semanticKey('power'), semanticKey('square'), semanticKey('absolute'),
-  '(', ')', semanticKey('list'), semanticKey('norm'), { class: 'separator', width: 1 },
+  'assumptionSeparator', 'assumptionPositive', 'assumptionNegative', 'assumptionNonZero',
+  { latex: 'x' }, { latex: 'y' }, { latex: 'z' }, { latex: 'n' },
+  { latex: 't' }, 'fraction', 'root', 'power',
+  'square', 'absolute', '(', ')',
+  'list', 'norm', '\\pi', 'infinity',
 ]);
 
 
