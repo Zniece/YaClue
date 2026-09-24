@@ -5,12 +5,13 @@ import { getHelpSections } from "../src/help.js";
 test("help covers the documented input rules in both languages", () => {
   for (const locale of ["zh-CN", "en-US"]) {
     const sections = getHelpSections(locale);
-    assert.equal(sections.length, 8);
+    assert.equal(sections.length, 9);
     for (const section of sections) {
       assert.ok(section.title && section.text);
       assert.ok(!section.text.includes("我是帮助"));
     }
     const examples = sections.flatMap((section) => section.examples);
+    assert.ok(sections.some((section) => section.text.includes("↵") && section.text.includes("+Col")), locale);
     for (const expected of ["D(x)x^2", "Solve(x^2-5*x+6==0,x)", "Sqrt(x^2);x>0", "Determinant({{1,2},{3,4}})"])
       assert.ok(examples.includes(expected), `${locale}: ${expected}`);
   }

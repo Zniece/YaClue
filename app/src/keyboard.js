@@ -119,7 +119,7 @@ const semanticKey = (name, options = {}) => {
     label: semantic.label,
     class: [semantic.class, textKey ? 'text-key' : ''].filter(Boolean).join(' '),
     width: semantic.width,
-    tooltip: semantic.yaclue,
+    tooltipKey: `keyboard.key.${name}`,
     ...options,
   };
 };
@@ -135,17 +135,17 @@ const commonRightRows = [
 const compactKey = (name) => typeof name === 'string' && YACLUE_KEY_SEMANTICS[name]
   ? semanticKey(name)
   : name;
-const makeKeyboard = (id, label, tooltip, keys) => ({
+const makeKeyboard = (id, label, keys) => ({
   id: 'yaclue-' + id,
   label,
-  tooltip,
+  tooltipKey: `keyboard.${id}`,
   displayEditToolbar: false,
   rows: commonRightRows.map((right, row) => [
     ...keys.slice(row * 4, row * 4 + 4).map(compactKey),
     ...right,
   ]),
 });
-const yaclueKeyboard = makeKeyboard('core', 'Basic', 'Basic input', [
+const yaclueKeyboard = makeKeyboard('core', 'Basic', [
   'fraction', 'root', 'power', 'square',
   'sin', 'cos', 'tan', 'absolute',
   'ln', 'exp', 'norm', '\\pi',
@@ -153,7 +153,7 @@ const yaclueKeyboard = makeKeyboard('core', 'Basic', 'Basic input', [
   { latex: 'z', tooltip: 'Variable z' }, { latex: 't', tooltip: 'Variable t' },
   { latex: 'n', tooltip: 'Variable n' }, 'infinity',
 ]);
-const yaclueCalculusKeyboard = makeKeyboard('calculus', 'Calculus', 'Derivatives, integrals, limits and sums', [
+const yaclueCalculusKeyboard = makeKeyboard('calculus', 'Calculus', [
   'fraction', 'root', 'power', 'square',
   'derivative', 'nthDerivative', 'integral', 'definiteIntegral',
   'differential', 'limit', 'sum', 'absolute',
@@ -161,7 +161,7 @@ const yaclueCalculusKeyboard = makeKeyboard('calculus', 'Calculus', 'Derivatives
   { latex: 'z', tooltip: 'Variable z' }, { latex: 't', tooltip: 'Variable t' },
   { latex: 'n', tooltip: 'Variable n' }, '\\pi',
 ]);
-const yaclueFunctionKeyboard = makeKeyboard('functions', 'Func', 'Inverse trigonometric and special functions', [
+const yaclueFunctionKeyboard = makeKeyboard('functions', 'Func', [
   'fraction', 'root', 'power', 'square',
   'arcsin', 'arccos', 'arctan', 'gamma',
   'zeta', 'lambertW', 'floor', 'ceil',
@@ -169,15 +169,15 @@ const yaclueFunctionKeyboard = makeKeyboard('functions', 'Func', 'Inverse trigon
   { latex: 'z', tooltip: 'Variable z' }, { latex: 't', tooltip: 'Variable t' },
   { latex: 'n', tooltip: 'Variable n' }, '\\pi',
 ]);
-const yaclueStructureKeyboard = makeKeyboard('structure', 'Struct', 'Lists, vectors and matrices', [
+const yaclueStructureKeyboard = makeKeyboard('structure', 'Struct', [
   'fraction', 'root', 'power', 'square',
   'matrix',
-  { label: '<small>+Row</small>', class: 'text-key', command: 'performWithFeedback(addRowAfter)', tooltip: 'Add matrix row' },
+  { label: '<small>+Row</small>', class: 'text-key', command: 'performWithFeedback(addRowAfter)', tooltipKey: 'keyboard.hint.addRow' },
   {
     label: '<small>+Col</small>',
     class: 'text-key',
     command: ['typedText', '&?', { focus: true, feedback: true, simulateKeystroke: true }],
-    tooltip: 'Add matrix column',
+    tooltipKey: 'keyboard.hint.addCol',
   },
   'vector',
   'list', 'absolute', 'norm', '\\pi',
@@ -186,45 +186,45 @@ const yaclueStructureKeyboard = makeKeyboard('structure', 'Struct', 'Lists, vect
   { latex: 'n', tooltip: 'Variable n' }, 'transpose',
 ]);
 
-const yaclueFunctionPlusKeyboard = makeKeyboard('functions-plus', 'Func+', 'More scalar and integer functions', [
+const yaclueFunctionPlusKeyboard = makeKeyboard('functions-plus', 'Func+', [
   'sign', 'round', 'min', 'max',
   'div', 'mod', 'gcd', 'lcm',
   'numer', 'denom', 'bernoulli', 'euler',
   'gamma', 'zeta', 'lambertW', { latex: 'x' },
   { latex: 'n' }, '(', ')', '\\pi',
 ]);
-const yaclueCalculusPlusKeyboard = makeKeyboard('calculus-plus', 'Calc+', 'Advanced calculus', [
+const yaclueCalculusPlusKeyboard = makeKeyboard('calculus-plus', 'Calc+', [
   'partial', 'leftLimit', 'rightLimit', 'taylor',
   'substitute', 'doubleIntegral', 'polarIntegral', 'infinity',
   'principalValue', 'differential', 'integral', 'definiteIntegral',
   'derivative', 'nthDerivative', 'limit', { latex: 'x' },
   { latex: 'y' }, { latex: 'r' }, { latex: '\\theta' }, '\\pi',
 ]);
-const yaclueMultivariableKeyboard = makeKeyboard('multivariable', 'Multi', 'Multivariable and geometric calculus', [
+const yaclueMultivariableKeyboard = makeKeyboard('multivariable', 'Multi', [
   'gradient', 'jacobian', 'hessian', 'divergence',
   'curl', 'directional', 'scalarLine', 'vectorLine',
   'scalarSurface', 'vectorSurface', 'vector', 'list',
   'matrix', 'norm', { latex: 'x' }, { latex: 'y' },
   { latex: 'z' }, { latex: 'u' }, { latex: 'v' }, '(',
 ]);
-const yaclueLinearKeyboard = makeKeyboard('linear', 'Linear', 'Vectors and linear algebra', [
+const yaclueLinearKeyboard = makeKeyboard('linear', 'Linear', [
   'dot', 'cross', 'outer', 'normalize',
   'pnorm', 'transpose', 'determinant', 'inverse',
   'rank', 'rref', 'trace', 'eigen',
   'nullSpace', 'columnSpace', 'matrixSolve', 'rowReduce',
   'pldu', 'cholesky', 'gramSchmidt', 'orthonormal',
 ]);
-const yaclueActionsKeyboard = makeKeyboard('actions', 'Actions', 'Solve, transform and analyze', [
+const yaclueActionsKeyboard = makeKeyboard('actions', 'Actions', [
   'solve', 'factor', 'expand', 'simplify',
   'tidy', 'apart', 'numeric', 'findRoot',
   'ode', 'plot', 'extrema', 'lagrange',
   'matrixPower', 'diagonal', 'identity', 'list',
   'matrix', '(', ')', '\\pi',
 ]);
-const yaclueAlphabetKeyboard = makeKeyboard('alphabet', 'ABC', 'ASCII variable names', [
-  ...'abcdefghijklmopqrsuw'.split('').map((latex) => ({ latex, tooltip: `Variable ${latex}` })),
+const yaclueAlphabetKeyboard = makeKeyboard('alphabet', 'ABC', [
+  ...'abcdefghijklmopqrsuw'.split('').map((latex) => ({ latex })),
 ]);
-const yaclueAssumptionKeyboard = makeKeyboard('assumptions', 'Given', 'One-shot assumptions', [
+const yaclueAssumptionKeyboard = makeKeyboard('assumptions', 'Given', [
   'assumptionSeparator', 'assumptionPositive', 'assumptionNegative', 'assumptionNonZero',
   { latex: 'x' }, { latex: 'y' }, { latex: 'z' }, { latex: 'n' },
   { latex: 't' }, 'fraction', 'root', 'power',
@@ -246,3 +246,26 @@ export const yaclueKeyboardLayouts = [
   yaclueMultivariableKeyboard,
   yaclueActionsKeyboard,
 ];
+
+const keyHint = (key, translate) => {
+  if (typeof key === 'string') {
+    if (/^\[\d\]$/.test(key)) return { label: key, tooltip: translate('keyboard.hint.digit', { symbol: key[1] }) };
+    const shortcut = { '[left]': 'moveLeft', '[right]': 'moveRight' }[key];
+    if (shortcut) return { label: key, tooltip: translate(`keyboard.hint.${shortcut}`) };
+    const symbol = { '(': 'openParenthesis', ')': 'closeParenthesis', '\\pi': 'pi' }[key];
+    return symbol ? { latex: key, tooltip: translate(`keyboard.hint.${symbol}`) } : key;
+  }
+  const { tooltipKey, tooltipArgs, ...options } = key;
+  const keyName = tooltipKey
+    || ({ '[backspace]': 'keyboard.hint.backspace', '[action]': 'keyboard.hint.calculate' }[key.label])
+    || (/^[a-z]$/.test(key.latex || '') || key.latex === '\\theta' ? 'keyboard.hint.variable' : null);
+  if (!keyName) return options;
+  const symbol = key.latex === '\\theta' ? 'θ' : key.latex;
+  return { ...options, tooltip: translate(keyName, tooltipArgs || { symbol }) };
+};
+
+export const localizeKeyboardLayouts = (translate) => yaclueKeyboardLayouts.map(({ tooltipKey, ...layout }) => ({
+  ...layout,
+  tooltip: translate(tooltipKey),
+  rows: layout.rows.map((row) => row.map((key) => keyHint(key, translate))),
+}));

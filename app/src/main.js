@@ -1,6 +1,6 @@
 import "mathlive";
 import "mathlive/fonts.css";
-import { yaclueKeyboardLayouts } from "./keyboard.js";
+import { localizeKeyboardLayouts } from "./keyboard.js";
 import { renderHelp } from "./help.js";
 import { parseYaClueSource } from "./source-input.js";
 import { applyTranslations, getLocale, hasTranslation, setLocale, t } from "./i18n.js";
@@ -12,6 +12,7 @@ const app = $("#app");
 const calculatorView = $("#calculator-view");
 const workspace = $(".workspace");
 const field = $("#math-input");
+const firstCalculationHint = $("#first-calculation-hint");
 const calculationError = $("#calculation-error");
 const steps = $("#steps");
 const answer = $("#answer");
@@ -35,6 +36,18 @@ let calculationRequest = 0;
 let calculationPending = false;
 let lastCalculationResult = null;
 let lastCalculationError = null;
+const firstCalculationStorageKey = "yaclue.hasSubmittedCalculation";
+
+firstCalculationHint.hidden = localStorage.getItem(firstCalculationStorageKey) === "1";
+const completeFirstCalculationGuide = () => {
+  if (firstCalculationHint.hidden) return;
+  firstCalculationHint.hidden = true;
+  localStorage.setItem(firstCalculationStorageKey, "1");
+};
+const showAnswer = (latex, state = "result") => {
+  answer.dataset.state = state;
+  renderAnswer(answer, latex);
+};
 
 const statusLatex = (key) => `\\text{${t(key)}}`;
 const announce = (message) => { calculationStatus.textContent = message; };
@@ -47,10 +60,7 @@ const clearCalculationError = () => {
   calculationError.hidden = true;
   calculationError.textContent = "";
 };
-const localizedKeyboardLayouts = () => yaclueKeyboardLayouts.map((layout) => ({
-  ...layout,
-  tooltip: t(`keyboard.${layout.id.slice("yaclue-".length)}`),
-}));
+const localizedKeyboardLayouts = () => localizeKeyboardLayouts(t);
 
 function updateLocaleControls() {
   for (const button of document.querySelectorAll("[data-locale]"))
@@ -65,7 +75,7 @@ function renderInputDiagnostic() {
     : diagnostic?.message || t("ui.inputConversionFailed");
   renderSteps(steps, []);
   showCalculationError(explanation);
-  renderAnswer(answer, statusLatex("ui.invalidInput"));
+  showAnswer(statusLatex("ui.invalidInput"), "error");
   announce(explanation);
   requestAnimationFrame(syncAnswerHeight);
 }
@@ -204,7 +214,7 @@ function renderCalculationError(error) {
   const explanation = localizedMessage(error?.message_ref, error?.message || t("ui.calculationFailed"));
   renderSteps(steps, []);
   showCalculationError(explanation);
-  renderAnswer(answer, statusLatex("ui.calculationFailed"));
+  showAnswer(statusLatex("ui.calculationFailed"), "error");
   announce(explanation);
   requestAnimationFrame(syncAnswerHeight);
 }
@@ -231,7 +241,7 @@ function renderCalculation(result) {
   lastCalculationError = null;
   clearCalculationError();
   renderSteps(steps, resultRows(result));
-  renderAnswer(answer, result.tex || result.expression);
+  showAnswer(result.tex || result.expression);
   announce(t("ui.calculationComplete"));
   requestAnimationFrame(syncAnswerHeight);
 }
@@ -287,6 +297,7 @@ async function submitSource() {
 }
 
 async function showSubmissionResult() {
+  completeFirstCalculationGuide();
   materializeDisplayedZero(field);
   const request = ++calculationRequest;
   calculationPending = false;
@@ -328,7 +339,7 @@ async function showSubmissionResult() {
     return;
   }
 
-  renderAnswer(answer, statusLatex("ui.calculating"));
+  showAnswer(statusLatex("ui.calculating"), "pending");
   announce(t("ui.calculating"));
   calculationPending = true;
   requestAnimationFrame(syncAnswerHeight);
@@ -472,7 +483,7 @@ document.addEventListener("localechange", () => {
   else if (lastCalculationError) renderCalculationError(lastCalculationError);
   else if (lastSubmissionResult && !lastSubmissionResult.ok) renderInputDiagnostic();
   else if (calculationPending) {
-    renderAnswer(answer, statusLatex("ui.calculating"));
+    showAnswer(statusLatex("ui.calculating"), "pending");
     announce(t("ui.calculating"));
   }
 });

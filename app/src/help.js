@@ -1,6 +1,7 @@
 const content = {
   "zh-CN": [
     { title: "开始计算", text: "在计算页输入一个数学表达式，按数学键盘上的回车计算。结果显示在键盘上方；有步骤时，可在输入行下方上下滚动查看。键盘可收起，以便查看较长步骤。", examples: ["2*x^2-3*x+1", "Sin(x)^2+Cos(x)^2"] },
+    { title: "使用数学键盘", text: "键盘顶部的分类标签可以左右滑动，点击标签切换基础、微积分、矩阵等页面。每页右侧的数字、方向键、删除键和 ↵ 都在相同位置。方向键移动光标，↵ 提交计算；键盘上方控制条的箭头可收起或展开键盘。Mat 插入可调整大小的矩阵，+Row 和 +Col 用于增加行列。", examples: [] },
     { title: "基本记法", text: "使用 * 表示乘法、^ 表示乘方。名称以英文字母开头，可包含英文字母和数字，并区分大小写。== 构造方程；要求解，请使用 Solve。一次只提交一个表达式，不支持赋值、定义或多语句程序。", examples: ["x^2-5*x+6==0", "Solve(x^2-5*x+6==0,x)"] },
     { title: "函数与常量", text: "函数名区分大小写。常用函数有 Sin、Cos、Tan、Exp、Ln、Sqrt、Abs、Gamma 和 Zeta。Pi 是常量。绝对值使用 Abs，向量范数使用 Norm 或 PNorm。", examples: ["Sqrt(2)+Pi", "Norm({3,4})", "PNorm({x,y},2)"] },
     { title: "导数、积分与极限", text: "D(var)expr 求导；D(var,n)expr 求 n 阶导数。Integrate(var)expr 求不定积分，Integrate(var,a,b)expr 求定积分。Limit(expr,a) 使用默认变量；也可用 Limit(var,a)expr 指定变量。变量只在其后所作用的表达式中绑定。", examples: ["D(x)x^2", "D(x,2)Sin(x)", "Integrate(x,0,1)x^2", "Limit(x,0)Sin(x)/x"] },
@@ -11,6 +12,7 @@ const content = {
   ],
   "en-US": [
     { title: "Getting started", text: "Enter one mathematical expression on the calculator page, then press Return on the math keyboard. The answer appears above the keyboard. Scroll the steps below the input, or collapse the keyboard for more room.", examples: ["2*x^2-3*x+1", "Sin(x)^2+Cos(x)^2"] },
+    { title: "Using the math keyboard", text: "Swipe the category tabs above the keyboard left or right, then tap a tab to switch between Basic, Calculus, matrices and other pages. Digits, cursor keys, Delete and ↵ stay in the same positions on every page. The arrows move the cursor; ↵ submits the calculation. Use the arrow on the bar above the keyboard to collapse or expand it. Mat inserts a resizable matrix; +Row and +Col add rows and columns.", examples: [] },
     { title: "Basic notation", text: "Use * for multiplication and ^ for powers. Names start with an ASCII letter, may contain letters and digits, and are case-sensitive. == constructs an equation; use Solve to solve it. Submit one expression at a time; assignments, definitions and multi-statement programs are not supported.", examples: ["x^2-5*x+6==0", "Solve(x^2-5*x+6==0,x)"] },
     { title: "Functions and constants", text: "Function names are case-sensitive. Common functions include Sin, Cos, Tan, Exp, Ln, Sqrt, Abs, Gamma and Zeta. Pi is a constant. Use Abs for absolute value and Norm or PNorm for vector norms.", examples: ["Sqrt(2)+Pi", "Norm({3,4})", "PNorm({x,y},2)"] },
     { title: "Derivatives, integrals and limits", text: "D(var)expr differentiates; D(var,n)expr gives the nth derivative. Integrate(var)expr is an indefinite integral; Integrate(var,a,b)expr is definite. Limit(expr,a) uses the default variable, or use Limit(var,a)expr to specify it. Bound variables apply only to the following operand.", examples: ["D(x)x^2", "D(x,2)Sin(x)", "Integrate(x,0,1)x^2", "Limit(x,0)Sin(x)/x"] },

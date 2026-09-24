@@ -26,7 +26,7 @@ globalThis.document = {
 globalThis.CustomEvent = class { constructor(_name, options) { this.detail = options.detail; } };
 
 const { applyTranslations, getLocale, hasLocaleTranslation, setLocale, t } = await import("../src/i18n.js");
-const { yaclueKeyboardLayouts } = await import("../src/keyboard.js");
+const { YACLUE_KEY_SEMANTICS, localizeKeyboardLayouts, yaclueKeyboardLayouts } = await import("../src/keyboard.js");
 
 test("all app shell translation markers exist in both languages", () => {
   const html = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
@@ -53,6 +53,29 @@ test("switching language updates the document and persists the choice", () => {
   assert.equal(ariaNode["aria-label"], "Main navigation");
   assert.equal(t("input.missing-slot"), "Complete the empty input slot");
   assert.equal(localeEvents.at(-1), "en-US");
+});
+
+test("keyboard hints and first-use guidance are translated in both languages", () => {
+  for (const locale of ["zh-CN", "en-US"]) {
+    setLocale(locale);
+    assert.equal(hasLocaleTranslation("ui.firstCalculationHint", locale), true);
+    for (const name of Object.keys(YACLUE_KEY_SEMANTICS))
+      assert.equal(hasLocaleTranslation(`keyboard.key.${name}`, locale), true, `${locale}: ${name}`);
+    for (const name of ["digit", "variable", "moveLeft", "moveRight", "backspace", "calculate", "openParenthesis", "closeParenthesis", "pi", "addRow", "addCol"])
+      assert.equal(hasLocaleTranslation(`keyboard.hint.${name}`, locale), true, `${locale}: ${name}`);
+
+    const layouts = localizeKeyboardLayouts(t);
+    assert.equal(layouts.length, yaclueKeyboardLayouts.length);
+    for (const layout of layouts) {
+      assert.ok(layout.tooltip && !layout.tooltip.startsWith("keyboard."), `${locale}: ${layout.id}`);
+      for (const key of layout.rows.flat())
+        assert.ok(key.tooltip && !key.tooltip.startsWith("keyboard."), `${locale}: ${layout.id} ${key.label || key.latex}`);
+    }
+    const commonKeys = layouts[0].rows.map((row) => row.slice(4));
+    for (const layout of layouts)
+      layout.rows.forEach((row, index) => assert.deepEqual(row.slice(4), commonKeys[index], `${locale}: ${layout.id} row ${index}`));
+    assert.equal(layouts[0].rows[4][7].label, "[action]");
+  }
 });
 
 test("every script step explanation has a translation in both locales", () => {

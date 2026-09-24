@@ -55,6 +55,8 @@ button:focus-visible, summary:focus-visible, textarea:focus-visible, .steps:focu
 math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { display: none !important; }
 .calculation-error { flex: 0 1 auto; min-height: 0; max-height: min(180px, 34dvh); overflow-y: auto; overscroll-behavior-y: contain; padding: 12px 16px 12px 20px; border-bottom: 1px solid var(--error-rule); background: var(--error-surface); box-shadow: inset 3px 0 #ab654c; color: var(--error-ink); font-size: var(--text-base); line-height: 1.5; overflow-wrap: anywhere; }
 .calculation-error[hidden] { display: none; }
+.first-calculation-hint { display: grid; flex: 1; min-height: 0; place-items: center; margin: 0; padding: 20px; color: var(--ink-muted); font-size: var(--text-sm); line-height: 1.5; text-align: center; }
+.first-calculation-hint[hidden] { display: none; }
 .steps { display: none; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; padding-bottom: 12px; scrollbar-width: none; }
 .steps.visible { display: grid; align-content: start; }
 .step-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); min-height: 54px; border-bottom: 1px solid var(--rule-soft); }
@@ -71,6 +73,8 @@ math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { displ
 .step-detail[hidden] { display: none; }
 .answer-row { --math-row-size: 23px; --math-row-leading: 1.25; position: absolute; z-index: 5; right: 0; bottom: calc(var(--keyboard-space) + var(--keyboard-bar-height)); left: 0; display: none; padding: 12px 16px; border-top: 1px solid var(--rule); background: var(--surface-raised); font-weight: 650; transition: bottom 220ms ease; }
 .answer-row.visible { display: block; }
+.answer-row[data-state="pending"] { color: var(--ink-muted); font-weight: 400; }
+.answer-row[data-state="error"] { border-color: var(--error-rule); background: var(--error-surface); color: var(--error-ink); font-weight: 500; }
 .answer-row math-field { min-width: 100%; min-height: 34px; pointer-events: none; }
 .keyboard-dock { position: absolute; z-index: 110; right: 0; bottom: var(--keyboard-height); left: 0; height: var(--keyboard-bar-height); display: flex; justify-content: flex-end; border-block: 1px solid var(--keyboard-rule); background: var(--keyboard-surface); transition: transform 220ms ease; }
 .keyboard-toggle { position: relative; width: 54px; height: 35px; border-left: 1px solid var(--keyboard-rule); }
