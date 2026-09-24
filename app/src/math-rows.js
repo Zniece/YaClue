@@ -10,17 +10,18 @@ const rowCleanup = new WeakMap();
 const answerFrames = new WeakMap();
 const stepRenderState = new WeakMap();
 const STEP_BATCH_SIZE = 24;
+let nextStepDetailId = 0;
 
-const syncHorizontalOverflow = (element, focusWhenFits = false) => {
+const syncHorizontalOverflow = (element, focusWhenFits = false, allowFocus = true) => {
   const scrollable = element.scrollWidth > element.clientWidth + 1;
-  element.tabIndex = scrollable || focusWhenFits ? 0 : -1;
+  element.tabIndex = allowFocus && (scrollable || focusWhenFits) ? 0 : -1;
   element.classList.toggle("can-scroll-x", scrollable);
   element.classList.toggle("at-scroll-start", element.scrollLeft <= 1);
   element.classList.toggle("at-scroll-end", element.scrollLeft + element.clientWidth >= element.scrollWidth - 1);
 };
 
-const observeHorizontalOverflow = (element) => {
-  const sync = () => syncHorizontalOverflow(element);
+const observeHorizontalOverflow = (element, allowFocus = true) => {
+  const sync = () => syncHorizontalOverflow(element, false, allowFocus);
   const observer = new ResizeObserver(sync);
   element.addEventListener("scroll", sync, { passive: true });
   observer.observe(element);
@@ -36,14 +37,16 @@ export function createStepRow(step, index) {
   const row = document.createElement("article");
   row.className = "step-row";
 
-  const meta = document.createElement("div");
+  const meta = document.createElement("button");
   meta.className = "step-meta";
+  meta.type = "button";
   const number = document.createElement("b");
   number.className = "step-number";
   number.textContent = String(index + 1).padStart(2, "0");
   const explanation = document.createElement("span");
   explanation.className = "step-explanation";
-  explanation.textContent = step.explanation || "";
+  const explanationText = step.explanation || "";
+  explanation.textContent = explanationText;
   meta.append(number, explanation);
 
   const formula = document.createElement("div");
@@ -51,11 +54,59 @@ export function createStepRow(step, index) {
   formula.appendChild(makeMathField(step.latex));
   row.append(meta, formula);
 
-  const stopExplanation = observeHorizontalOverflow(explanation);
+  const detail = document.createElement("div");
+  detail.className = "step-detail";
+  detail.id = `step-detail-${++nextStepDetailId}`;
+  detail.textContent = explanationText;
+  detail.hidden = true;
+  meta.setAttribute("aria-expanded", "false");
+  meta.setAttribute("aria-controls", detail.id);
+  row.append(detail);
+
+  let pointerStart = null;
+  let pointerMoved = false;
+  const onPointerDown = (event) => {
+    pointerStart = { x: event.clientX, y: event.clientY };
+    pointerMoved = false;
+  };
+  const onPointerMove = (event) => {
+    if (pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 8)
+      pointerMoved = true;
+  };
+  const onPointerCancel = () => { pointerMoved = true; pointerStart = null; };
+  const onClick = (event) => {
+    pointerStart = null;
+    const wasDrag = pointerMoved;
+    pointerMoved = false;
+    if (wasDrag && event.detail !== 0) {
+      event.preventDefault();
+      return;
+    }
+    detail.hidden = !detail.hidden;
+    meta.setAttribute("aria-expanded", String(!detail.hidden));
+  };
+  const onKeyDown = (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (explanation.scrollWidth <= explanation.clientWidth + 1) return;
+    event.preventDefault();
+    explanation.scrollLeft += event.key === "ArrowRight" ? 40 : -40;
+  };
+  meta.addEventListener("pointerdown", onPointerDown);
+  meta.addEventListener("pointermove", onPointerMove);
+  meta.addEventListener("pointercancel", onPointerCancel);
+  meta.addEventListener("click", onClick);
+  meta.addEventListener("keydown", onKeyDown);
+
+  const stopExplanation = observeHorizontalOverflow(explanation, false);
   const stopFormula = observeHorizontalOverflow(formula);
   rowCleanup.set(row, () => {
     stopExplanation();
     stopFormula();
+    meta.removeEventListener("pointerdown", onPointerDown);
+    meta.removeEventListener("pointermove", onPointerMove);
+    meta.removeEventListener("pointercancel", onPointerCancel);
+    meta.removeEventListener("click", onClick);
+    meta.removeEventListener("keydown", onKeyDown);
   });
   return row;
 }

@@ -8,6 +8,7 @@ let nextFrame = 0;
 class ElementStub {
   children = [];
   listeners = new Map();
+  attributes = new Map();
   classes = new Set();
   classList = {
     toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name),
@@ -27,6 +28,8 @@ class ElementStub {
   removeEventListener(name, callback) {
     if (this.listeners.get(name) === callback) this.listeners.delete(name);
   }
+  setAttribute(name, value) { this.attributes.set(name, value); }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
 }
 
 globalThis.document = { createElement: () => new ElementStub() };
@@ -58,6 +61,7 @@ test("replacing and clearing steps releases observers and scroll listeners", () 
   assert.equal(frames.size, 3);
   for (const row of oldRows) {
     assert.equal(row.children[0].children[1].listeners.size, 0);
+    assert.equal(row.children[0].listeners.size, 0);
     assert.equal(row.children[1].listeners.size, 0);
   }
 
@@ -123,12 +127,43 @@ test("a hidden calculation view pauses batches until it becomes visible", () => 
   clearCalculationRows(steps, answer);
 });
 
-test("read-only math fields stay out of Tab order while scroll areas remain reachable", () => {
+test("step explanation expands, and swiping its preview does not toggle it", () => {
+  const steps = new ElementStub();
+  const answer = new ElementStub();
+  renderSteps(steps, [{ explanation: "A long explanation that needs more space", latex: "x+1" }]);
+  const [meta, formula, detail] = steps.children[0].children;
+  assert.equal(meta.getAttribute("aria-expanded"), "false");
+  assert.equal(meta.getAttribute("aria-controls"), detail.id);
+  assert.equal(detail.hidden, true);
+  assert.equal(detail.textContent, "A long explanation that needs more space");
+  assert.equal(formula.children[0].value, "x+1");
+
+  meta.listeners.get("click")({ detail: 1, preventDefault() {} });
+  assert.equal(detail.hidden, false);
+  assert.equal(meta.getAttribute("aria-expanded"), "true");
+  meta.listeners.get("click")({ detail: 0, preventDefault() {} });
+  assert.equal(detail.hidden, true);
+
+  meta.listeners.get("pointerdown")({ clientX: 20, clientY: 10 });
+  meta.listeners.get("pointermove")({ clientX: 45, clientY: 10 });
+  let prevented = false;
+  meta.listeners.get("click")({ detail: 1, preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(detail.hidden, true);
+  meta.listeners.get("pointerdown")({ clientX: 20, clientY: 10 });
+  meta.listeners.get("pointercancel")();
+  meta.listeners.get("click")({ detail: 0, preventDefault() {} });
+  assert.equal(detail.hidden, false);
+  clearCalculationRows(steps, answer);
+});
+
+test("read-only math fields stay out of Tab order while formula and answer remain reachable", () => {
   const steps = new ElementStub();
   const answer = new ElementStub();
   renderSteps(steps, [{ explanation: "A long explanation", latex: "x+1" }]);
   const formula = steps.children[0].children[1];
-  const explanation = steps.children[0].children[0].children[1];
+  const meta = steps.children[0].children[0];
+  const explanation = meta.children[1];
   assert.equal(steps.tabIndex, 0);
   assert.equal(formula.children[0].tabIndex, -1);
 
@@ -137,7 +172,10 @@ test("read-only math fields stay out of Tab order while scroll areas remain reac
   for (const observer of observers.filter((candidate) => candidate.element === formula || candidate.element === explanation))
     observer.callback();
   assert.equal(formula.tabIndex, 0);
-  assert.equal(explanation.tabIndex, 0);
+  assert.equal(explanation.tabIndex, -1);
+  const keyEvent = { key: "ArrowRight", preventDefault() {} };
+  meta.listeners.get("keydown")(keyEvent);
+  assert.equal(explanation.scrollLeft, 40);
 
   renderAnswer(answer, "x+1");
   assert.equal(answer.tabIndex, 0);

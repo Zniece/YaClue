@@ -12,6 +12,7 @@ const app = $("#app");
 const calculatorView = $("#calculator-view");
 const workspace = $(".workspace");
 const field = $("#math-input");
+const calculationError = $("#calculation-error");
 const steps = $("#steps");
 const answer = $("#answer");
 const calculationStatus = $("#calculation-status");
@@ -37,6 +38,15 @@ let lastCalculationError = null;
 
 const statusLatex = (key) => `\\text{${t(key)}}`;
 const announce = (message) => { calculationStatus.textContent = message; };
+const showCalculationError = (message) => {
+  calculationError.textContent = message;
+  calculationError.hidden = false;
+  calculationError.scrollTop = 0;
+};
+const clearCalculationError = () => {
+  calculationError.hidden = true;
+  calculationError.textContent = "";
+};
 const localizedKeyboardLayouts = () => yaclueKeyboardLayouts.map((layout) => ({
   ...layout,
   tooltip: t(`keyboard.${layout.id.slice("yaclue-".length)}`),
@@ -53,8 +63,8 @@ function renderInputDiagnostic() {
   const explanation = hasTranslation(key)
     ? t(key)
     : diagnostic?.message || t("ui.inputConversionFailed");
-  steps.dataset.diagnosticCode = diagnostic?.code || "unknown";
-  renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
+  renderSteps(steps, []);
+  showCalculationError(explanation);
   renderAnswer(answer, statusLatex("ui.invalidInput"));
   announce(explanation);
   requestAnimationFrame(syncAnswerHeight);
@@ -192,7 +202,8 @@ function renderCalculationError(error) {
   lastCalculationResult = null;
   lastCalculationError = error;
   const explanation = localizedMessage(error?.message_ref, error?.message || t("ui.calculationFailed"));
-  renderSteps(steps, [{ explanation, latex: field.value || "\\placeholder{}" }]);
+  renderSteps(steps, []);
+  showCalculationError(explanation);
   renderAnswer(answer, statusLatex("ui.calculationFailed"));
   announce(explanation);
   requestAnimationFrame(syncAnswerHeight);
@@ -218,6 +229,7 @@ function renderCalculation(result) {
   calculationPending = false;
   lastCalculationResult = result;
   lastCalculationError = null;
+  clearCalculationError();
   renderSteps(steps, resultRows(result));
   renderAnswer(answer, result.tex || result.expression);
   announce(t("ui.calculationComplete"));
@@ -281,6 +293,7 @@ async function showSubmissionResult() {
   lastCalculationResult = null;
   lastCalculationError = null;
   clearCalculationRows(steps, answer);
+  clearCalculationError();
   announce("");
 
   if (typeof field.getYaClueSubmissionResult !== "function") {
@@ -309,7 +322,6 @@ async function showSubmissionResult() {
     return;
   }
 
-  delete steps.dataset.diagnosticCode;
   const invoke = window.__TAURI__?.core?.invoke;
   if (typeof invoke !== "function") {
     renderCalculationError({ message_ref: { key: "ui.engineUnavailable" } });
@@ -406,17 +418,14 @@ field.addEventListener("focus", () => keyboardExpanded && !calculatorView.hidden
 field.addEventListener("input", () => {
   calculationRequest += 1;
   lastSubmissionResult = null;
-  if (steps.dataset.diagnosticCode) {
-    delete steps.dataset.diagnosticCode;
+  if (!calculationError.hidden || calculationPending || lastCalculationError) {
+    lastCalculationError = null;
+    calculationPending = false;
+    clearCalculationError();
     clearCalculationRows(steps, answer);
     syncAnswerHeight();
     announce("");
   }
-  if (!calculationPending) return;
-  calculationPending = false;
-  clearCalculationRows(steps, answer);
-  syncAnswerHeight();
-  announce("");
 });
 field.addEventListener("beforeinput", (event) => { if (event.inputType === "insertLineBreak") { event.preventDefault(); showSubmissionResult(); } });
 $("#calculate-tab").addEventListener("click", () => setView("calculator"));

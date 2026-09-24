@@ -3,7 +3,7 @@
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; }
 body { position: fixed; inset: 0; background: #faf9ee; }
 button { border: 0; border-radius: 0; background: none; color: inherit; font: inherit; -webkit-tap-highlight-color: transparent; }
-button:focus-visible, math-field:focus-visible, .steps:focus-visible, .math-row.can-scroll-x:focus-visible, .step-explanation.can-scroll-x:focus-visible, .answer-row:focus-visible { outline: 2px solid #71664f; outline-offset: -2px; }
+button:focus-visible, math-field:focus-visible, .steps:focus-visible, .math-row.can-scroll-x:focus-visible, .answer-row:focus-visible { outline: 2px solid #71664f; outline-offset: -2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .app { --topbar-height: calc(52px + env(safe-area-inset-top)); --keyboard-height: min(42dvh, 340px); --keyboard-space: var(--keyboard-height); --keyboard-bar-height: calc(36px + env(safe-area-inset-bottom)); position: fixed; inset: 0; width: 100%; height: 100dvh; overflow: hidden; background: #faf9ee; }
 .topbar { height: var(--topbar-height); display: flex; padding-top: env(safe-area-inset-top); border-bottom: 1px solid #aaa18f; background: #f2e9cf; }
@@ -25,16 +25,22 @@ button:focus-visible, math-field:focus-visible, .steps:focus-visible, .math-row.
 .input-row math-field { min-width: 100%; min-height: 68px; padding: 0 16px; }
 .input-row math-field::part(placeholder) { color: inherit; opacity: 1; }
 math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { display: none !important; }
+.calculation-error { flex: 0 1 auto; min-height: 0; max-height: min(180px, 34dvh); overflow-y: auto; overscroll-behavior-y: contain; padding: 12px 16px 12px 20px; border-bottom: 1px solid #dfc7ba; background: #f8ede5; box-shadow: inset 3px 0 #ab654c; color: #6d3c30; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.calculation-error[hidden] { display: none; }
 .steps { display: none; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; padding-bottom: 12px; scrollbar-width: none; }
 .steps.visible { display: grid; align-content: start; }
 .step-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); min-height: 54px; border-bottom: 1px solid #d8d0bd; }
-.step-meta { min-width: 0; overflow: hidden; padding: 8px 9px; border-right: 1px solid #aaa18f; color: #5e584b; }
+.step-meta { position: relative; min-width: 0; overflow: hidden; padding: 8px 9px; border-right: 1px solid #aaa18f; color: #5e584b; text-align: left; cursor: pointer; }
+.step-meta::after { content: ""; position: absolute; top: 13px; right: 11px; width: 6px; height: 6px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); transition: transform 150ms ease; }
+.step-meta[aria-expanded="true"]::after { transform: rotate(225deg); }
 .step-number { display: block; color: #39342c; font: 700 17px/1 "STIX Two Math", "Cambria Math", serif; }
 .step-explanation { display: block; overflow: hidden; padding-top: 5px; color: #6c6455; font: 12px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; white-space: nowrap; scrollbar-width: none; }
 .step-explanation.can-scroll-x { overflow-x: auto; overscroll-behavior-x: contain; }
 .step-explanation::-webkit-scrollbar { display: none; }
 .step-formula { --math-row-size: 16px; min-width: 0; min-height: 54px; padding: 8px 12px; }
 .step-formula math-field { min-height: 34px; pointer-events: none; }
+.step-detail { grid-column: 1 / -1; padding: 10px 12px; border-top: 1px solid #e4ddcd; background: #f5f1e5; color: #50493d; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; white-space: normal; }
+.step-detail[hidden] { display: none; }
 .answer-row { --math-row-size: 23px; --math-row-leading: 1.25; position: absolute; z-index: 5; right: 0; bottom: calc(var(--keyboard-space) + var(--keyboard-bar-height)); left: 0; display: none; padding: 12px 16px; border-top: 1px solid #aaa18f; background: #f2e9cf; font-weight: 650; transition: bottom 220ms ease; }
 .answer-row.visible { display: block; }
 .answer-row math-field { min-width: 100%; min-height: 34px; pointer-events: none; }
