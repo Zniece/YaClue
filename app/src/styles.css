@@ -23,6 +23,7 @@ button:focus-visible, math-field:focus-visible, .steps:focus-visible, .math-row.
 .math-row math-field { display: block; width: max-content; min-width: 0; border: 0; background: transparent; color: inherit; font-family: inherit; font-size: inherit; line-height: inherit; white-space: nowrap; }
 .input-row { --math-row-size: clamp(30px, 8vw, 43px); --math-row-leading: 1.2; }
 .input-row math-field { min-width: 100%; min-height: 68px; padding: 0 16px; }
+.input-row math-field::part(placeholder) { color: inherit; opacity: 1; }
 math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { display: none !important; }
 .steps { display: none; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; padding-bottom: 12px; scrollbar-width: none; }
 .steps.visible { display: grid; align-content: start; }

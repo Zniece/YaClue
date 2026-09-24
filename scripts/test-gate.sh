@@ -22,6 +22,7 @@ case "${1:-}" in
         cargo test -p processing --lib 'semantic::tests::'
         cargo test -p processing --lib 'steps::tests::'
         node --check app/src/main.js
+        node --test app/test/*.test.js
         ;;
     domain)
         case "${2:-}" in
@@ -41,6 +42,7 @@ case "${1:-}" in
         cargo fmt --all -- --check
         cargo clippy --workspace --all-targets -- -D warnings
         node --check app/src/main.js
+        node --test app/test/*.test.js
         cargo test --workspace -- --test-threads=1
         ;;
     *) usage ;;

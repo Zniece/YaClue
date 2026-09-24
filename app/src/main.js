@@ -5,6 +5,7 @@ import { renderHelp } from "./help.js";
 import { parseYaClueSource } from "./source-input.js";
 import { applyTranslations, getLocale, hasTranslation, setLocale, t } from "./i18n.js";
 import { clearCalculationRows, renderAnswer, renderSteps } from "./math-rows.js";
+import { materializeDisplayedZero } from "./calculator-input.js";
 
 const $ = (selector) => document.querySelector(selector);
 const app = $("#app");
@@ -254,6 +255,7 @@ async function submitSource() {
 }
 
 async function showSubmissionResult() {
+  materializeDisplayedZero(field);
   const request = ++calculationRequest;
   calculationPending = false;
   lastCalculationResult = null;
@@ -323,7 +325,6 @@ customElements.whenDefined("math-field").then(() => {
   keyboard.layouts = localizedKeyboardLayouts();
   keyboard.editToolbar = "none";
   field.mathVirtualKeyboardPolicy = "manual";
-  field.value = "0";
   field.focus({ preventScroll: true });
   setKeyboardExpanded(true);
   keyboard.addEventListener("geometrychange", () => {
