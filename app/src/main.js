@@ -22,6 +22,7 @@ const sourceInput = $("#source-input");
 const sourceSteps = $("#source-steps");
 const sourceAnswer = $("#source-answer");
 const sourceStatus = $("#source-status");
+const compactLandscape = window.matchMedia("(orientation: landscape) and (max-height: 500px)");
 let sourceRequest = 0;
 let sourceResult = null;
 let sourceError = null;
@@ -108,11 +109,14 @@ function restoreKeyboardMenuScroll() {
 function setKeyboardUiState(state) {
   app.dataset.keyboardState = state;
   const expanded = state === "opening" || state === "open";
-  app.classList.toggle("keyboard-collapsed", !expanded);
+  const collapsed = !expanded;
+  const wasCollapsed = app.classList.contains("keyboard-collapsed");
+  app.classList.toggle("keyboard-collapsed", collapsed);
   keyboardToggle.setAttribute("aria-expanded", String(expanded));
   const labels = { opening: "ui.keyboardOpening", open: "ui.keyboardOpen", closed: "ui.keyboardClosed", failed: "ui.keyboardFailed" };
   keyboardToggle.setAttribute("aria-label", t(labels[state]));
   if (state === "failed") announce(t("ui.keyboardFailed"));
+  if (wasCollapsed !== collapsed) requestAnimationFrame(syncAnswerHeight);
 }
 
 function failKeyboardRequest(request) {
@@ -299,6 +303,11 @@ async function submitSource() {
 async function showSubmissionResult() {
   completeFirstCalculationGuide();
   materializeDisplayedZero(field);
+  if (compactLandscape.matches)
+    requestAnimationFrame(() => {
+      if (keyboardExpanded && !calculatorView.hidden && compactLandscape.matches)
+        setKeyboardExpanded(false);
+    });
   const request = ++calculationRequest;
   calculationPending = false;
   lastCalculationResult = null;
@@ -468,7 +477,18 @@ sourceInput.addEventListener("keydown", (event) => {
 });
 document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => setLocale(button.dataset.locale)));
 window.addEventListener("pageshow", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
-window.addEventListener("resize", restoreKeyboardMenuScroll);
+let viewportFrame = 0;
+const syncViewportLayout = () => {
+  if (viewportFrame) return;
+  viewportFrame = requestAnimationFrame(() => {
+    viewportFrame = 0;
+    syncKeyboardHeight();
+    syncAnswerHeight();
+    restoreKeyboardMenuScroll();
+  });
+};
+window.addEventListener("resize", syncViewportLayout);
+window.visualViewport?.addEventListener("resize", syncViewportLayout);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && keyboardExpanded && !calculatorView.hidden) ensureKeyboard(++keyboardRequest); });
 document.addEventListener("localechange", () => {
   updateLocaleControls();
