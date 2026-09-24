@@ -35,9 +35,12 @@ export function renderHelp(container, locale) {
     paragraph.textContent = section.text;
     details.append(summary, paragraph);
     for (const example of section.examples) {
-      const code = document.createElement("code");
-      code.textContent = example;
-      details.append(code);
+      const button = document.createElement("button");
+      button.className = "help-example";
+      button.type = "button";
+      button.dataset.example = example;
+      button.textContent = example;
+      details.append(button);
     }
     return details;
   }));

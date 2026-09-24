@@ -25,7 +25,7 @@ globalThis.document = {
 };
 globalThis.CustomEvent = class { constructor(_name, options) { this.detail = options.detail; } };
 
-const { applyTranslations, getLocale, hasTranslation, setLocale, t } = await import("../src/i18n.js");
+const { applyTranslations, getLocale, hasLocaleTranslation, setLocale, t } = await import("../src/i18n.js");
 const { yaclueKeyboardLayouts } = await import("../src/keyboard.js");
 
 test("all app shell translation markers exist in both languages", () => {
@@ -33,9 +33,9 @@ test("all app shell translation markers exist in both languages", () => {
   const keys = [...html.matchAll(/data-i18n(?:-aria-label|-title)?="([^"]+)"/g)].map((match) => match[1]);
   for (const locale of ["zh-CN", "en-US"]) {
     setLocale(locale);
-    for (const key of keys) assert.equal(hasTranslation(key), true, `${locale}: ${key}`);
+    for (const key of keys) assert.equal(hasLocaleTranslation(key, locale), true, `${locale}: ${key}`);
     for (const layout of yaclueKeyboardLayouts)
-      assert.equal(hasTranslation(`keyboard.${layout.id.slice("yaclue-".length)}`), true, `${locale}: ${layout.id}`);
+      assert.equal(hasLocaleTranslation(`keyboard.${layout.id.slice("yaclue-".length)}`, locale), true, `${locale}: ${layout.id}`);
   }
 });
 
@@ -53,4 +53,13 @@ test("switching language updates the document and persists the choice", () => {
   assert.equal(ariaNode["aria-label"], "Main navigation");
   assert.equal(t("input.missing-slot"), "Complete the empty input slot");
   assert.equal(localeEvents.at(-1), "en-US");
+});
+
+test("every script step explanation has a translation in both locales", () => {
+  const script = readFileSync(new URL("../../processing/scripts/steps.rep/code.ys", import.meta.url), "utf8");
+  const rules = [...new Set([...script.matchAll(/Steps'Text\("([^"]+)"/g)].map((match) => match[1]))];
+  for (const locale of ["zh-CN", "en-US"]) {
+    setLocale(locale);
+    for (const rule of rules) assert.equal(hasLocaleTranslation(`steps.${rule}`, locale), true, `${locale}: ${rule}`);
+  }
 });

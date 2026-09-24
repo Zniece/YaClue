@@ -2,6 +2,7 @@ import "mathlive";
 import "mathlive/fonts.css";
 import { yaclueKeyboardLayouts } from "./keyboard.js";
 import { renderHelp } from "./help.js";
+import { parseYaClueSource } from "./source-input.js";
 import { applyTranslations, getLocale, hasTranslation, setLocale, t } from "./i18n.js";
 import { clearCalculationRows, renderAnswer, renderSteps } from "./math-rows.js";
 
@@ -14,6 +15,15 @@ const steps = $("#steps");
 const answer = $("#answer");
 const calculationStatus = $("#calculation-status");
 const keyboardToggle = $("#keyboard-toggle");
+const sourceInput = $("#source-input");
+const sourceSteps = $("#source-steps");
+const sourceAnswer = $("#source-answer");
+const sourceStatus = $("#source-status");
+let sourceRequest = 0;
+let sourceResult = null;
+let sourceError = null;
+let sourceDiagnostic = null;
+let sourcePending = false;
 let keyboardExpanded = true;
 let keyboardRequest = 0;
 let keyboardMenuScrollLeft = 0;
@@ -167,10 +177,7 @@ function renderCalculationError(error) {
   requestAnimationFrame(syncAnswerHeight);
 }
 
-function renderCalculation(result) {
-  calculationPending = false;
-  lastCalculationResult = result;
-  lastCalculationError = null;
+function resultRows(result) {
   const analyses = (result.analyses || []).map((analysis) => ({
     explanation: localizedMessage(analysis.message_ref, analysis.rule),
     latex: analysis.tex,
@@ -183,10 +190,67 @@ function renderCalculation(result) {
     explanation: localizedMessage(conclusion.message_ref, conclusion.kind),
     latex: conclusion.tex,
   }));
-  renderSteps(steps, [...analyses, ...calculationSteps, ...conclusions]);
+  return [...analyses, ...calculationSteps, ...conclusions];
+}
+
+function renderCalculation(result) {
+  calculationPending = false;
+  lastCalculationResult = result;
+  lastCalculationError = null;
+  renderSteps(steps, resultRows(result));
   renderAnswer(answer, result.tex || result.expression);
   announce(t("ui.calculationComplete"));
   requestAnimationFrame(syncAnswerHeight);
+}
+
+function renderSourceState() {
+  clearCalculationRows(sourceSteps, sourceAnswer);
+  if (sourceDiagnostic) {
+    sourceStatus.textContent = t(`input.${sourceDiagnostic}`);
+  } else if (sourceError) {
+    sourceStatus.textContent = localizedMessage(sourceError.message_ref, sourceError.message || t("ui.calculationFailed"));
+  } else if (sourcePending) {
+    sourceStatus.textContent = t("ui.calculating");
+  } else if (sourceResult) {
+    sourceStatus.textContent = t("ui.calculationComplete");
+    renderSteps(sourceSteps, resultRows(sourceResult));
+    renderAnswer(sourceAnswer, sourceResult.tex || sourceResult.expression);
+  } else {
+    sourceStatus.textContent = "";
+  }
+}
+
+async function submitSource() {
+  const request = ++sourceRequest;
+  sourceResult = null;
+  sourceError = null;
+  sourcePending = false;
+  const submission = parseYaClueSource(sourceInput.value);
+  sourceDiagnostic = submission.ok ? null : submission.diagnostics[0].code;
+  renderSourceState();
+  if (!submission.ok) return;
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (typeof invoke !== "function") {
+    sourceError = { message_ref: { key: "ui.engineUnavailable" } };
+    renderSourceState();
+    return;
+  }
+  sourcePending = true;
+  renderSourceState();
+  try {
+    const result = await invoke("process_expression", {
+      request: { expression: submission.expression, steps: true, verbosity: "standard", assumptions: submission.assumptions },
+    });
+    if (request !== sourceRequest) return;
+    sourcePending = false;
+    sourceResult = result;
+    renderSourceState();
+  } catch (error) {
+    if (request !== sourceRequest) return;
+    sourcePending = false;
+    sourceError = error;
+    renderSourceState();
+  }
 }
 
 async function showSubmissionResult() {
@@ -306,12 +370,37 @@ field.addEventListener("beforeinput", (event) => { if (event.inputType === "inse
 $("#calculate-tab").addEventListener("click", () => setView("calculator"));
 $("#menu-tab").addEventListener("click", () => setView("menu"));
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+$("#help-content").addEventListener("click", (event) => {
+  const example = event.target instanceof Element ? event.target.closest(".help-example") : null;
+  if (!example) return;
+  sourceInput.value = example.dataset.example;
+  ++sourceRequest;
+  sourcePending = false;
+  sourceResult = sourceError = sourceDiagnostic = null;
+  renderSourceState();
+  setView("source");
+  sourceInput.focus({ preventScroll: true });
+});
+$("#source-submit").addEventListener("click", submitSource);
+sourceInput.addEventListener("input", () => {
+  ++sourceRequest;
+  sourcePending = false;
+  sourceResult = sourceError = sourceDiagnostic = null;
+  renderSourceState();
+});
+sourceInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.isComposing) {
+    event.preventDefault();
+    submitSource();
+  }
+});
 document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => setLocale(button.dataset.locale)));
 window.addEventListener("pageshow", () => keyboardExpanded && !calculatorView.hidden && ensureKeyboard(++keyboardRequest));
 document.addEventListener("visibilitychange", () => { if (!document.hidden && keyboardExpanded && !calculatorView.hidden) ensureKeyboard(++keyboardRequest); });
 document.addEventListener("localechange", () => {
   updateLocaleControls();
   renderHelp($("#help-content"), getLocale());
+  if (sourceResult || sourceError || sourceDiagnostic || sourcePending) renderSourceState();
   setKeyboardUiState(app.dataset.keyboardState || "closed");
   if (window.mathVirtualKeyboard) {
     window.mathVirtualKeyboard.layouts = localizedKeyboardLayouts();

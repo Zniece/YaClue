@@ -31,6 +31,8 @@ scripts.
 
 See the [YaClue mathematical input guide](docs/yaclue-input.md) for complete
 input rules, composition, binding, partial applications, and result states.
+The menu also offers direct YaClue expression input for the textual examples
+shown in the guide and in-app help.
 
 ```text
 D(x)Sin(x)^2
